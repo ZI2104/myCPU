@@ -1,0 +1,284 @@
+//! System Bus implementation.
+//!
+//! This module provides the system bus that connects memory and peripherals
+//! and routes memory accesses to the appropriate components.
+
+use crate::error::{Result, SimError};
+use crate::traits::{Memory, Peripheral};
+use crate::types::{Addr, Byte, Half, Word};
+use std::fmt;
+
+/// A memory region mapping in the bus.
+#[derive(Debug)]
+struct MemoryRegion {
+    base: Addr,
+    size: usize,
+    name: String,
+}
+
+impl MemoryRegion {
+    fn contains(&self, addr: Addr) -> bool {
+        let base = self.base.raw() as usize;
+        let target = addr.raw() as usize;
+        target >= base && target < base + self.size
+    }
+}
+
+/// System Bus.
+///
+/// The system bus connects memory and peripheral devices and routes
+/// memory accesses to the appropriate component based on address ranges.
+///
+/// # Memory Map
+/// The bus maintains a memory map that assigns address ranges to specific
+/// components. When an access occurs, the bus finds the appropriate component
+/// and forwards the request.
+pub struct Bus {
+    /// RAM regions
+    ram_regions: Vec<(Addr, usize, Box<dyn Memory>)>,
+    /// Peripheral regions
+    peripheral_regions: Vec<(Addr, usize, Box<dyn Peripheral>)>,
+    /// Memory map for debugging
+    memory_map: Vec<MemoryRegion>,
+}
+
+impl fmt::Debug for Bus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bus")
+            .field("ram_regions", &self.ram_regions.len())
+            .field("peripheral_regions", &self.peripheral_regions.len())
+            .field("memory_map", &self.memory_map)
+            .finish()
+    }
+}
+
+impl Bus {
+    /// Create a new empty system bus.
+    pub fn new() -> Self {
+        Self {
+            ram_regions: Vec::new(),
+            peripheral_regions: Vec::new(),
+            memory_map: Vec::new(),
+        }
+    }
+
+    /// Attach a memory region to the bus.
+    ///
+    /// # Arguments
+    /// * `base` - The base address for this memory region
+    /// * `memory` - The memory implementation
+    /// * `name` - A name for this region (for debugging)
+    pub fn attach_memory<M: Memory + 'static>(
+        &mut self,
+        base: Addr,
+        memory: M,
+        name: &str,
+    ) {
+        let size = memory.size();
+        self.memory_map.push(MemoryRegion {
+            base,
+            size,
+            name: name.to_string(),
+        });
+        self.ram_regions.push((base, size, Box::new(memory)));
+    }
+
+    /// Attach a peripheral to the bus.
+    ///
+    /// # Arguments
+    /// * `peripheral` - The peripheral implementation
+    pub fn attach_peripheral<P: Peripheral + 'static>(&mut self, peripheral: P) {
+        let base = peripheral.base_addr();
+        let size = peripheral.size();
+        let name = peripheral.name().to_string();
+        self.memory_map.push(MemoryRegion { base, size, name });
+        self.peripheral_regions
+            .push((base, size, Box::new(peripheral)));
+    }
+
+    /// Read a byte from the bus.
+    ///
+    /// Routes the request to the appropriate memory or peripheral region.
+    pub fn read_byte(&self, addr: Addr) -> Result<Byte> {
+        // Check peripheral regions first
+        for (base, size, peripheral) in &self.peripheral_regions {
+            let base_addr = base.raw() as usize;
+            let target = addr.raw() as usize;
+            if target >= base_addr && target < base_addr + *size {
+                let offset = target - base_addr;
+                return peripheral
+                    .read(Addr::new(offset as u32))
+                    .map(Byte::new);
+            }
+        }
+
+        // Then check memory regions
+        for (base, size, memory) in &self.ram_regions {
+            let base_addr = base.raw() as usize;
+            let target = addr.raw() as usize;
+            if target >= base_addr && target < base_addr + *size {
+                // Pass address relative to the memory's base
+                let relative_addr = Addr::new((target - base_addr) as u32);
+                return memory.read_byte(relative_addr);
+            }
+        }
+
+        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+    }
+
+    /// Write a byte to the bus.
+    ///
+    /// Routes the request to the appropriate memory or peripheral region.
+    pub fn write_byte(&mut self, addr: Addr, value: Byte) -> Result<()> {
+        // Check peripheral regions first
+        for (base, size, peripheral) in &mut self.peripheral_regions {
+            let base_addr = base.raw() as usize;
+            let target = addr.raw() as usize;
+            if target >= base_addr && target < base_addr + *size {
+                let offset = target - base_addr;
+                return peripheral.write(Addr::new(offset as u32), value.raw());
+            }
+        }
+
+        // Then check memory regions
+        for (base, size, memory) in &mut self.ram_regions {
+            let base_addr = base.raw() as usize;
+            let target = addr.raw() as usize;
+            if target >= base_addr && target < base_addr + *size {
+                // Pass address relative to the memory's base
+                let relative_addr = Addr::new((target - base_addr) as u32);
+                return memory.write_byte(relative_addr, value);
+            }
+        }
+
+        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+    }
+
+    /// Read a half-word from the bus.
+    pub fn read_half(&self, addr: Addr) -> Result<Half> {
+        let b0 = self.read_byte(addr)?.raw();
+        let b1 = self.read_byte(addr.add(1))?.raw();
+        Ok(Half::new(((b1 as u16) << 8) | (b0 as u16)))
+    }
+
+    /// Write a half-word to the bus.
+    pub fn write_half(&mut self, addr: Addr, value: Half) -> Result<()> {
+        let raw = value.raw();
+        self.write_byte(addr, Byte::new(raw as u8))?;
+        self.write_byte(addr.add(1), Byte::new((raw >> 8) as u8))
+    }
+
+    /// Read a word from the bus.
+    pub fn read_word(&self, addr: Addr) -> Result<Word> {
+        let b0 = self.read_byte(addr)?.raw() as u32;
+        let b1 = self.read_byte(addr.add(1))?.raw() as u32;
+        let b2 = self.read_byte(addr.add(2))?.raw() as u32;
+        let b3 = self.read_byte(addr.add(3))?.raw() as u32;
+        Ok(Word::new(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)))
+    }
+
+    /// Write a word to the bus.
+    pub fn write_word(&mut self, addr: Addr, value: Word) -> Result<()> {
+        let raw = value.raw();
+        self.write_byte(addr, Byte::new(raw as u8))?;
+        self.write_byte(addr.add(1), Byte::new((raw >> 8) as u8))?;
+        self.write_byte(addr.add(2), Byte::new((raw >> 16) as u8))?;
+        self.write_byte(addr.add(3), Byte::new((raw >> 24) as u8))
+    }
+
+    /// Read bytes from the bus.
+    pub fn read_bytes(&self, addr: Addr, buf: &mut [u8]) -> Result<usize> {
+        for (i, byte) in buf.iter_mut().enumerate() {
+            *byte = self.read_byte(addr.add(i as u32))?.raw();
+        }
+        Ok(buf.len())
+    }
+
+    /// Write bytes to the bus.
+    pub fn write_bytes(&mut self, addr: Addr, data: &[u8]) -> Result<usize> {
+        for (i, &byte) in data.iter().enumerate() {
+            self.write_byte(addr.add(i as u32), Byte::new(byte))?;
+        }
+        Ok(data.len())
+    }
+
+    /// Print the memory map for debugging.
+    pub fn print_memory_map(&self) {
+        println!("Memory Map:");
+        for region in &self.memory_map {
+            println!(
+                "  {:08x}-{:08x}: {}",
+                region.base.raw(),
+                region.base.raw() as usize + region.size - 1,
+                region.name
+            );
+        }
+    }
+
+    /// Check if any peripheral has a pending interrupt.
+    pub fn has_pending_interrupt(&self) -> bool {
+        self.peripheral_regions
+            .iter()
+            .any(|(_, _, p)| p.has_interrupt())
+    }
+
+    /// Acknowledge interrupts from all peripherals.
+    pub fn acknowledge_interrupts(&mut self) {
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            peripheral.acknowledge_interrupt();
+        }
+    }
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Ram;
+
+    #[test]
+    fn test_bus_basic() {
+        let mut bus = Bus::new();
+        let ram = Ram::new(1024);
+        bus.attach_memory(Addr::new(0), ram, "RAM");
+
+        bus.write_byte(Addr::new(0), Byte::new(0x42)).unwrap();
+        assert_eq!(bus.read_byte(Addr::new(0)).unwrap().raw(), 0x42);
+    }
+
+    #[test]
+    fn test_bus_multiple_regions() {
+        let mut bus = Bus::new();
+        let ram1 = Ram::new(1024);
+        let ram2 = Ram::new(512);
+        bus.attach_memory(Addr::new(0x0000), ram1, "RAM1");
+        bus.attach_memory(Addr::new(0x1000), ram2, "RAM2");
+
+        // Write to first region
+        bus.write_byte(Addr::new(0x0100), Byte::new(0x11)).unwrap();
+        assert_eq!(bus.read_byte(Addr::new(0x0100)).unwrap().raw(), 0x11);
+
+        // Write to second region
+        bus.write_byte(Addr::new(0x1100), Byte::new(0x22)).unwrap();
+        assert_eq!(bus.read_byte(Addr::new(0x1100)).unwrap().raw(), 0x22);
+
+        // Gap between regions should fail
+        assert!(bus.read_byte(Addr::new(0x0800)).is_err());
+    }
+
+    #[test]
+    fn test_bus_word_operations() {
+        let mut bus = Bus::new();
+        let ram = Ram::new(1024);
+        bus.attach_memory(Addr::new(0), ram, "RAM");
+
+        bus.write_word(Addr::new(0), Word::new(0xDEADBEEF))
+            .unwrap();
+        assert_eq!(bus.read_word(Addr::new(0)).unwrap().raw(), 0xDEADBEEF);
+    }
+}

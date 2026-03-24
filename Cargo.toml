@@ -1,0 +1,50 @@
+[package]
+name = "mycpu"
+version = "0.1.0"
+edition = "2021"
+authors = ["myCPU Team"]
+description = "A RISC-V RV32I instruction set simulator with 5-stage pipeline"
+license = "MIT"
+readme = "README.md"
+keywords = ["risc-v", "emulator", "simulator", "cpu"]
+categories = ["emulators", "simulation"]
+
+[dependencies]
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Serialization (for state dump/debug)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Bit manipulation
+bitflags = "2.4"
+
+[dev-dependencies]
+# Testing
+pretty_assertions = "1.4"
+
+[[bin]]
+name = "mycpu"
+path = "src/main.rs"
+
+[lib]
+name = "mycpu"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
