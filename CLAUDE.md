@@ -61,6 +61,60 @@ src/
 - 使用 `Result<T>` 作为返回类型
 - 在系统边界验证输入
 
+### 指令常量定义
+- **禁止硬编码指令值**，必须使用命名常量
+- 常量定义在 `src/cpu/core.rs` 的 `instr` 模块中
+- RISC-V 标准 NOP 是 `0x00000013` (`addi x0, x0, 0`)，**不是**全 0
+```rust
+mod instr {
+    pub const NOP: u32 = 0x00000013;           // addi x0, x0, 0
+    pub const INVALID_PATTERN: u32 = 0xFFFFFFFF; // 未初始化内存标记
+}
+```
+
+### PC 增量时机
+- **PC 在指令执行成功后才递增**，而非执行前
+- 异常发生时 PC 指向问题指令本身，无需回退
+- 分支/跳转指令直接设置 PC 目标值
+```rust
+fn execute(&mut self, instruction: u32) -> Result<()> {
+    // 先检查有效性（失败时 PC 不变）
+    if is_invalid(instruction) {
+        return Err(...); // PC 指向当前指令
+    }
+    // 执行指令逻辑...
+    // 最后递增 PC
+    self.pc.increment();
+    Ok(())
+}
+```
+
+### 接口类型一致性
+- **所有内存读取方法返回包装类型** (`Word`, `Byte`, `Half`)，而非原始类型
+- 保持 API 风格统一，减少使用者的认知负担
+```rust
+// 正确：返回包装类型
+pub fn read_word(&self, addr: Addr) -> Result<Word>
+pub fn read_byte(&self, addr: Addr) -> Result<Byte>
+pub fn read_half(&self, addr: Addr) -> Result<Half>
+
+// 错误：混合返回原始类型
+pub fn read_byte(&self, addr: Addr) -> Result<u8>  // ❌
+```
+
+### 内存对齐检查
+- **多字节访问必须检查对齐**：half-word 需要 2 字节对齐，word 需要 4 字节对齐
+- 对齐错误返回 `SimError::MemoryAlignment`
+- 为 Phase 4 异常处理（Load/Store Address Misaligned）做准备
+```rust
+pub fn read_word(&self, addr: Addr) -> Result<Word> {
+    if !addr.is_aligned(4) {
+        return Err(SimError::MemoryAlignment { addr, size: 4, alignment: 4 });
+    }
+    // ...
+}
+```
+
 ### 测试
 - 每个模块包含 `#[cfg(test)]` 单元测试
 - 目标覆盖率: 80%+
@@ -89,16 +143,16 @@ cargo fmt
 
 ## 关键类型速查
 
-| 类型 | 说明 |
-|------|------|
-| `Addr(u32)` | 32 位地址 |
-| `Word(u32)` | 32 位数据字 |
-| `Byte(u8)` | 8 位字节 |
-| `RegIdx(u8)` | 寄存器索引 (0-31) |
-| `Memory` trait | 内存访问接口 |
-| `Peripheral` trait | 外设接口 |
-| `Cpu` | CPU 核心结构 |
-| `CpuState` | CPU 状态快照 |
+| 类型               | 说明              |
+| ------------------ | ----------------- |
+| `Addr(u32)`        | 32 位地址         |
+| `Word(u32)`        | 32 位数据字       |
+| `Byte(u8)`         | 8 位字节          |
+| `RegIdx(u8)`       | 寄存器索引 (0-31) |
+| `Memory` trait     | 内存访问接口      |
+| `Peripheral` trait | 外设接口          |
+| `Cpu`              | CPU 核心结构      |
+| `CpuState`         | CPU 状态快照      |
 
 ## 文档位置
 

@@ -3,7 +3,7 @@
 //! This module provides the system bus that connects memory and peripherals
 //! and routes memory accesses to the appropriate components.
 
-use crate::error::{Result, SimError};
+use crate::error::{check_alignment, Result, SimError};
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
 use std::fmt;
@@ -155,21 +155,33 @@ impl Bus {
     }
 
     /// Read a half-word from the bus.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 2-byte aligned.
     pub fn read_half(&self, addr: Addr) -> Result<Half> {
+        check_alignment(addr, 2)?;
         let b0 = self.read_byte(addr)?.raw();
         let b1 = self.read_byte(addr.add(1))?.raw();
         Ok(Half::new(((b1 as u16) << 8) | (b0 as u16)))
     }
 
     /// Write a half-word to the bus.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 2-byte aligned.
     pub fn write_half(&mut self, addr: Addr, value: Half) -> Result<()> {
+        check_alignment(addr, 2)?;
         let raw = value.raw();
         self.write_byte(addr, Byte::new(raw as u8))?;
         self.write_byte(addr.add(1), Byte::new((raw >> 8) as u8))
     }
 
     /// Read a word from the bus.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 4-byte aligned.
     pub fn read_word(&self, addr: Addr) -> Result<Word> {
+        check_alignment(addr, 4)?;
         let b0 = self.read_byte(addr)?.raw() as u32;
         let b1 = self.read_byte(addr.add(1))?.raw() as u32;
         let b2 = self.read_byte(addr.add(2))?.raw() as u32;
@@ -178,7 +190,11 @@ impl Bus {
     }
 
     /// Write a word to the bus.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 4-byte aligned.
     pub fn write_word(&mut self, addr: Addr, value: Word) -> Result<()> {
+        check_alignment(addr, 4)?;
         let raw = value.raw();
         self.write_byte(addr, Byte::new(raw as u8))?;
         self.write_byte(addr.add(1), Byte::new((raw >> 8) as u8))?;

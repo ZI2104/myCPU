@@ -3,8 +3,8 @@
 //! This module provides a snapshot of the CPU state for debugging
 //! and DiffTest purposes.
 
-use crate::types::{Addr, PrivilegeLevel, Word};
 use crate::cpu::{ProgramCounter, Registers};
+use crate::types::{Addr, PrivilegeLevel, Word};
 use std::fmt;
 
 /// CPU state snapshot.
@@ -38,13 +38,22 @@ impl CpuState {
     }
 
     /// Create a CPU state from the current CPU.
-    pub fn from_cpu(pc: &ProgramCounter, regs: &Registers, privilege: PrivilegeLevel, instructions_executed: u64) -> Self {
+    ///
+    /// `halted` is passed through so the snapshot reflects whether the CPU
+    /// was halted at the time the snapshot was taken.
+    pub fn from_cpu(
+        pc: &ProgramCounter,
+        regs: &Registers,
+        privilege: PrivilegeLevel,
+        instructions_executed: u64,
+        halted: bool,
+    ) -> Self {
         Self {
             pc: pc.get(),
             regs: regs.as_slice().try_into().unwrap(),
             privilege,
             instructions_executed,
-            halted: false,
+            halted,
         }
     }
 
@@ -114,13 +123,9 @@ impl CpuState {
     /// Compare this state with another at the given comparison level.
     pub fn compare(&self, other: &CpuState, level: ComparisonLevel) -> bool {
         match level {
-            ComparisonLevel::Minimal => {
-                self.pc == other.pc && self.regs == other.regs
-            }
+            ComparisonLevel::Minimal => self.pc == other.pc && self.regs == other.regs,
             ComparisonLevel::Standard => {
-                self.pc == other.pc
-                    && self.regs == other.regs
-                    && self.privilege == other.privilege
+                self.pc == other.pc && self.regs == other.regs && self.privilege == other.privilege
             }
             ComparisonLevel::Full => self == other,
         }

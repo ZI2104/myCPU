@@ -21,6 +21,7 @@ Desktop.ini
 *.so
 *.dylib
 *.pdb
+*.js
 
 # Debug
 *.log
@@ -33,6 +34,10 @@ core.*
 
 # Documentation
 /doc/
+.workbuddy/
+*.docx
+*.pptx
+*.pdf
 
 # Temporary files
 *.tmp

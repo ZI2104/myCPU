@@ -27,6 +27,17 @@ pub enum SimError {
         size: usize,
     },
 
+    /// Memory alignment error
+    #[error("Memory alignment error at {addr}: {size}-byte access requires {alignment}-byte alignment")]
+    MemoryAlignment {
+        /// The address that was accessed
+        addr: Addr,
+        /// The size of the access in bytes
+        size: usize,
+        /// The required alignment in bytes
+        alignment: usize,
+    },
+
     /// Invalid instruction
     #[error("Invalid instruction at PC {pc}: 0x{instruction:08x}")]
     InvalidInstruction {
@@ -96,6 +107,26 @@ pub enum SimError {
 
 /// Result type alias for simulator operations.
 pub type Result<T> = std::result::Result<T, SimError>;
+
+/// Check if an address is properly aligned for the given access size.
+///
+/// # Arguments
+/// * `addr` - The address to check
+/// * `size` - The required alignment in bytes (typically 2 or 4)
+///
+/// # Returns
+/// `Ok(())` if aligned, `Err(SimError::MemoryAlignment)` otherwise.
+#[inline]
+pub fn check_alignment(addr: Addr, size: usize) -> Result<()> {
+    if !addr.is_aligned(size as u32) {
+        return Err(SimError::MemoryAlignment {
+            addr,
+            size,
+            alignment: size,
+        });
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

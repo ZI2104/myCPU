@@ -3,7 +3,7 @@
 //! This module defines the `Memory` trait that abstracts memory access
 //! operations in the RISC-V simulator.
 
-use crate::error::Result;
+use crate::error::{check_alignment, Result};
 use crate::types::{Addr, Byte, Half, Word};
 
 /// Memory access trait.
@@ -33,11 +33,15 @@ pub trait Memory {
     /// Read a half-word (16 bits) from memory.
     ///
     /// # Arguments
-    /// * `addr` - The address to read from (should be half-word aligned)
+    /// * `addr` - The address to read from (must be 2-byte aligned)
     ///
     /// # Returns
     /// The half-word at the given address in little-endian order.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 2-byte aligned.
     fn read_half(&self, addr: Addr) -> Result<Half> {
+        check_alignment(addr, 2)?;
         let low = self.read_byte(addr)?.raw();
         let high = self.read_byte(addr.add(1))?.raw();
         Ok(Half::new(((high as u16) << 8) | (low as u16)))
@@ -46,12 +50,16 @@ pub trait Memory {
     /// Write a half-word (16 bits) to memory.
     ///
     /// # Arguments
-    /// * `addr` - The address to write to (should be half-word aligned)
+    /// * `addr` - The address to write to (must be 2-byte aligned)
     /// * `value` - The half-word value to write
     ///
     /// # Details
     /// Writes in little-endian order.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 2-byte aligned.
     fn write_half(&mut self, addr: Addr, value: Half) -> Result<()> {
+        check_alignment(addr, 2)?;
         self.write_byte(addr, Byte::new(value.raw() as u8))?;
         self.write_byte(addr.add(1), Byte::new((value.raw() >> 8) as u8))
     }
@@ -59,11 +67,15 @@ pub trait Memory {
     /// Read a word (32 bits) from memory.
     ///
     /// # Arguments
-    /// * `addr` - The address to read from (should be word aligned)
+    /// * `addr` - The address to read from (must be 4-byte aligned)
     ///
     /// # Returns
     /// The word at the given address in little-endian order.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 4-byte aligned.
     fn read_word(&self, addr: Addr) -> Result<Word> {
+        check_alignment(addr, 4)?;
         let b0 = self.read_byte(addr)?.raw() as u32;
         let b1 = self.read_byte(addr.add(1))?.raw() as u32;
         let b2 = self.read_byte(addr.add(2))?.raw() as u32;
@@ -74,12 +86,16 @@ pub trait Memory {
     /// Write a word (32 bits) to memory.
     ///
     /// # Arguments
-    /// * `addr` - The address to write to (should be word aligned)
+    /// * `addr` - The address to write to (must be 4-byte aligned)
     /// * `value` - The word value to write
     ///
     /// # Details
     /// Writes in little-endian order.
+    ///
+    /// # Errors
+    /// Returns `SimError::MemoryAlignment` if the address is not 4-byte aligned.
     fn write_word(&mut self, addr: Addr, value: Word) -> Result<()> {
+        check_alignment(addr, 4)?;
         let raw = value.raw();
         self.write_byte(addr, Byte::new(raw as u8))?;
         self.write_byte(addr.add(1), Byte::new((raw >> 8) as u8))?;

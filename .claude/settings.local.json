@@ -4,7 +4,9 @@
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
       "WebSearch",
-      "Read(//d/code/myCPU/$HOME/.claude/**)"
+      "Read(//d/code/myCPU/$HOME/.claude/**)",
+      "Bash(cargo clippy:*)"
     ]
-  }
+  },
+  "outputStyle": "Explanatory"
 }

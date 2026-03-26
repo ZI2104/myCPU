@@ -31,13 +31,16 @@ impl Addr {
     }
 
     /// Align the address down to the given alignment (must be power of 2).
+    ///
+    /// Uses bitwise AND with complement of (align - 1) to clear low bits.
+    /// This works because powers of 2 have exactly one bit set.
     pub const fn align_down(self, align: u32) -> Self {
         Self(self.0 & !(align - 1))
     }
 
     /// Check if the address is aligned to the given alignment.
     pub const fn is_aligned(self, align: u32) -> bool {
-        self.0 % align == 0
+        self.0.is_multiple_of(align)
     }
 }
 
