@@ -68,6 +68,30 @@ impl From<Addr> for usize {
     }
 }
 
+impl std::ops::Add for Addr {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0.wrapping_add(rhs.0))
+    }
+}
+
+impl std::ops::Add<u32> for Addr {
+    type Output = Self;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        Self(self.0.wrapping_add(rhs))
+    }
+}
+
+impl std::ops::Add<i32> for Addr {
+    type Output = Self;
+
+    fn add(self, rhs: i32) -> Self::Output {
+        Self(self.0.wrapping_add(rhs as u32))
+    }
+}
+
 /// A 32-bit word (data value).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Word(pub u32);
@@ -241,7 +265,7 @@ impl From<Half> for u16 {
 }
 
 /// Register index (0-31).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct RegIdx(pub u8);
 
 impl RegIdx {
