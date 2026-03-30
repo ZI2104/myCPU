@@ -146,33 +146,46 @@
 
 ---
 
-## Phase 4: 特权级与异常
+## Phase 4: 特权级与异常 ✅ 完成
 
 ### 目标
 实现 M/S/U 三级特权模式，支持异常和中断处理。
 
 ### 任务清单
 
-- [ ] CSR 寄存器
-  - [ ] M-mode: mstatus, mtvec, mepc, mcause, mie, mip, mscratch
-  - [ ] S-mode: sstatus, stvec, sepc, scause, sie, sip, sscratch
-  - [ ] U-mode: ustatus, utvec, uepc, ucause
-- [ ] 特权级切换
-  - [ ] ecall 指令
-  - [ ] mret/sret/uret 指令
-  - [ ] 特权级检查
-- [ ] 异常处理
-  - [ ] 异常入口 (xtvec)
-  - [ ] 上下文保存/恢复
-  - [ ] 异常返回
-- [ ] 中断系统
-  - [ ] CLINT (时钟中断)
-  - [ ] PLIC (外部中断)
-  - [ ] 中断委托 (M → S)
+- [x] CSR 寄存器
+  - [x] M-mode: mstatus, mtvec, mepc, mcause, mie, mip, mscratch, misa, mtval, mideleg, medeleg
+  - [x] S-mode: sstatus, stvec, sepc, scause, sie, sip, sscratch, stval
+  - [x] U-mode: ustatus, utvec, uepc, ucause
+  - [x] CSR 访问指令 (csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci)
+- [x] 特权级切换
+  - [x] ecall 指令 (单周期 CPU)
+  - [x] mret 指令 (单周期 CPU + 流水线)
+  - [x] sret/uret 指令 (框架已实现)
+  - [x] 特权级检查 (CSR 访问权限)
+  - [x] 流水线 CPU 中的 CSR 指令支持
+- [x] 异常处理
+  - [x] 异常入口 (xtvec) - 单周期 CPU + 流水线
+  - [x] 上下文保存/恢复 - 单周期 CPU + 流水线
+  - [x] 异常返回 - 单周期 CPU + 流水线 (mret)
+- [x] 中断系统 - CLINT
+  - [x] CLINT 实现 (mtime, mtimecmp, msip)
+  - [x] InterruptSource trait
+  - [x] 中断同步到 MIP (单周期 CPU + 流水线)
+  - [x] 中断优先级处理
+- [x] 中断系统 - PLIC
+  - [x] PLIC 实现 (外部中断控制器)
+  - [x] PLIC 与 Bus 集成
+  - [x] PLIC 与 CPU 集成 (MEIP/SEIP)
+  - [x] 中断委托 (M → S) via mideleg/medeleg
 
 ### 产出
-- 特权级切换测试通过
-- 可处理异常和中断
+- ✅ CSR 寄存器测试通过
+- ✅ CLINT 测试通过 (7 个测试)
+- ✅ PLIC 测试通过 (8 个测试)
+- ✅ 单周期 CPU 支持完整中断和异常处理
+- ✅ 流水线 CPU 支持 CSR 指令和 mret
+- ✅ 中断委托机制实现 (M-mode → S-mode)
 
 ---
 

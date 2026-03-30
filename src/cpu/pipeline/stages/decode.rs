@@ -2,6 +2,7 @@
 //!
 //! This module implements the ID stage of the pipeline.
 
+use crate::cpu::csr::CsrOp;
 use crate::cpu::pipeline::control::{ExControlSignals, MemControlSignals};
 use crate::cpu::pipeline::registers::{IdExRegister, IfIdRegister};
 use crate::cpu::Registers;
@@ -177,10 +178,74 @@ impl DecodeStage {
             }
             DecodedInstr::J(_) => (ExControlSignals::jal(), MemControlSignals::alu()),
             DecodedInstr::Jalr(_) => (ExControlSignals::jalr(), MemControlSignals::alu()),
-            DecodedInstr::System { .. } => (
-                ExControlSignals::default(),
-                MemControlSignals::none(),
-            ),
+            DecodedInstr::System { funct3, imm } => {
+                // System instructions: CSR operations, ECALL, EBREAK, MRET, etc.
+                // imm contains the CSR address for CSR instructions
+                // For ECALL/EBREAK/MRET, funct3 distinguishes them
+
+                match funct3 {
+                    0 => {
+                        // PRIV instructions: ECALL, EBREAK, MRET, SRET, URET
+                        // imm[11:0] = funct12
+                        let funct12 = *imm;
+                        match funct12 {
+                            0x000 => {
+                                // ECALL - environment call
+                                // This will be handled as an exception, no register write
+                                (ExControlSignals::default(), MemControlSignals::none())
+                            }
+                            0x001 => {
+                                // EBREAK - breakpoint
+                                // This will be handled as an exception, no register write
+                                (ExControlSignals::default(), MemControlSignals::none())
+                            }
+                            0x302 => {
+                                // MRET - return from Machine-mode trap
+                                (ExControlSignals::trap_return(), MemControlSignals::none())
+                            }
+                            0x102 => {
+                                // SRET - return from Supervisor-mode trap
+                                (ExControlSignals::trap_return(), MemControlSignals::none())
+                            }
+                            0x002 => {
+                                // URET - return from User-mode trap
+                                (ExControlSignals::trap_return(), MemControlSignals::none())
+                            }
+                            _ => {
+                                // Unknown PRIV instruction
+                                (ExControlSignals::default(), MemControlSignals::none())
+                            }
+                        }
+                    }
+                    1 | 2 | 3 | 5 | 6 | 7 => {
+                        // CSR instructions
+                        // funct3 encoding:
+                        //   001: CSRRW  (rd = csr; csr = rs1)
+                        //   010: CSRRS  (rd = csr; csr |= rs1)
+                        //   011: CSRRC  (rd = csr; csr &= ~rs1)
+                        //   101: CSRRWI (rd = csr; csr = zimm)
+                        //   110: CSRRSI (rd = csr; csr |= zimm)
+                        //   111: CSRRCI (rd = csr; csr &= ~zimm)
+
+                        let csr_addr = *imm as u16;
+                        let csr_op = match funct3 {
+                            1 => CsrOp::ReadWrite,
+                            2 => CsrOp::ReadSet,
+                            3 => CsrOp::ReadClear,
+                            5 => CsrOp::ReadWriteImm,
+                            6 => CsrOp::ReadSetImm,
+                            7 => CsrOp::ReadClearImm,
+                            _ => CsrOp::ReadWrite, // Should not reach here
+                        };
+
+                        (ExControlSignals::csr(csr_op, csr_addr), MemControlSignals::alu())
+                    }
+                    _ => {
+                        // Unknown system instruction
+                        (ExControlSignals::default(), MemControlSignals::none())
+                    }
+                }
+            }
         }
     }
 

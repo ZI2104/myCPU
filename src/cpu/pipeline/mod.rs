@@ -14,14 +14,13 @@ pub use forward::{ForwardSource, ForwardUnit};
 pub use hazard::HazardUnit;
 pub use registers::{ExMemRegister, IdExRegister, IfIdRegister, MemWbRegister};
 
+use crate::cpu::csr::CsrFile;
 use crate::cpu::execution_model::ExecutionModel;
 use crate::cpu::pipeline::stages::{DecodeStage, ExecuteStage, FetchStage, MemoryStage, WritebackStage};
 use crate::cpu::{CpuState, ProgramCounter, Registers};
 use crate::error::{Result, SimError};
 use crate::memory::Bus;
-use crate::types::{Addr, PrivilegeLevel};
-#[cfg(test)]
-use crate::types::Word;
+use crate::types::{Addr, PrivilegeLevel, Word};
 
 /// 5-stage pipelined CPU.
 #[derive(Debug)]
@@ -29,6 +28,7 @@ pub struct PipelineCpu {
     // Shared resources
     regs: Registers,
     bus: Bus,
+    csr: CsrFile,
     privilege: PrivilegeLevel,
 
     // PC register
@@ -61,6 +61,7 @@ impl PipelineCpu {
     pub fn new(bus: Bus) -> Self {
         Self {
             regs: Registers::new(),
+            csr: CsrFile::new(),
             bus,
             privilege: PrivilegeLevel::Machine,
             pc: ProgramCounter::zero(),
@@ -98,6 +99,142 @@ impl PipelineCpu {
         &mut self.regs
     }
 
+    /// Get a reference to the CSR file.
+    pub fn csr(&self) -> &CsrFile {
+        &self.csr
+    }
+
+    /// Get a mutable reference to the CSR file.
+    pub fn csr_mut(&mut self) -> &mut CsrFile {
+        &mut self.csr
+    }
+
+    /// Get the current privilege level.
+    pub fn privilege(&self) -> PrivilegeLevel {
+        self.privilege
+    }
+
+    /// Set the privilege level.
+    pub fn set_privilege(&mut self, level: PrivilegeLevel) {
+        self.privilege = level;
+    }
+
+    /// Synchronize external interrupt status from CLINT and PLIC to MIP CSR.
+    ///
+    /// This updates the MTIP, MSIP, and MEIP bits in mip based on the current
+    /// state of the CLINT and PLIC peripherals.
+    fn sync_interrupts(&mut self) {
+        // Sync CLINT interrupts (Timer and Software)
+        let (mtip, msip) = self.bus.get_clint_interrupt_status();
+        self.csr.mip.set_mtip(mtip);
+        self.csr.mip.set_msip(msip);
+
+        // Sync PLIC interrupts (External)
+        let (meip, _seip) = self.bus.get_plic_interrupt_status();
+        self.csr.mip.set_meip(meip);
+    }
+
+    /// Check for pending interrupts and handle them if enabled.
+    ///
+    /// # Returns
+    /// `true` if an interrupt was taken, `false` otherwise.
+    fn check_and_handle_interrupt(&mut self) -> bool {
+        // Check if interrupts are globally enabled (MIE bit in mstatus)
+        let mie_enabled = self.csr.mstatus.mie();
+
+        // Check if there's a pending interrupt that's also enabled
+        let pending = self.csr.mip.has_pending_interrupt(&self.csr.mie);
+
+        if mie_enabled && pending {
+            // Get the highest priority pending interrupt
+            if let Some((is_interrupt, cause)) = self.csr.mip.highest_priority_interrupt(&self.csr.mie) {
+                // Take the trap - flush pipeline and jump to handler
+                self.take_trap(is_interrupt, cause, self.pc.get());
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Take a trap (interrupt or exception).
+    ///
+    /// This saves the current context, flushes the pipeline, and jumps to the trap handler.
+    fn take_trap(&mut self, is_interrupt: bool, cause: u32, epc: Addr) {
+        // Save current PC to mepc
+        self.csr.mepc.set(epc);
+
+        // Set mcause
+        self.csr.mcause.set(is_interrupt, cause);
+
+        // Save current privilege to mstatus.MPP
+        self.csr.mstatus.set_mpp(self.privilege);
+
+        // Save current interrupt enable to mstatus.MPIE
+        self.csr.mstatus.set_mpie(self.csr.mstatus.mie());
+
+        // Disable interrupts
+        self.csr.mstatus.set_mie(false);
+
+        // Switch to machine mode
+        self.privilege = PrivilegeLevel::Machine;
+
+        // Flush the pipeline
+        self.flush_pipeline();
+
+        // Jump to trap handler (based on mtvec mode)
+        let handler_addr = self.csr.mtvec.trap_address(cause, is_interrupt);
+        self.pc.set(handler_addr);
+        self.fetch_stage.set_pc(handler_addr);
+    }
+
+    /// Flush the entire pipeline.
+    fn flush_pipeline(&mut self) {
+        // Insert bubbles into all pipeline registers
+        self.if_id.valid = false;
+        self.id_ex.valid = false;
+        self.ex_mem.valid = false;
+        self.mem_wb.valid = false;
+    }
+
+    /// Execute a trap return instruction (mret/sret/uret).
+    ///
+    /// This restores the PC from the appropriate EPC register and
+    /// restores the previous privilege level.
+    fn execute_trap_return(&mut self) -> Result<()> {
+        // Determine which mode we're returning from based on the instruction
+        // For simplicity, we assume MRET for now (based on privilege level)
+        // The decode stage has already identified this as a trap return
+
+        // Get return PC from mepc
+        let return_pc = self.csr.mepc.get();
+
+        // Restore privilege level from mstatus.MPP
+        let new_priv = self.csr.mstatus.mpp();
+
+        // Restore interrupt enable from mstatus.MPIE to mstatus.MIE
+        let mpie = self.csr.mstatus.mpie();
+        self.csr.mstatus.set_mie(mpie);
+
+        // Set MPIE to 1 (per spec)
+        self.csr.mstatus.set_mpie(true);
+
+        // Set MPP to U-mode (0)
+        self.csr.mstatus.set_mpp(PrivilegeLevel::User);
+
+        // Update privilege level
+        self.privilege = new_priv;
+
+        // Flush the pipeline
+        self.flush_pipeline();
+
+        // Jump to return PC
+        self.pc.set(return_pc);
+        self.fetch_stage.set_pc(return_pc);
+
+        Ok(())
+    }
+
     /// Get a reference to the system bus.
     pub fn bus(&self) -> &Bus {
         &self.bus
@@ -131,6 +268,16 @@ impl PipelineCpu {
             return Err(SimError::Halted);
         }
 
+        // ========== Step 0: Synchronize interrupts from CLINT ==========
+        self.sync_interrupts();
+
+        // ========== Step 0.5: Check for pending interrupts ==========
+        if self.check_and_handle_interrupt() {
+            // Interrupt was taken - pipeline is flushed, skip rest of cycle
+            self.cycles += 1;
+            return Ok(());
+        }
+
         // ========== Step 1: Update hazard detection ==========
         self.hazard_unit.update(&self.id_ex, &self.if_id, &self.ex_mem);
 
@@ -149,12 +296,31 @@ impl PipelineCpu {
 
         // 2c. Execute stage - perform ALU operations and branch evaluation
         // Use old id_ex value and old pipeline registers for forwarding
-        let new_ex_mem = self.execute_stage.execute(
+        let mut new_ex_mem = self.execute_stage.execute(
             &self.id_ex,
             &self.ex_mem,
             &self.mem_wb,
             self.hazard_unit.flush_id_ex,
         )?;
+
+        // 2c-2. Handle CSR instructions and trap returns
+        if self.id_ex.ctrl.csr_op {
+            // Execute CSR operation
+            let rs1_val = self.id_ex.rs1_val.raw();
+            let csr_result = self.csr.execute(
+                self.id_ex.ctrl.csr_op_type,
+                self.id_ex.ctrl.csr_addr,
+                rs1_val,
+                self.privilege,
+            )?;
+            // Override ALU result with CSR read value
+            new_ex_mem.alu_result = Word::new(csr_result);
+        } else if self.id_ex.ctrl.trap_return {
+            // Handle trap return (mret/sret/uret)
+            self.execute_trap_return()?;
+            // Flush the pipeline after trap return
+            new_ex_mem.valid = false;
+        }
 
         // 2d. Decode stage - decode instruction and read registers
         let new_id_ex = self.decode_stage.execute(
@@ -209,6 +375,7 @@ impl ExecutionModel for PipelineCpu {
 
     fn reset(&mut self) {
         self.regs.reset();
+        self.csr.reset();
         self.pc = ProgramCounter::zero();
         self.privilege = PrivilegeLevel::Machine;
         self.if_id = IfIdRegister::default();

@@ -238,6 +238,102 @@ impl Bus {
             .any(|(_, _, p)| p.has_interrupt())
     }
 
+    /// Check if a specific peripheral has a pending interrupt.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the peripheral to check
+    ///
+    /// # Returns
+    /// `true` if the peripheral exists and has a pending interrupt.
+    pub fn has_peripheral_interrupt(&self, name: &str) -> bool {
+        self.peripheral_regions
+            .iter()
+            .any(|(_, _, p)| p.name() == name && p.has_interrupt())
+    }
+
+    /// Get timer and software interrupt status from CLINT.
+    ///
+    /// Returns (mtip, msip) where:
+    /// - mtip: Machine Timer Interrupt Pending (mtime >= mtimecmp)
+    /// - msip: Machine Software Interrupt Pending
+    ///
+    /// Returns (false, false) if CLINT is not found.
+    pub fn get_clint_interrupt_status(&self) -> (bool, bool) {
+        use crate::interrupt::Clint;
+
+        // Look for CLINT peripheral and get its interrupt status
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() == "CLINT" {
+                // Downcast to concrete Clint type to access detailed interrupt status
+                let any = peripheral.as_any();
+                if let Some(clint) = any.downcast_ref::<Clint>() {
+                    return (clint.mtip(), clint.msip());
+                }
+            }
+        }
+        (false, false)
+    }
+
+    /// Get external interrupt status from PLIC.
+    ///
+    /// Returns (meip, seip) where:
+    /// - meip: Machine External Interrupt Pending
+    /// - seip: Supervisor External Interrupt Pending
+    ///
+    /// Returns (false, false) if PLIC is not found.
+    pub fn get_plic_interrupt_status(&self) -> (bool, bool) {
+        use crate::interrupt::Plic;
+
+        // Look for PLIC peripheral and get its interrupt status
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() == "PLIC" {
+                let any = peripheral.as_any();
+                if let Some(plic) = any.downcast_ref::<Plic>() {
+                    // For now, we only support one hart
+                    let meip = plic.has_pending_interrupt(0);
+                    // SEIP would require S-mode support in PLIC
+                    let seip = false;
+                    return (meip, seip);
+                }
+            }
+        }
+        (false, false)
+    }
+
+    /// Claim the highest priority external interrupt from PLIC.
+    ///
+    /// Returns the interrupt source ID, or 0 if none.
+    pub fn claim_plic_interrupt(&mut self) -> u32 {
+        use crate::interrupt::Plic;
+
+        // Look for PLIC peripheral and claim interrupt
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() == "PLIC" {
+                let any = peripheral.as_any_mut();
+                if let Some(plic) = any.downcast_mut::<Plic>() {
+                    return plic.claim(0);
+                }
+            }
+        }
+        0
+    }
+
+    /// Complete (finish processing) an external interrupt in PLIC.
+    pub fn complete_plic_interrupt(&mut self, source: u32) {
+        use crate::interrupt::Plic;
+
+        // Look for PLIC peripheral and complete interrupt
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() == "PLIC" {
+                let any = peripheral.as_any_mut();
+                if let Some(plic) = any.downcast_mut::<Plic>() {
+                    plic.complete(0, source);
+                    return;
+                }
+            }
+        }
+    }
+
     /// Acknowledge interrupts from all peripherals.
     pub fn acknowledge_interrupts(&mut self) {
         for (_, _, peripheral) in &mut self.peripheral_regions {

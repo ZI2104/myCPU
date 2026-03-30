@@ -9,9 +9,11 @@ mod pc;
 mod registers;
 mod state;
 
+pub mod csr;
 pub mod pipeline;
 
 pub use core::Cpu;
+pub use csr::{CsrFile, CsrOp};
 pub use execution_model::ExecutionModel;
 pub use pc::ProgramCounter;
 pub use registers::Registers;

@@ -314,7 +314,7 @@ impl From<RegIdx> for usize {
 }
 
 /// Privilege level in RISC-V.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum PrivilegeLevel {
     /// User mode (U-mode)
     User = 0,

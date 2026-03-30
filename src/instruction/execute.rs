@@ -7,7 +7,7 @@ use super::format::{BType, IType, JType, RType, SType, UType};
 use super::opcode::{funct3, funct7};
 use crate::cpu::Cpu;
 use crate::error::{Result, SimError};
-use crate::types::{Addr, Byte, Half, RegIdx, Word};
+use crate::types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
 
 impl Cpu {
     /// Execute a decoded instruction.
@@ -359,26 +359,40 @@ impl Cpu {
         Ok(())
     }
 
-    /// Execute system instructions (ECALL, EBREAK, FENCE).
+    /// Execute system instructions (ECALL, EBREAK, ERET, FENCE).
     fn execute_system(&mut self, funct3: u8, imm: u32) -> Result<()> {
         match funct3 {
             0 => {
-                // ECALL or EBREAK
+                // PRIV instructions (ECALL, EBREAK, MRET, SRET, URET, etc.)
                 match imm & 0xFFF {
                     0 => {
-                        // ECALL
+                        // ECALL - Environment call
                         return Err(SimError::Ecall {
                             mode: format!("{:?}", self.privilege()),
                         });
                     }
                     1 => {
-                        // EBREAK
+                        // EBREAK - Environment break
                         return Err(SimError::Ebreak(self.pc()));
+                    }
+                    0x002 => {
+                        // URET - Return from User-mode trap
+                        // For now, just advance PC (simplified implementation)
+                        self.increment_pc();
+                    }
+                    0x102 => {
+                        // SRET - Return from Supervisor-mode trap
+                        // For now, just advance PC (simplified implementation)
+                        self.increment_pc();
+                    }
+                    0x302 => {
+                        // MRET - Return from Machine-mode trap
+                        self.execute_mret()?;
                     }
                     _ => {
                         return Err(SimError::UnsupportedInstruction {
                             pc: self.pc(),
-                            message: format!("Unknown SYSTEM imm: 0x{:03x}", imm & 0xFFF),
+                            message: format!("Unknown PRIV instruction: 0x{:03x}", imm & 0xFFF),
                         });
                     }
                 }
@@ -392,6 +406,44 @@ impl Cpu {
                 self.increment_pc();
             }
         }
+
+        Ok(())
+    }
+
+    /// Execute MRET instruction.
+    ///
+    /// MRET is used to return from a trap taken in M-mode.
+    /// It restores the PC from mepc and privilege level from mstatus.MPP.
+    fn execute_mret(&mut self) -> Result<()> {
+        // MRET can only be executed in M-mode
+        if self.privilege() != PrivilegeLevel::Machine {
+            return Err(SimError::InvalidInstruction {
+                pc: self.pc(),
+                instruction: 0x30200073, // MRET instruction encoding
+            });
+        }
+
+        // Get return PC from mepc
+        let return_pc = self.csr().mepc.get();
+
+        // Restore privilege level from mstatus.MPP
+        let new_priv = self.csr().mstatus.mpp();
+
+        // Restore interrupt enable from mstatus.MPIE to mstatus.MIE
+        let mpie = self.csr().mstatus.mpie();
+        self.csr_mut().mstatus.set_mie(mpie);
+
+        // Set MPIE to 1
+        self.csr_mut().mstatus.set_mpie(true);
+
+        // Set MPP to U-mode (0)
+        self.csr_mut().mstatus.set_mpp(PrivilegeLevel::User);
+
+        // Update privilege level
+        self.set_privilege(new_priv);
+
+        // Jump to return PC
+        self.set_pc(return_pc);
 
         Ok(())
     }

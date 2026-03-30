@@ -5,6 +5,7 @@
 
 use crate::error::Result;
 use crate::types::Addr;
+use std::any::Any;
 
 /// Peripheral device trait.
 ///
@@ -70,6 +71,18 @@ pub trait Peripheral {
     ///
     /// This is called when the CPU handles an interrupt from this peripheral.
     fn acknowledge_interrupt(&mut self) {}
+
+    /// Downcast to Any for runtime type inspection.
+    ///
+    /// This allows downcasting to concrete peripheral types like CLINT.
+    fn as_any(&self) -> &dyn Any {
+        unreachable!("as_any must be implemented for peripherals that need downcasting")
+    }
+
+    /// Mutable downcast to Any for runtime type inspection.
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        unreachable!("as_any_mut must be implemented for peripherals that need downcasting")
+    }
 }
 
 #[cfg(test)]

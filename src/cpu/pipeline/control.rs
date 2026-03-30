@@ -2,6 +2,8 @@
 //!
 //! This module defines control signals used in each pipeline stage.
 
+use crate::cpu::csr::CsrOp;
+
 /// Memory access width constants.
 pub mod mem_width {
     /// Byte access (8 bits).
@@ -42,6 +44,8 @@ pub enum AluOp {
     Lui,
     /// Pass rs1 value through (for jumps, loads).
     Pass,
+    /// CSR operation (pass CSR read value).
+    Csr,
 }
 
 impl AluOp {
@@ -103,6 +107,14 @@ pub struct ExControlSignals {
     pub branch_type: BranchType,
     /// Whether this instruction writes to a register.
     pub reg_write: bool,
+    /// Whether this is a CSR instruction.
+    pub csr_op: bool,
+    /// CSR operation type (if csr_op is true).
+    pub csr_op_type: CsrOp,
+    /// CSR address (if csr_op is true).
+    pub csr_addr: u16,
+    /// Whether this is a trap return instruction (mret/sret/uret).
+    pub trap_return: bool,
 }
 
 impl ExControlSignals {
@@ -115,6 +127,10 @@ impl ExControlSignals {
             jump: false,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -127,6 +143,10 @@ impl ExControlSignals {
             jump: false,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -139,6 +159,10 @@ impl ExControlSignals {
             jump: false,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -151,6 +175,10 @@ impl ExControlSignals {
             jump: false,
             branch_type: BranchType::None,
             reg_write: false,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -163,6 +191,10 @@ impl ExControlSignals {
             jump: false,
             branch_type,
             reg_write: false,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -175,6 +207,10 @@ impl ExControlSignals {
             jump: true,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -187,6 +223,10 @@ impl ExControlSignals {
             jump: true,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -199,6 +239,10 @@ impl ExControlSignals {
             jump: false,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
         }
     }
 
@@ -211,6 +255,42 @@ impl ExControlSignals {
             jump: false,
             branch_type: BranchType::None,
             reg_write: true,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: false,
+        }
+    }
+
+    /// Create control signals for CSR instructions.
+    pub fn csr(csr_op_type: CsrOp, csr_addr: u16) -> Self {
+        Self {
+            alu_op: AluOp::Csr,
+            alu_src: AluSrc::Register, // rs1 value used for CSR operation
+            branch: false,
+            jump: false,
+            branch_type: BranchType::None,
+            reg_write: true, // CSR instructions write to rd
+            csr_op: true,
+            csr_op_type,
+            csr_addr,
+            trap_return: false,
+        }
+    }
+
+    /// Create control signals for trap return instructions (mret/sret/uret).
+    pub fn trap_return() -> Self {
+        Self {
+            alu_op: AluOp::Nop,
+            alu_src: AluSrc::Register,
+            branch: false,
+            jump: true, // Acts like a jump to MEPC/SEPC
+            branch_type: BranchType::None,
+            reg_write: false,
+            csr_op: false,
+            csr_op_type: CsrOp::ReadWrite,
+            csr_addr: 0,
+            trap_return: true,
         }
     }
 }

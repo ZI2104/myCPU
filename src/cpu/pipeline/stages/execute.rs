@@ -156,6 +156,7 @@ impl ExecuteStage {
             AluOp::Lui => b, // Immediate is already in b
             AluOp::Pass => a,
             AluOp::Nop => Word::ZERO,
+            AluOp::Csr => a, // For CSR instructions, pass rs1 value through
         }
     }
 
@@ -182,6 +183,7 @@ impl ExecuteStage {
 mod tests {
     use super::*;
     use crate::cpu::pipeline::control::{AluSrc, ExControlSignals};
+    use crate::cpu::csr::CsrOp;
 
     fn create_id_ex_for_alu(alu_op: AluOp, rs1: u32, rs2: u32, imm: i32, alu_src: AluSrc) -> IdExRegister {
         IdExRegister {
@@ -200,6 +202,10 @@ mod tests {
                 jump: false,
                 branch_type: BranchType::None,
                 reg_write: true,
+                csr_op: false,
+                csr_op_type: CsrOp::ReadWrite,
+                csr_addr: 0,
+                trap_return: false,
             },
             mem_ctrl: MemControlSignals::default(),
             valid: true,
