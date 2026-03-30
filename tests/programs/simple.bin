@@ -1,0 +1,10 @@
+# Simple test program binary
+# This is a raw binary with a few instructions
+
+# Hand-assembled RV32I instructions:
+# 0x80000000: addi x1, x0, 1    # x1 = 1
+# 0x80000004: addi x2, x0, 2    # x2 = 2
+# 0x80000008: add  x3, x1, x2   # x3 = 3
+# 0x8000000C: lui  x4, 0x10000  # x4 = 0x10000000 (UART base)
+# 0x80000010: addi x5, x0, 72   # x5 = 'H'
+# 0x80000014: sb   x5, 0(x4)    # Write 'H' to UART

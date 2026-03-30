@@ -92,9 +92,21 @@ pub enum SimError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// I/O error (string-based)
+    #[error("I/O error: {0}")]
+    IoError(String),
+
     /// ELF loading error
     #[error("ELF loading error: {0}")]
     ElfLoad(String),
+
+    /// ELF parse error
+    #[error("ELF parse error: {0}")]
+    ElfParseError(String),
+
+    /// Invalid address access
+    #[error("Invalid address access: {0}")]
+    InvalidAddress(Addr),
 
     /// Peripheral error
     #[error("Peripheral error: {0}")]

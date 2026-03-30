@@ -42,10 +42,14 @@
 //! ```
 
 pub mod cpu;
+pub mod debug;
+pub mod difftest;
 pub mod error;
 pub mod instruction;
 pub mod interrupt;
+pub mod loader;
 pub mod memory;
+pub mod peripheral;
 pub mod traits;
 pub mod types;
 

@@ -189,41 +189,49 @@
 
 ---
 
-## Phase 5: 外设与调试
+## Phase 5: 外设与调试 ✅ 完成
 
 ### 目标
 实现 UART 串口输出，支持程序加载，实现 GDB 调试接口。
 
 ### 任务清单
 
-- [ ] UART (NS16550A 兼容)
-  - [ ] 发送/接收寄存器
-  - [ ] 状态寄存器
-  - [ ] 中断支持
-- [ ] Timer
-  - [ ] mtime 寄存器
-  - [ ] mtimecmp 寄存器
-  - [ ] 时钟中断
-- [ ] ELF 加载器
-  - [ ] 解析 ELF 头 (使用 goblin crate)
-  - [ ] 加载程序段
-  - [ ] 设置入口点
-- [ ] GDB Remote Protocol (核心)
-  - [ ] TCP Server 基础框架
-  - [ ] 基础命令: ?, g, G, m, M, c, s
-  - [ ] 断点支持: Z0, z0
-  - [ ] 查询命令: qSupported, qAttached
-  - [ ] VSCode 集成配置
-- [ ] DiffTest 框架
-  - [ ] QEMU GDB Stub 集成
-  - [ ] 状态对比逻辑
-  - [ ] 错误报告与日志
+- [x] UART (NS16550A 兼容)
+  - [x] 发送/接收寄存器 (THR/RBR)
+  - [x] 状态寄存器 (LSR)
+  - [x] 中断支持 (IER/IIR)
+  - [x] FIFO Control Register (FCR)
+  - [x] Line Control Register (LCR)
+  - [x] Modem Control Register (MCR)
+  - [x] Scratch Register (SCR)
+  - [x] Divisor Latch (DLL/DLM)
+- [x] Timer (已在 Phase 4 实现于 CLINT)
+  - [x] mtime 寄存器
+  - [x] mtimecmp 寄存器
+  - [x] 时钟中断
+- [x] ELF 加载器
+  - [x] 解析 ELF 头 (使用 goblin crate)
+  - [x] 加载程序段
+  - [x] 设置入口点
+  - [x] BSS 段零填充
+- [x] GDB Remote Protocol (核心)
+  - [x] TCP Server 基础框架
+  - [x] 基础命令: ?, g, G, m, M, c, s
+  - [x] 断点支持: Z0, z0
+  - [x] 查询命令: qSupported, qAttached
+  - [x] VSCode 集成配置 (.vscode/launch.json)
+- [x] DiffTest 框架
+  - [x] QEMU GDB Stub 集成
+  - [x] 状态对比逻辑
+  - [x] 错误报告与日志
 
 ### 产出
-- 可串口输出 "Hello World"
-- 可加载并运行 ELF 程序
-- 可通过 GDB/VSCode 调试
-- DiffTest 自动化测试可用
+- ✅ UART 串口模块实现 (NS16550A 兼容)
+- ✅ ELF 加载器实现 (使用 goblin crate)
+- ✅ GDB 调试服务器框架
+- ✅ VSCode 调试配置
+- ✅ DiffTest 框架实现
+- ✅ CLI 支持 `run` 和 `debug` 子命令
 
 ---
 
