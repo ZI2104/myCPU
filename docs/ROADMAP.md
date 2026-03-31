@@ -320,6 +320,28 @@
 - [ ] DMA/描述符队列（大任务模式）
 - [ ] 自定义指令加速路径（后续阶段）
 
+### P6: Linux + SDL/Framebuffer 演示链路（已完成）
+
+- [x] 可视化后端支持 `framebuffer/fb` 命令（读取内存并转换 RGBA）
+- [x] 前端新增 Framebuffer 面板（地址/分辨率/像素格式可配置）
+- [x] 支持 `gray8/rgb565/rgb888` 三种源格式渲染
+- [x] 演示帧生成命令 `fb_demo <pong|checker|gradient>`（一键生成可视化画面）
+- [x] Windows 一键演示脚本 `scripts/run_framebuffer_demo.ps1`
+- [x] 接入 Linux 用户态程序输出到约定帧缓冲地址
+- [x] 串联 SDL/小游戏演示脚本与一键验收
+
+#### P6 当前里程碑验收（2026-04-01）
+
+- 新增能力：
+  - WebSocket 命令：`framebuffer <addr> <width> <height> [format]`
+  - Linux 预设命令：`fb linux` / `framebuffer linux`（默认 `0x80E00000`, `320x240`, `rgb565`）
+  - 前端可视化：Framebuffer Tab，支持手动刷新与自动刷新
+  - 内置 RV32I 帧缓冲写入程序（`visualize --linux-fb-demo --warmup <N>`）
+  - 一键演示脚本内置 WebSocket 探针验收（确认 `fb linux` 返回非零像素）
+- 验收结论：
+  - 已完成“程序写帧缓冲 → 后端读取转换 → 前端渲染”的端到端闭环
+  - 图案命令模式（`fb_demo`）保留用于小游戏画面演示
+
 #### P5 当前里程碑验收（2026-03-31）
 
 - 新增文件：

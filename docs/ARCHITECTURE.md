@@ -1504,7 +1504,21 @@ cargo run --release -- run --perf-report program.elf
 
 ---
 
-## 十四、后续扩展
+## 十四、Linux + Framebuffer 可视化链路（已落地）
+
+为降低 Linux + SDL 演示接入成本，当前已完成“程序写内存帧缓冲 → WebSocket → 前端 Canvas”的闭环：
+
+- 后端命令：`framebuffer <addr> <width> <height> [format]`
+- Linux 快捷预设：`fb linux` / `framebuffer linux`
+- 预设参数：`addr=0x80E00000`, `width=320`, `height=240`, `format=rgb565`
+- 支持格式：`gray8` / `rgb565` / `rgb888`
+- 后端统一转换为 `RGBA8888` 字节流，前端直接 `ImageData` 渲染
+- 内置 RV32I 帧缓冲写入程序：`visualize --linux-fb-demo --warmup <N>`
+- 一键脚本验收：`scripts/run_framebuffer_demo.ps1`（内置 WebSocket 非零像素探针）
+
+这条链路可在不引入复杂 GPU/显示控制器模型的前提下，快速验证 Linux 图形输出路径。
+
+## 十五、后续扩展
 
 - [ ] Zicsr 扩展 (CSR 指令)
 - [ ] Zifencei 扩展 (指令缓存刷新)

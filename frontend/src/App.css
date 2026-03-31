@@ -593,6 +593,83 @@ body {
   background: #2a2a2a;
 }
 
+/* Framebuffer View */
+.framebuffer-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.framebuffer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.framebuffer-header h3 {
+  margin: 0;
+}
+
+.framebuffer-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.framebuffer-controls input[type="number"] {
+  width: 88px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.framebuffer-controls select,
+.framebuffer-controls button {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.framebuffer-controls button {
+  cursor: pointer;
+  background: var(--secondary-bg);
+  color: #fff;
+  border: none;
+}
+
+.framebuffer-autorefresh {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-light);
+}
+
+.framebuffer-meta {
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--text-light);
+}
+
+.framebuffer-canvas-wrapper {
+  width: 100%;
+  overflow: auto;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.framebuffer-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  border: 1px solid #222;
+  max-width: 100%;
+}
+
 /* Debug Inspector */
 .debug-inspector {
   display: flex;

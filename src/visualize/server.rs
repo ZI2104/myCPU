@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::types::Addr;
 use crate::visualize::snapshot::{
     disassemble, Breakpoint, CpuSnapshot, DisassembledInstruction, DisassemblyResponse,
-    HistoryRecord, HistoryResponse, MemoryReadResponse,
+    FramebufferResponse, HistoryRecord, HistoryResponse, MemoryReadResponse,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
@@ -21,6 +21,221 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 /// Default base address for disassembly
 const DEFAULT_BASE_ADDR: u32 = 0x80000000;
+/// Max pixels allowed in one framebuffer response to avoid oversized websocket payloads.
+const MAX_FRAMEBUFFER_PIXELS: u32 = 1024 * 1024;
+/// Default Linux demo framebuffer base address (must fit in default 16MB RAM window).
+const LINUX_FB_ADDR: u32 = 0x80E0_0000;
+/// Default Linux demo framebuffer width.
+const LINUX_FB_WIDTH: u32 = 320;
+/// Default Linux demo framebuffer height.
+const LINUX_FB_HEIGHT: u32 = 240;
+/// Default Linux demo framebuffer pixel format.
+const LINUX_FB_FORMAT: PixelFormat = PixelFormat::Rgb565;
+
+fn linux_fb_preset() -> Command {
+    Command::Framebuffer {
+        addr: LINUX_FB_ADDR,
+        width: LINUX_FB_WIDTH,
+        height: LINUX_FB_HEIGHT,
+        format: LINUX_FB_FORMAT,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DemoPattern {
+    Pong,
+    Checker,
+    Gradient,
+}
+
+impl DemoPattern {
+    fn parse(input: &str) -> Option<Self> {
+        match input.to_ascii_lowercase().as_str() {
+            "pong" => Some(Self::Pong),
+            "checker" | "check" => Some(Self::Checker),
+            "gradient" | "grad" => Some(Self::Gradient),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pong => "pong",
+            Self::Checker => "checker",
+            Self::Gradient => "gradient",
+        }
+    }
+}
+
+fn rgb565(r: u8, g: u8, b: u8) -> u16 {
+    let r5 = (r as u16 >> 3) & 0x1F;
+    let g6 = (g as u16 >> 2) & 0x3F;
+    let b5 = (b as u16 >> 3) & 0x1F;
+    (r5 << 11) | (g6 << 5) | b5
+}
+
+fn write_rgb565_pixel(buf: &mut [u8], width: u32, x: u32, y: u32, color: u16) {
+    let idx = ((y * width + x) * 2) as usize;
+    if idx + 1 < buf.len() {
+        let [lo, hi] = color.to_le_bytes();
+        buf[idx] = lo;
+        buf[idx + 1] = hi;
+    }
+}
+
+fn generate_demo_frame_rgb565(pattern: DemoPattern, width: u32, height: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (width * height * 2) as usize];
+
+    match pattern {
+        DemoPattern::Checker => {
+            let tile = 16u32;
+            for y in 0..height {
+                for x in 0..width {
+                    let dark = ((x / tile) + (y / tile)) % 2 == 0;
+                    let color = if dark {
+                        rgb565(20, 30, 50)
+                    } else {
+                        rgb565(230, 220, 180)
+                    };
+                    write_rgb565_pixel(&mut buf, width, x, y, color);
+                }
+            }
+        }
+        DemoPattern::Gradient => {
+            for y in 0..height {
+                for x in 0..width {
+                    let r = ((x * 255) / width.max(1)) as u8;
+                    let g = ((y * 255) / height.max(1)) as u8;
+                    let b = 180u8;
+                    write_rgb565_pixel(&mut buf, width, x, y, rgb565(r, g, b));
+                }
+            }
+        }
+        DemoPattern::Pong => {
+            let bg = rgb565(8, 8, 16);
+            let fg = rgb565(240, 240, 240);
+            let ball = rgb565(255, 120, 40);
+
+            for y in 0..height {
+                for x in 0..width {
+                    write_rgb565_pixel(&mut buf, width, x, y, bg);
+                }
+            }
+
+            // Center dashed line
+            let cx = width / 2;
+            for y in (0..height).step_by(8) {
+                for dy in 0..4 {
+                    if y + dy < height {
+                        write_rgb565_pixel(&mut buf, width, cx, y + dy, fg);
+                    }
+                }
+            }
+
+            // Paddles
+            let paddle_h = (height / 4).max(24);
+            let y0 = (height.saturating_sub(paddle_h)) / 2;
+            for y in y0..(y0 + paddle_h).min(height) {
+                write_rgb565_pixel(&mut buf, width, 10, y, fg);
+                write_rgb565_pixel(&mut buf, width, 11, y, fg);
+                if width > 12 {
+                    write_rgb565_pixel(&mut buf, width, width - 12, y, fg);
+                    write_rgb565_pixel(&mut buf, width, width - 11, y, fg);
+                }
+            }
+
+            // Ball
+            let bx = width / 2;
+            let by = height / 2;
+            for y in by.saturating_sub(3)..=(by + 3).min(height.saturating_sub(1)) {
+                for x in bx.saturating_sub(3)..=(bx + 3).min(width.saturating_sub(1)) {
+                    write_rgb565_pixel(&mut buf, width, x, y, ball);
+                }
+            }
+        }
+    }
+
+    buf
+}
+
+fn parse_u32_auto(input: &str) -> Option<u32> {
+    if let Some(hex) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        input.parse::<u32>().ok()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PixelFormat {
+    Gray8,
+    Rgb565,
+    Rgb888,
+}
+
+impl PixelFormat {
+    fn parse(input: &str) -> Option<Self> {
+        match input.to_ascii_lowercase().as_str() {
+            "gray8" | "g8" => Some(Self::Gray8),
+            "rgb565" | "565" => Some(Self::Rgb565),
+            "rgb888" | "888" => Some(Self::Rgb888),
+            _ => None,
+        }
+    }
+
+    fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Gray8 => 1,
+            Self::Rgb565 => 2,
+            Self::Rgb888 => 3,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Gray8 => "gray8",
+            Self::Rgb565 => "rgb565",
+            Self::Rgb888 => "rgb888",
+        }
+    }
+}
+
+fn expand_rgb565_to_rgba(input: &[u8], pixel_count: usize) -> Vec<u8> {
+    let mut output = Vec::with_capacity(pixel_count * 4);
+    for chunk in input.chunks_exact(2) {
+        let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+        let r = ((value >> 11) & 0x1F) as u8;
+        let g = ((value >> 5) & 0x3F) as u8;
+        let b = (value & 0x1F) as u8;
+        output.push((r << 3) | (r >> 2));
+        output.push((g << 2) | (g >> 4));
+        output.push((b << 3) | (b >> 2));
+        output.push(255);
+    }
+    output
+}
+
+fn expand_rgb888_to_rgba(input: &[u8], pixel_count: usize) -> Vec<u8> {
+    let mut output = Vec::with_capacity(pixel_count * 4);
+    for chunk in input.chunks_exact(3) {
+        output.push(chunk[0]);
+        output.push(chunk[1]);
+        output.push(chunk[2]);
+        output.push(255);
+    }
+    output
+}
+
+fn expand_gray8_to_rgba(input: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(input.len() * 4);
+    for gray in input {
+        output.push(*gray);
+        output.push(*gray);
+        output.push(*gray);
+        output.push(255);
+    }
+    output
+}
 
 // ============================================================================
 // Command Types
@@ -53,6 +268,15 @@ enum Command {
     Disassemble { addr: u32, count: usize },
     /// Get execution history
     History { start: usize, count: usize },
+    /// Read framebuffer and return RGBA pixels.
+    Framebuffer {
+        addr: u32,
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+    },
+    /// Generate and write a demo framebuffer scene into memory.
+    FramebufferDemo { pattern: DemoPattern },
 }
 
 impl Command {
@@ -126,6 +350,40 @@ impl Command {
                     100
                 };
                 Some(Command::History { start, count })
+            }
+            "framebuffer" | "fb" => {
+                if parts.len() == 1 {
+                    return Some(linux_fb_preset());
+                }
+                if parts.len() == 2
+                    && (parts[1].eq_ignore_ascii_case("linux")
+                        || parts[1].eq_ignore_ascii_case("default"))
+                {
+                    return Some(linux_fb_preset());
+                }
+                if parts.len() < 4 {
+                    return None;
+                }
+                let addr = parse_u32_auto(parts[1])?;
+                let width = parse_u32_auto(parts[2])?;
+                let height = parse_u32_auto(parts[3])?;
+                let format = parts
+                    .get(4)
+                    .and_then(|value| PixelFormat::parse(value))
+                    .unwrap_or(PixelFormat::Rgb565);
+                Some(Command::Framebuffer {
+                    addr,
+                    width,
+                    height,
+                    format,
+                })
+            }
+            "fb_demo" | "framebuffer_demo" => {
+                let pattern = parts
+                    .get(1)
+                    .and_then(|value| DemoPattern::parse(value))
+                    .unwrap_or(DemoPattern::Pong);
+                Some(Command::FramebufferDemo { pattern })
             }
             _ => None,
         }
@@ -531,6 +789,121 @@ impl VisualizeServer {
                 let json = serde_json::to_string(&response).unwrap();
                 ctx.send_json(json).await;
             }
+            Command::Framebuffer {
+                addr,
+                width,
+                height,
+                format,
+            } => {
+                let response = {
+                    if width == 0 || height == 0 {
+                        FramebufferResponse {
+                            response_type: "framebuffer".to_string(),
+                            addr,
+                            width,
+                            height,
+                            format: format.as_str().to_string(),
+                            pixels: Vec::new(),
+                            success: false,
+                            error: Some("framebuffer width/height must be > 0".to_string()),
+                        }
+                    } else {
+                        let pixel_count = width.saturating_mul(height);
+                        if pixel_count > MAX_FRAMEBUFFER_PIXELS {
+                            FramebufferResponse {
+                                response_type: "framebuffer".to_string(),
+                                addr,
+                                width,
+                                height,
+                                format: format.as_str().to_string(),
+                                pixels: Vec::new(),
+                                success: false,
+                                error: Some(format!(
+                                    "framebuffer too large: {} pixels (max {})",
+                                    pixel_count, MAX_FRAMEBUFFER_PIXELS
+                                )),
+                            }
+                        } else {
+                            let raw_size = pixel_count as usize * format.bytes_per_pixel();
+                            let mut raw = vec![0u8; raw_size];
+                            let read_result = {
+                                let cpu_guard = ctx.cpu.lock().await;
+                                cpu_guard
+                                    .bus()
+                                    .read_bytes(Addr::new(addr), &mut raw)
+                                    .map(|_| ())
+                            };
+
+                            match read_result {
+                                Ok(()) => {
+                                    let pixels = match format {
+                                        PixelFormat::Gray8 => expand_gray8_to_rgba(&raw),
+                                        PixelFormat::Rgb565 => {
+                                            expand_rgb565_to_rgba(&raw, pixel_count as usize)
+                                        }
+                                        PixelFormat::Rgb888 => {
+                                            expand_rgb888_to_rgba(&raw, pixel_count as usize)
+                                        }
+                                    };
+                                    FramebufferResponse {
+                                        response_type: "framebuffer".to_string(),
+                                        addr,
+                                        width,
+                                        height,
+                                        format: format.as_str().to_string(),
+                                        pixels,
+                                        success: true,
+                                        error: None,
+                                    }
+                                }
+                                Err(err) => FramebufferResponse {
+                                    response_type: "framebuffer".to_string(),
+                                    addr,
+                                    width,
+                                    height,
+                                    format: format.as_str().to_string(),
+                                    pixels: Vec::new(),
+                                    success: false,
+                                    error: Some(err.to_string()),
+                                },
+                            }
+                        }
+                    }
+                };
+
+                let json = serde_json::to_string(&response).unwrap();
+                ctx.send_json(json).await;
+            }
+            Command::FramebufferDemo { pattern } => {
+                let result = {
+                    let mut cpu_guard = ctx.cpu.lock().await;
+                    let data = generate_demo_frame_rgb565(pattern, LINUX_FB_WIDTH, LINUX_FB_HEIGHT);
+                    cpu_guard
+                        .bus_mut()
+                        .write_bytes(Addr::new(LINUX_FB_ADDR), &data)
+                        .map(|_| ())
+                };
+
+                let response = match result {
+                    Ok(()) => serde_json::json!({
+                        "type": "framebuffer_demo",
+                        "success": true,
+                        "pattern": pattern.as_str(),
+                        "addr": LINUX_FB_ADDR,
+                        "width": LINUX_FB_WIDTH,
+                        "height": LINUX_FB_HEIGHT,
+                        "format": LINUX_FB_FORMAT.as_str(),
+                    }),
+                    Err(err) => serde_json::json!({
+                        "type": "framebuffer_demo",
+                        "success": false,
+                        "pattern": pattern.as_str(),
+                        "error": err.to_string(),
+                    }),
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
         }
 
         Ok(())
@@ -634,6 +1007,91 @@ impl VisualizeServer {
                 tokio::task::yield_now().await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_framebuffer_command_defaults_to_rgb565() {
+        let cmd = Command::parse("framebuffer 0x81000000 320 240");
+        assert_eq!(
+            cmd,
+            Some(Command::Framebuffer {
+                addr: 0x8100_0000,
+                width: 320,
+                height: 240,
+                format: PixelFormat::Rgb565,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_framebuffer_command_with_format() {
+        let cmd = Command::parse("fb 0x81000000 64 64 gray8");
+        assert_eq!(
+            cmd,
+            Some(Command::Framebuffer {
+                addr: 0x8100_0000,
+                width: 64,
+                height: 64,
+                format: PixelFormat::Gray8,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_framebuffer_linux_preset_alias() {
+        let cmd = Command::parse("fb linux");
+        assert_eq!(
+            cmd,
+            Some(Command::Framebuffer {
+                addr: LINUX_FB_ADDR,
+                width: LINUX_FB_WIDTH,
+                height: LINUX_FB_HEIGHT,
+                format: LINUX_FB_FORMAT,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_framebuffer_default_without_arguments() {
+        let cmd = Command::parse("framebuffer");
+        assert_eq!(
+            cmd,
+            Some(Command::Framebuffer {
+                addr: LINUX_FB_ADDR,
+                width: LINUX_FB_WIDTH,
+                height: LINUX_FB_HEIGHT,
+                format: LINUX_FB_FORMAT,
+            })
+        );
+    }
+
+    #[test]
+    fn test_expand_rgb565_to_rgba() {
+        // pure red pixel in RGB565: 0xF800
+        let rgba = expand_rgb565_to_rgba(&[0x00, 0xF8], 1);
+        assert_eq!(rgba, vec![255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_parse_fb_demo_pattern() {
+        let cmd = Command::parse("fb_demo checker");
+        assert_eq!(
+            cmd,
+            Some(Command::FramebufferDemo {
+                pattern: DemoPattern::Checker,
+            })
+        );
+    }
+
+    #[test]
+    fn test_generate_demo_frame_size() {
+        let frame = generate_demo_frame_rgb565(DemoPattern::Pong, 320, 240);
+        assert_eq!(frame.len(), 320 * 240 * 2);
     }
 }
 

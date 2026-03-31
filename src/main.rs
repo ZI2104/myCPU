@@ -3,13 +3,14 @@
 //! Command-line interface for the myCPU RISC-V simulator.
 
 use clap::{Parser, Subcommand};
-use mycpu::cpu::Cpu;
+use mycpu::cpu::{Cpu, ExecutionModel};
 use mycpu::debug::GdbServer;
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf_report::PerfReport;
 use mycpu::peripheral::{Lpu, Npu, Uart};
 use mycpu::types::Addr;
+use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server;
 use std::io::Write;
 use std::path::PathBuf;
@@ -57,7 +58,7 @@ enum Commands {
     /// Start GDB debug server
     Debug {
         /// GDB server port
-        #[arg(short, long, default_value = "1234")]
+        #[arg(short = 'g', long, default_value = "1234")]
         port: u16,
 
         /// Memory size in MB
@@ -76,7 +77,7 @@ enum Commands {
     /// Start visualization server
     Visualize {
         /// WebSocket server port
-        #[arg(short, long, default_value = "8080")]
+        #[arg(short = 'w', long, default_value = "8080")]
         port: u16,
 
         /// Memory size in MB
@@ -87,9 +88,17 @@ enum Commands {
         #[arg(short, long, default_value = "0x80000000")]
         pc: String,
 
-        /// Binary or ELF file to load
+        /// Binary or ELF file to load (optional)
         #[arg(name = "FILE")]
-        file: PathBuf,
+        file: Option<PathBuf>,
+
+        /// Preload built-in Linux framebuffer writer program when FILE is omitted
+        #[arg(long, default_value_t = false)]
+        linux_fb_demo: bool,
+
+        /// Warm up CPU by executing N instructions before opening WebSocket server
+        #[arg(long, default_value_t = 0)]
+        warmup: u64,
     },
 }
 
@@ -116,7 +125,9 @@ fn main() -> anyhow::Result<()> {
             memory,
             pc,
             file,
-        } => start_visualize(port, memory, &pc, file),
+            linux_fb_demo,
+            warmup,
+        } => start_visualize(port, memory, &pc, file, linux_fb_demo, warmup),
     }
 }
 
@@ -286,7 +297,14 @@ fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<O
 }
 
 /// Start visualization server
-fn start_visualize(port: u16, memory_mb: usize, pc_str: &str, file: PathBuf) -> anyhow::Result<()> {
+fn start_visualize(
+    port: u16,
+    memory_mb: usize,
+    pc_str: &str,
+    file: Option<PathBuf>,
+    linux_fb_demo: bool,
+    warmup: u64,
+) -> anyhow::Result<()> {
     init_logger(true);
 
     let requested_pc = parse_hex_address(pc_str)?;
@@ -295,12 +313,42 @@ fn start_visualize(port: u16, memory_mb: usize, pc_str: &str, file: PathBuf) -> 
     // Attach UART for output
     attach_stdout_uart(&mut bus);
 
-    let file_entry = load_file(&mut bus, &file, requested_pc)?;
-    let start_pc = file_entry.unwrap_or(requested_pc);
+    if linux_fb_demo {
+        if file.is_none() {
+            let bytes = linux_fb_program::load_demo_program(&mut bus, requested_pc)?;
+            println!(
+                "Loaded built-in Linux framebuffer demo program: {} bytes at {}",
+                bytes, requested_pc
+            );
+            println!(
+                "Framebuffer preset: addr=0x{:08x} size={}x{} format={}",
+                linux_fb_program::LINUX_FB_ADDR,
+                linux_fb_program::LINUX_FB_WIDTH,
+                linux_fb_program::LINUX_FB_HEIGHT,
+                linux_fb_program::LINUX_FB_FORMAT
+            );
+        } else {
+            println!(
+                "--linux-fb-demo is ignored because FILE was provided; using external program"
+            );
+        }
+    }
+
+    let start_pc = if let Some(path) = file.as_ref() {
+        let file_entry = load_file(&mut bus, path, requested_pc)?;
+        file_entry.unwrap_or(requested_pc)
+    } else {
+        requested_pc
+    };
 
     println!("myCPU Visualization Server v{}", mycpu::VERSION);
     println!("WebSocket port: {}", port);
-    println!("Program loaded: {}", file.display());
+    if let Some(path) = file.as_ref() {
+        println!("Program loaded: {}", path.display());
+    } else {
+        println!("Program loaded: <none>");
+        println!("Demo mode: empty RAM + framebuffer demo commands enabled");
+    }
     println!("Entry point: {}", start_pc);
     if start_pc != requested_pc {
         println!(
@@ -312,7 +360,12 @@ fn start_visualize(port: u16, memory_mb: usize, pc_str: &str, file: PathBuf) -> 
     println!("Or open frontend/index.html in browser");
 
     // Create CPU with pipeline (for visualization)
-    let cpu = mycpu::cpu::pipeline::PipelineCpu::with_pc(bus, start_pc);
+    let mut cpu = mycpu::cpu::pipeline::PipelineCpu::with_pc(bus, start_pc);
+
+    if warmup > 0 {
+        let executed = cpu.run(warmup)?;
+        println!("Warmup executed {} instruction steps", executed);
+    }
 
     // Create tokio runtime and start server
     let rt = tokio::runtime::Runtime::new()?;

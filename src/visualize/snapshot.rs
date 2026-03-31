@@ -150,6 +150,28 @@ pub struct MemoryReadResponse {
     pub error: Option<String>,
 }
 
+/// Framebuffer read response.
+#[derive(Debug, Clone, Serialize)]
+pub struct FramebufferResponse {
+    /// Response type discriminator.
+    #[serde(rename = "type")]
+    pub response_type: String,
+    /// Framebuffer base address.
+    pub addr: u32,
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Source pixel format.
+    pub format: String,
+    /// RGBA8888 pixel bytes.
+    pub pixels: Vec<u8>,
+    /// Whether the read was successful.
+    pub success: bool,
+    /// Error message if failed.
+    pub error: Option<String>,
+}
+
 /// Breakpoint information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Breakpoint {

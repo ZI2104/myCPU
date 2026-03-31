@@ -54,6 +54,18 @@ cargo run --release -- run --perf-report program.elf
 
 # 启动 GDB 调试服务器
 cargo run --release -- debug program.elf
+
+# 启动可视化（可不传程序文件，进入 Demo 模式）
+cargo run --release -- visualize
+
+# 启动可视化（预载 Linux 帧缓冲写入程序并预热执行）
+cargo run --release -- visualize --linux-fb-demo --warmup 3500
+
+# Windows 一键启动帧缓冲演示
+powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1
+
+# Windows 一键启动图案演示（旧模式）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mode pattern-demo
 ```
 
 ## 文档

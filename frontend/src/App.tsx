@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import { ControlPanel } from './components/ControlPanel';
 import { DebugInspector } from './components/DebugInspector';
+import { FramebufferView } from './components/FramebufferView';
 import { MemoryView } from './components/MemoryView';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PipelineVisualizer } from './components/PipelineVisualizer';
@@ -11,6 +12,7 @@ import type {
     Breakpoint,
     CpuSnapshot,
     DisassemblyResponse,
+    FramebufferResponse,
     HistoryResponse,
     MemoryReadResponse,
 } from './types/snapshot';
@@ -21,11 +23,12 @@ function App() {
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(10);
   const [previousSnapshot, setPreviousSnapshot] = useState<CpuSnapshot | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'memory' | 'debug'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'memory' | 'framebuffer' | 'debug'>('pipeline');
   const [disassembly, setDisassembly] = useState<DisassemblyResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([]);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
+  const framebufferHandlersRef = useRef<((data: FramebufferResponse) => void)[]>([]);
 
   const { snapshot, connected, send, error, lastMessage } = useWebSocket(WS_URL);
 
@@ -38,6 +41,9 @@ function App() {
           // This is a memory response
           const memResponse = data as MemoryReadResponse;
           memoryHandlersRef.current.forEach(handler => handler(memResponse));
+        } else if (data.type === 'framebuffer' && data.width !== undefined && data.height !== undefined) {
+          const fbResponse = data as FramebufferResponse;
+          framebufferHandlersRef.current.forEach(handler => handler(fbResponse));
         } else if (data.base_addr !== undefined && Array.isArray(data.instructions)) {
           setDisassembly(data as DisassemblyResponse);
         } else if (Array.isArray(data.records) && data.total !== undefined) {
@@ -55,6 +61,10 @@ function App() {
 
   const registerMemoryHandler = useCallback((handler: (data: MemoryReadResponse) => void) => {
     memoryHandlersRef.current.push(handler);
+  }, []);
+
+  const registerFramebufferHandler = useCallback((handler: (data: FramebufferResponse) => void) => {
+    framebufferHandlersRef.current.push(handler);
   }, []);
 
   const handleStep = useCallback(() => {
@@ -136,6 +146,12 @@ function App() {
                   Memory
                 </button>
                 <button
+                  className={activeTab === 'framebuffer' ? 'active' : ''}
+                  onClick={() => setActiveTab('framebuffer')}
+                >
+                  Framebuffer
+                </button>
+                <button
                   className={activeTab === 'debug' ? 'active' : ''}
                   onClick={() => {
                     setActiveTab('debug');
@@ -156,6 +172,13 @@ function App() {
                 <MemoryView
                   sendCommand={send}
                   onMemoryData={registerMemoryHandler}
+                />
+              )}
+
+              {activeTab === 'framebuffer' && (
+                <FramebufferView
+                  sendCommand={send}
+                  onFramebufferData={registerFramebufferHandler}
                 />
               )}
 

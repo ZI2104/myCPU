@@ -3,6 +3,7 @@
 //! This module provides WebSocket-based visualization capabilities,
 //! allowing real-time inspection of CPU state via a web frontend.
 
+pub mod linux_fb_program;
 pub mod server;
 pub mod snapshot;
 

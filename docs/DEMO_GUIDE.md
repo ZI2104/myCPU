@@ -2,6 +2,34 @@
 
 ## 演示结构 (10-15 分钟)
 
+## 快速启动（Framebuffer 演示）
+
+```powershell
+# 仓库根目录执行（Windows）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1
+```
+
+默认模式会：
+
+- 启动 `visualize --linux-fb-demo --warmup 3500`
+- 启动前执行 WebSocket 探针验收（`fb linux` 返回非零像素）
+- 自动打开前端页面
+
+如需使用旧的图案命令演示（`fb_demo`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mode pattern-demo
+```
+
+浏览器操作：
+
+1. 进入 `Framebuffer` 标签页
+2. 点击 `Linux Preset`
+3. （默认模式）点击 `Refresh` 观察程序输出
+4. （图案模式）选择 `pong/checker/gradient` 后点击 `Demo Frame`
+
+说明：后端 `visualize` 支持不传程序文件，且可通过 `--linux-fb-demo` 预置 RV32I 帧缓冲写入程序。
+
 ### 时间分配
 
 | 阶段 | 时长 | 内容 | 目的 |

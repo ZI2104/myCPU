@@ -83,6 +83,17 @@ export interface MemoryReadResponse {
   error: string | null;
 }
 
+export interface FramebufferResponse {
+  type: 'framebuffer';
+  addr: number;
+  width: number;
+  height: number;
+  format: string;
+  pixels: number[];
+  success: boolean;
+  error: string | null;
+}
+
 // Breakpoints
 export interface Breakpoint {
   addr: number;
