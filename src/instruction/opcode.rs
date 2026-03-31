@@ -32,6 +32,9 @@ pub mod opcode {
     /// Register arithmetic (ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, AND, OR)
     pub const OP: u8 = 0b0110011;
 
+    /// Atomic memory operations (RV32A/RV64A)
+    pub const AMO: u8 = 0b0101111;
+
     /// FENCE instructions
     pub const FENCE: u8 = 0b0001111;
 
@@ -140,6 +143,7 @@ mod tests {
         assert_eq!(opcode::STORE, 0x23);
         assert_eq!(opcode::OP_IMM, 0x13);
         assert_eq!(opcode::OP, 0x33);
+        assert_eq!(opcode::AMO, 0x2F);
         assert_eq!(opcode::SYSTEM, 0x73);
     }
 

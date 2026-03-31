@@ -26,11 +26,17 @@ pub enum DecodedInstr {
     U(UType),
     /// J-type: JAL
     J(JType),
-    /// System: ECALL, EBREAK, FENCE
+    /// System/Fence: ECALL/EBREAK/MRET/SRET/CSR/FENCE
     System {
+        /// Original opcode (`SYSTEM` or `FENCE`)
+        opcode: u8,
+        /// Destination register
+        rd: RegIdx,
+        /// Source register (or zimm for immediate CSR variants)
+        rs1: RegIdx,
         /// Function 3 field
         funct3: u8,
-        /// Immediate field (used for fence variants)
+        /// Immediate field (CSR address / PRIV immediate)
         imm: u32,
     },
 }
@@ -179,7 +185,10 @@ impl Decoder {
                 funct3,
             })),
 
-            opcode::LUI | opcode::AUIPC => Ok(DecodedInstr::U(UType { rd, imm: Self::imm_u(instr) })),
+            opcode::LUI | opcode::AUIPC => Ok(DecodedInstr::U(UType {
+                rd,
+                imm: Self::imm_u(instr),
+            })),
 
             opcode::JAL => Ok(DecodedInstr::J(JType {
                 rd,
@@ -187,6 +196,9 @@ impl Decoder {
             })),
 
             opcode::SYSTEM | opcode::FENCE => Ok(DecodedInstr::System {
+                opcode,
+                rd,
+                rs1,
                 funct3,
                 imm: instr >> 20,
             }),

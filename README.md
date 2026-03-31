@@ -66,6 +66,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1
 
 # Windows 一键启动图案演示（旧模式）
 powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mode pattern-demo
+
+# Windows 清理临时工作区文件（推荐定期执行）
+powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1
 ```
 
 ## 文档

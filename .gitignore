@@ -42,3 +42,10 @@ core.*
 # Temporary files
 *.tmp
 *.temp
+
+# Local startup smoke artifacts
+/tests/programs/boot_loop.bin
+/tests/programs/mockfs.img
+
+# Local third-party sources
+/third_party/xv6-riscv/

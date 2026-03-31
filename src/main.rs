@@ -5,6 +5,7 @@
 use clap::{Parser, Subcommand};
 use mycpu::cpu::{Cpu, ExecutionModel};
 use mycpu::debug::GdbServer;
+use mycpu::interrupt::{Clint, Plic};
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf_report::PerfReport;
@@ -14,6 +15,9 @@ use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server;
 use std::io::Write;
 use std::path::PathBuf;
+
+const VIRTIO_SECTOR_SIZE: usize = 512;
+const VIRTIO_MIN_SECTORS: usize = 1024;
 
 /// myCPU - A RISC-V RV32I Instruction Set Simulator
 #[derive(Parser, Debug)]
@@ -53,6 +57,10 @@ enum Commands {
         /// Binary or ELF file to load
         #[arg(name = "FILE")]
         file: PathBuf,
+
+        /// Optional VirtIO block disk image (raw)
+        #[arg(long)]
+        virtio_disk: Option<PathBuf>,
     },
 
     /// Start GDB debug server
@@ -72,6 +80,10 @@ enum Commands {
         /// Binary or ELF file to load
         #[arg(name = "FILE")]
         file: PathBuf,
+
+        /// Optional VirtIO block disk image (raw)
+        #[arg(long)]
+        virtio_disk: Option<PathBuf>,
     },
 
     /// Start visualization server
@@ -99,6 +111,10 @@ enum Commands {
         /// Warm up CPU by executing N instructions before opening WebSocket server
         #[arg(long, default_value_t = 0)]
         warmup: u64,
+
+        /// Optional VirtIO block disk image (raw)
+        #[arg(long)]
+        virtio_disk: Option<PathBuf>,
     },
 }
 
@@ -113,13 +129,15 @@ fn main() -> anyhow::Result<()> {
             verbose,
             perf_report,
             file,
-        } => run_program(memory, &pc, count, verbose, perf_report, file),
+            virtio_disk,
+        } => run_program(memory, &pc, count, verbose, perf_report, file, virtio_disk),
         Commands::Debug {
             port,
             memory,
             pc,
             file,
-        } => start_debug_server(port, memory, &pc, file),
+            virtio_disk,
+        } => start_debug_server(port, memory, &pc, file, virtio_disk),
         Commands::Visualize {
             port,
             memory,
@@ -127,7 +145,8 @@ fn main() -> anyhow::Result<()> {
             file,
             linux_fb_demo,
             warmup,
-        } => start_visualize(port, memory, &pc, file, linux_fb_demo, warmup),
+            virtio_disk,
+        } => start_visualize(port, memory, &pc, file, linux_fb_demo, warmup, virtio_disk),
     }
 }
 
@@ -139,11 +158,12 @@ fn run_program(
     verbose: bool,
     show_perf_report: bool,
     file: PathBuf,
+    virtio_disk: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     init_logger(verbose);
 
     let requested_pc = parse_hex_address(pc_str)?;
-    let mut bus = create_bus(memory_mb);
+    let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
 
     // Attach UART for output
     attach_stdout_uart(&mut bus);
@@ -199,11 +219,12 @@ fn start_debug_server(
     memory_mb: usize,
     pc_str: &str,
     file: PathBuf,
+    virtio_disk: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     init_logger(true);
 
     let requested_pc = parse_hex_address(pc_str)?;
-    let mut bus = create_bus(memory_mb);
+    let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
 
     // Attach UART for output
     attach_stdout_uart(&mut bus);
@@ -250,15 +271,42 @@ fn init_logger(verbose: bool) {
 }
 
 /// Create system bus with RAM
-fn create_bus(memory_mb: usize) -> Bus {
+fn create_bus(memory_mb: usize, virtio_disk: Option<&PathBuf>) -> anyhow::Result<Bus> {
     let mut bus = Bus::new();
     let memory_size = memory_mb * 1024 * 1024;
     let ram = Ram::new(memory_size);
     bus.attach_memory(Addr::new(0x80000000), ram, "Main RAM");
+
+    // QEMU-virt compatible interrupt controllers required by most RV32 OS kernels.
+    bus.attach_peripheral(Clint::new());
+    bus.attach_peripheral(Plic::new());
+
     bus.attach_peripheral(Npu::new());
     bus.attach_peripheral(Lpu::new());
-    bus.attach_peripheral(VirtioBlock::new());
-    bus
+
+    let virtio_block = if let Some(path) = virtio_disk {
+        let image = std::fs::read(path)?;
+        let sectors = image
+            .len()
+            .div_ceil(VIRTIO_SECTOR_SIZE)
+            .max(VIRTIO_MIN_SECTORS);
+        let mut block = VirtioBlock::with_disk_sectors(sectors);
+        block
+            .load_disk_image(&image)
+            .map_err(|e| anyhow::anyhow!("failed to load virtio disk image: {}", e))?;
+        println!(
+            "Loaded VirtIO disk image: {} ({} bytes, {} sectors)",
+            path.display(),
+            image.len(),
+            sectors
+        );
+        block
+    } else {
+        VirtioBlock::new()
+    };
+
+    bus.attach_peripheral(virtio_block);
+    Ok(bus)
 }
 
 /// Attach UART that outputs to stdout
@@ -305,11 +353,12 @@ fn start_visualize(
     file: Option<PathBuf>,
     linux_fb_demo: bool,
     warmup: u64,
+    virtio_disk: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     init_logger(true);
 
     let requested_pc = parse_hex_address(pc_str)?;
-    let mut bus = create_bus(memory_mb);
+    let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
 
     // Attach UART for output
     attach_stdout_uart(&mut bus);

@@ -61,6 +61,7 @@ const DATA_WINDOW_END: u32 = DATA_WINDOW_START + SECTOR_SIZE as u32;
 const RESULT_OK: u32 = 0;
 const RESULT_IO_ERR: u32 = 1;
 const RESULT_BAD_CMD: u32 = 2;
+const REQUEST_HEADER_LEN: u32 = 16;
 
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 
@@ -194,6 +195,22 @@ impl VirtioBlock {
             data_window: [0; SECTOR_SIZE],
             disk: vec![0; disk_size],
         }
+    }
+
+    pub fn disk_size_bytes(&self) -> usize {
+        self.disk.len()
+    }
+
+    pub fn load_disk_image(&mut self, image: &[u8]) -> Result<()> {
+        if image.len() > self.disk.len() {
+            return Err(SimError::Peripheral(
+                "disk image exceeds virtio disk capacity".to_string(),
+            ));
+        }
+
+        self.disk.fill(0);
+        self.disk[..image.len()].copy_from_slice(image);
+        Ok(())
     }
 
     pub fn preload_sector(&mut self, sector: u64, data: &[u8]) -> Result<()> {
@@ -340,7 +357,15 @@ impl VirtioBlock {
             return Ok(());
         }
 
-        let avail_idx = self.read_guest_u16(guest_memory, self.queue_avail_addr + 2)?;
+        let avail_idx = match self.read_guest_u16(guest_memory, self.queue_avail_addr + 2) {
+            Ok(idx) => idx,
+            Err(_) => {
+                self.result = RESULT_IO_ERR;
+                self.status = 0;
+                self.req_status = VIRTIO_BLK_S_IOERR;
+                return Ok(());
+            }
+        };
         self.queue_avail_idx = avail_idx;
 
         if avail_idx == self.queue_used_idx {
@@ -353,7 +378,15 @@ impl VirtioBlock {
         let queue_len = self.queue_num as usize;
         let ring_slot = (self.queue_used_idx as usize) % queue_len;
         let head_offset = self.queue_avail_addr + 4 + (ring_slot as u64) * 2;
-        let head = self.read_guest_u16(guest_memory, head_offset)?;
+        let head = match self.read_guest_u16(guest_memory, head_offset) {
+            Ok(h) => h,
+            Err(_) => {
+                self.result = RESULT_IO_ERR;
+                self.status = 0;
+                self.req_status = VIRTIO_BLK_S_IOERR;
+                return Ok(());
+            }
+        };
         self.queue_head = head;
 
         let processed = self.process_descriptor_chain(head, guest_memory);
@@ -372,14 +405,17 @@ impl VirtioBlock {
             }
         };
 
-        let status_desc = self.resolve_status_desc(head, guest_memory)?;
-        self.write_guest_u8(guest_memory, status_desc.addr, status_byte)?;
+        if let Ok(status_desc) = self.resolve_status_desc(head, guest_memory) {
+            if status_desc.len >= 1 {
+                let _ = self.write_guest_u8(guest_memory, status_desc.addr, status_byte);
+            }
+        }
 
-        self.write_used_elem(guest_memory, ring_slot, head as u32, used_len)?;
+        let _ = self.write_used_elem(guest_memory, ring_slot, head as u32, used_len);
         self.last_used_head = head;
         self.queue_used_ring[ring_slot] = head;
         self.queue_used_idx = self.queue_used_idx.wrapping_add(1);
-        self.write_guest_u16(guest_memory, self.queue_used_addr + 2, self.queue_used_idx)?;
+        let _ = self.write_guest_u16(guest_memory, self.queue_used_addr + 2, self.queue_used_idx);
 
         if (self.control & control_bits::IRQ_EN) != 0 {
             self.irq_pending = true;
@@ -393,14 +429,26 @@ impl VirtioBlock {
         head: u16,
         guest_memory: &mut dyn VirtioGuestMemory,
     ) -> Result<u32> {
+        self.validate_descriptor_index(head)?;
         let request_desc = self.read_descriptor(guest_memory, head)?;
+        if request_desc.len < REQUEST_HEADER_LEN {
+            return Err(SimError::Peripheral(
+                "virtio-blk request descriptor too short".to_string(),
+            ));
+        }
         if (request_desc.flags & VIRTQ_DESC_F_NEXT) == 0 {
             return Err(SimError::Peripheral(
                 "virtio-blk request descriptor missing next".to_string(),
             ));
         }
 
+        self.validate_descriptor_index(request_desc.next)?;
         let data_desc = self.read_descriptor(guest_memory, request_desc.next)?;
+        if data_desc.len == 0 {
+            return Err(SimError::Peripheral(
+                "virtio-blk data descriptor length is zero".to_string(),
+            ));
+        }
 
         let req_type = self.read_guest_u32(guest_memory, request_desc.addr)?;
         let sector = self.read_guest_u64(guest_memory, request_desc.addr + 8)?;
@@ -448,6 +496,7 @@ impl VirtioBlock {
         head: u16,
         guest_memory: &mut dyn VirtioGuestMemory,
     ) -> Result<VirtqDesc> {
+        self.validate_descriptor_index(head)?;
         let request_desc = self.read_descriptor(guest_memory, head)?;
         if (request_desc.flags & VIRTQ_DESC_F_NEXT) == 0 {
             return Err(SimError::Peripheral(
@@ -455,6 +504,7 @@ impl VirtioBlock {
             ));
         }
 
+        self.validate_descriptor_index(request_desc.next)?;
         let data_desc = self.read_descriptor(guest_memory, request_desc.next)?;
         if (data_desc.flags & VIRTQ_DESC_F_NEXT) == 0 {
             return Err(SimError::Peripheral(
@@ -462,7 +512,14 @@ impl VirtioBlock {
             ));
         }
 
-        self.read_descriptor(guest_memory, data_desc.next)
+        self.validate_descriptor_index(data_desc.next)?;
+        let status_desc = self.read_descriptor(guest_memory, data_desc.next)?;
+        if status_desc.len < 1 {
+            return Err(SimError::Peripheral(
+                "virtio-blk status descriptor too short".to_string(),
+            ));
+        }
+        Ok(status_desc)
     }
 
     fn write_used_elem(
@@ -479,6 +536,15 @@ impl VirtioBlock {
 
     fn descriptor_offset(index: u16) -> u64 {
         (index as u64) * 16
+    }
+
+    fn validate_descriptor_index(&self, index: u16) -> Result<()> {
+        if (index as usize) >= self.queue_num as usize {
+            return Err(SimError::Peripheral(
+                "virtio-blk descriptor index out of queue range".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn read_descriptor(
@@ -1047,5 +1113,162 @@ mod tests {
         assert_eq!(read_u32(&dev, REG_LAST_USED_HEAD), 0);
         assert_eq!(read_u32(&dev, REG_REQ_STATUS), VIRTIO_BLK_S_OK as u32);
         assert!(dev.has_interrupt());
+    }
+
+    #[test]
+    fn test_virtio_block_descriptor_chain_write_then_read_flow() {
+        let mut dev = VirtioBlock::with_disk_sectors(16);
+
+        let guest_base = 0x8000_0000u32;
+        let mut guest = MockGuestMemory::new(guest_base, 0x9000);
+
+        let desc_addr = 0x8000_1000u64;
+        let avail_addr = 0x8000_2000u64;
+        let used_addr = 0x8000_3000u64;
+        let req_addr = 0x8000_4000u64;
+        let data_addr = 0x8000_5000u64;
+        let status_addr = 0x8000_6000u64;
+
+        let desc0 = desc_addr;
+        guest.write_u64_abs(desc0, req_addr);
+        guest.write_u32_abs(desc0 + 8, 16);
+        guest.write_u16_abs(desc0 + 12, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc0 + 14, 1);
+
+        let desc1 = desc_addr + 16;
+        guest.write_u64_abs(desc1, data_addr);
+        guest.write_u32_abs(desc1 + 8, SECTOR_SIZE as u32);
+        guest.write_u16_abs(desc1 + 12, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc1 + 14, 2);
+
+        let desc2 = desc_addr + 32;
+        guest.write_u64_abs(desc2, status_addr);
+        guest.write_u32_abs(desc2 + 8, 1);
+        guest.write_u16_abs(desc2 + 12, 0);
+        guest.write_u16_abs(desc2 + 14, 0);
+
+        guest.write_u8_abs(data_addr, 0xA1);
+        guest.write_u8_abs(data_addr + 1, 0xB2);
+        guest.write_u8_abs(data_addr + 2, 0xC3);
+        guest.write_u8_abs(data_addr + 3, 0xD4);
+
+        write_u32(&mut dev, REG_CONTROL, control_bits::IRQ_EN);
+        write_u32(&mut dev, REG_QUEUE_NUM, 8);
+        write_u32(&mut dev, REG_QUEUE_READY, 1);
+        write_u32(&mut dev, REG_QUEUE_DESC_LOW, desc_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
+        write_u32(&mut dev, REG_QUEUE_AVAIL_LOW, avail_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
+        write_u32(&mut dev, REG_QUEUE_USED_LOW, used_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+
+        guest.write_u32_abs(req_addr, request_type::OUT);
+        guest.write_u64_abs(req_addr + 8, 5);
+        guest.write_u16_abs(avail_addr + 2, 1);
+        guest.write_u16_abs(avail_addr + 4, 0);
+
+        write_u32(&mut dev, REG_QUEUE_NOTIFY, 0);
+        dev.process_pending_descriptor_notify(&mut guest).unwrap();
+
+        assert_eq!(guest.read_u8_abs(status_addr), VIRTIO_BLK_S_OK);
+        assert_eq!(read_u32(&dev, REG_QUEUE_USED_IDX), 1);
+
+        guest.write_u8_abs(data_addr, 0x00);
+        guest.write_u8_abs(data_addr + 1, 0x00);
+        guest.write_u8_abs(data_addr + 2, 0x00);
+        guest.write_u8_abs(data_addr + 3, 0x00);
+
+        guest.write_u32_abs(req_addr, request_type::IN);
+        guest.write_u64_abs(req_addr + 8, 5);
+        guest.write_u16_abs(avail_addr + 2, 2);
+        guest.write_u16_abs(avail_addr + 6, 0);
+
+        write_u32(&mut dev, REG_QUEUE_NOTIFY, 0);
+        dev.process_pending_descriptor_notify(&mut guest).unwrap();
+
+        assert_eq!(guest.read_u8_abs(data_addr), 0xA1);
+        assert_eq!(guest.read_u8_abs(data_addr + 1), 0xB2);
+        assert_eq!(guest.read_u8_abs(data_addr + 2), 0xC3);
+        assert_eq!(guest.read_u8_abs(data_addr + 3), 0xD4);
+        assert_eq!(guest.read_u8_abs(status_addr), VIRTIO_BLK_S_OK);
+        assert_eq!(read_u32(&dev, REG_QUEUE_USED_IDX), 2);
+    }
+
+    #[test]
+    fn test_virtio_block_descriptor_chain_zero_data_len_reports_ioerr() {
+        let mut dev = VirtioBlock::with_disk_sectors(16);
+
+        let guest_base = 0x8000_0000u32;
+        let mut guest = MockGuestMemory::new(guest_base, 0x8000);
+
+        let desc_addr = 0x8000_1000u64;
+        let avail_addr = 0x8000_2000u64;
+        let used_addr = 0x8000_3000u64;
+        let req_addr = 0x8000_4000u64;
+        let data_addr = 0x8000_5000u64;
+        let status_addr = 0x8000_6000u64;
+
+        guest.write_u64_abs(desc_addr, req_addr);
+        guest.write_u32_abs(desc_addr + 8, 16);
+        guest.write_u16_abs(desc_addr + 12, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc_addr + 14, 1);
+
+        guest.write_u64_abs(desc_addr + 16, data_addr);
+        guest.write_u32_abs(desc_addr + 24, 0);
+        guest.write_u16_abs(desc_addr + 28, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc_addr + 30, 2);
+
+        guest.write_u64_abs(desc_addr + 32, status_addr);
+        guest.write_u32_abs(desc_addr + 40, 1);
+        guest.write_u16_abs(desc_addr + 44, 0);
+        guest.write_u16_abs(desc_addr + 46, 0);
+
+        guest.write_u32_abs(req_addr, request_type::IN);
+        guest.write_u64_abs(req_addr + 8, 0);
+
+        guest.write_u16_abs(avail_addr + 2, 1);
+        guest.write_u16_abs(avail_addr + 4, 0);
+
+        write_u32(&mut dev, REG_QUEUE_NUM, 8);
+        write_u32(&mut dev, REG_QUEUE_READY, 1);
+        write_u32(&mut dev, REG_QUEUE_DESC_LOW, desc_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
+        write_u32(&mut dev, REG_QUEUE_AVAIL_LOW, avail_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
+        write_u32(&mut dev, REG_QUEUE_USED_LOW, used_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+
+        write_u32(&mut dev, REG_QUEUE_NOTIFY, 0);
+        dev.process_pending_descriptor_notify(&mut guest).unwrap();
+
+        assert_eq!(guest.read_u8_abs(status_addr), VIRTIO_BLK_S_IOERR);
+        assert_eq!(read_u32(&dev, REG_RESULT), RESULT_IO_ERR);
+        assert_eq!(read_u32(&dev, REG_REQ_STATUS), VIRTIO_BLK_S_IOERR as u32);
+        assert_eq!(read_u32(&dev, REG_QUEUE_USED_IDX), 1);
+    }
+
+    #[test]
+    fn test_virtio_block_load_disk_image_then_read_sector() {
+        let mut dev = VirtioBlock::with_disk_sectors(4);
+        let mut image = vec![0u8; SECTOR_SIZE * 2];
+        image[SECTOR_SIZE] = 0x3C;
+        image[SECTOR_SIZE + 1] = 0x4D;
+
+        dev.load_disk_image(&image).unwrap();
+
+        write_u32(&mut dev, REG_SECTOR_LOW, 1);
+        write_u32(&mut dev, REG_COMMAND, command::READ_SECTOR);
+
+        assert_eq!(dev.read(Addr::new(DATA_WINDOW_START)).unwrap(), 0x3C);
+        assert_eq!(dev.read(Addr::new(DATA_WINDOW_START + 1)).unwrap(), 0x4D);
+    }
+
+    #[test]
+    fn test_virtio_block_load_disk_image_too_large_fails() {
+        let mut dev = VirtioBlock::with_disk_sectors(1);
+        let image = vec![0u8; SECTOR_SIZE + 1];
+
+        let err = dev.load_disk_image(&image).unwrap_err();
+        assert!(matches!(err, SimError::Peripheral(_)));
     }
 }

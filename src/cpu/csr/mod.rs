@@ -237,6 +237,10 @@ impl CsrFile {
             csr_addr::MIP => Ok(self.mip.read()),
             csr_addr::MIDELEG => Ok(self.mideleg.read()),
             csr_addr::MEDELEG => Ok(self.medeleg.read()),
+            csr_addr::MVENDORID => Ok(0),
+            csr_addr::MARCHID => Ok(0),
+            csr_addr::MIMPID => Ok(0),
+            csr_addr::MHARTID => Ok(0),
 
             // Supervisor-mode
             csr_addr::SSTATUS => Ok(self.sstatus.read()),
@@ -474,18 +478,23 @@ impl CsrFile {
         rs1_val: u32,
         privilege: PrivilegeLevel,
     ) -> Result<u32> {
-        let is_write = op.is_write();
         let is_imm = op.is_imm();
         let write_val = if is_imm { rs1_val & 0x1F } else { rs1_val };
+        let should_write = match op {
+            CsrOp::ReadWrite | CsrOp::ReadWriteImm => true,
+            CsrOp::ReadSet | CsrOp::ReadSetImm | CsrOp::ReadClear | CsrOp::ReadClearImm => {
+                write_val != 0
+            }
+        };
 
         // Check access permissions
-        Self::check_access(addr, privilege, is_write && write_val != 0)?;
+        Self::check_access(addr, privilege, should_write)?;
 
         // Read old value
         let old_val = self.read(addr, privilege)?;
 
         // Perform write operation
-        if is_write {
+        if should_write {
             match op {
                 CsrOp::ReadWrite | CsrOp::ReadWriteImm => {
                     self.write(addr, write_val, privilege)?;
@@ -630,5 +639,21 @@ mod tests {
             .read(csr_addr::MSCRATCH, PrivilegeLevel::Machine)
             .unwrap();
         assert_eq!(val, (0x11111111 | 0x00001111) & !0x00000001);
+    }
+
+    #[test]
+    fn test_csrrs_zero_reads_read_only_csr() {
+        let mut csr_file = CsrFile::new();
+
+        let old = csr_file
+            .execute(
+                CsrOp::ReadSet,
+                csr_addr::MHARTID,
+                0,
+                PrivilegeLevel::Machine,
+            )
+            .unwrap();
+
+        assert_eq!(old, 0);
     }
 }

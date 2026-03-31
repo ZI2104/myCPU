@@ -70,14 +70,17 @@ impl DecodeStage {
         // Debug output
         #[cfg(test)]
         {
-            println!("    DecodeStage: instr={:08x}, decoded={:?}, funct3={}, ctrl.alu_op={:?}",
-                if_id.instruction, std::mem::discriminant(&decoded),
+            println!(
+                "    DecodeStage: instr={:08x}, decoded={:?}, funct3={}, ctrl.alu_op={:?}",
+                if_id.instruction,
+                std::mem::discriminant(&decoded),
                 match &decoded {
                     DecodedInstr::I(i) => i.funct3,
                     DecodedInstr::Load(i) => i.funct3,
                     _ => 0,
                 },
-                ctrl.alu_op);
+                ctrl.alu_op
+            );
         }
 
         // Extract immediate
@@ -178,7 +181,7 @@ impl DecodeStage {
             }
             DecodedInstr::J(_) => (ExControlSignals::jal(), MemControlSignals::alu()),
             DecodedInstr::Jalr(_) => (ExControlSignals::jalr(), MemControlSignals::alu()),
-            DecodedInstr::System { funct3, imm } => {
+            DecodedInstr::System { funct3, imm, .. } => {
                 // System instructions: CSR operations, ECALL, EBREAK, MRET, etc.
                 // imm contains the CSR address for CSR instructions
                 // For ECALL/EBREAK/MRET, funct3 distinguishes them
@@ -238,7 +241,10 @@ impl DecodeStage {
                             _ => CsrOp::ReadWrite, // Should not reach here
                         };
 
-                        (ExControlSignals::csr(csr_op, csr_addr), MemControlSignals::alu())
+                        (
+                            ExControlSignals::csr(csr_op, csr_addr),
+                            MemControlSignals::alu(),
+                        )
                     }
                     _ => {
                         // Unknown system instruction

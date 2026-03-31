@@ -70,12 +70,7 @@ impl Bus {
     /// * `base` - The base address for this memory region
     /// * `memory` - The memory implementation
     /// * `name` - A name for this region (for debugging)
-    pub fn attach_memory<M: Memory + 'static>(
-        &mut self,
-        base: Addr,
-        memory: M,
-        name: &str,
-    ) {
+    pub fn attach_memory<M: Memory + 'static>(&mut self, base: Addr, memory: M, name: &str) {
         let size = memory.size();
         self.memory_map.push(MemoryRegion {
             base,
@@ -108,9 +103,7 @@ impl Bus {
             let target = addr.raw() as usize;
             if target >= base_addr && target < base_addr + *size {
                 let offset = target - base_addr;
-                return peripheral
-                    .read(Addr::new(offset as u32))
-                    .map(Byte::new);
+                return peripheral.read(Addr::new(offset as u32)).map(Byte::new);
             }
         }
 
@@ -400,8 +393,7 @@ mod tests {
         let ram = Ram::new(1024);
         bus.attach_memory(Addr::new(0), ram, "RAM");
 
-        bus.write_word(Addr::new(0), Word::new(0xDEADBEEF))
-            .unwrap();
+        bus.write_word(Addr::new(0), Word::new(0xDEADBEEF)).unwrap();
         assert_eq!(bus.read_word(Addr::new(0)).unwrap().raw(), 0xDEADBEEF);
     }
 
@@ -425,6 +417,10 @@ mod tests {
     fn write_u64(bus: &mut Bus, addr: u32, value: u64) {
         write_u32(bus, addr, value as u32);
         write_u32(bus, addr + 4, (value >> 32) as u32);
+    }
+
+    fn read_u32(bus: &Bus, addr: u32) -> u32 {
+        bus.read_word(Addr::new(addr)).unwrap().raw()
     }
 
     #[test]
@@ -487,5 +483,89 @@ mod tests {
         assert_eq!(bus.read_byte(Addr::new(status)).unwrap().raw(), 0);
 
         assert_eq!(read_u16(&bus, used + 2), 1);
+    }
+
+    #[test]
+    fn test_bus_virtio_descriptor_notify_bridge_out_then_in() {
+        const RAM_BASE: u32 = 0x8000_0000;
+        const RAM_SIZE: usize = 0x20_000;
+        const SECTOR_SIZE: u32 = 512;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(RAM_SIZE), "RAM");
+
+        let virtio = VirtioBlock::with_disk_sectors(16);
+        bus.attach_peripheral(virtio);
+
+        let desc = RAM_BASE + 0x1000;
+        let avail = RAM_BASE + 0x2000;
+        let used = RAM_BASE + 0x3000;
+        let req = RAM_BASE + 0x4000;
+        let data = RAM_BASE + 0x5000;
+        let status = RAM_BASE + 0x6000;
+
+        write_u64(&mut bus, desc, req as u64);
+        write_u32(&mut bus, desc + 8, 16);
+        write_u16(&mut bus, desc + 12, 1);
+        write_u16(&mut bus, desc + 14, 1);
+
+        write_u64(&mut bus, desc + 16, data as u64);
+        write_u32(&mut bus, desc + 24, SECTOR_SIZE);
+        write_u16(&mut bus, desc + 28, 1);
+        write_u16(&mut bus, desc + 30, 2);
+
+        write_u64(&mut bus, desc + 32, status as u64);
+        write_u32(&mut bus, desc + 40, 1);
+        write_u16(&mut bus, desc + 44, 0);
+        write_u16(&mut bus, desc + 46, 0);
+
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x0F4, 8);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x0F8, 1);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x080, desc);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x084, 0);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x090, avail);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x094, 0);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x0A0, used);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x0A4, 0);
+
+        bus.write_byte(Addr::new(data), Byte::new(0x11)).unwrap();
+        bus.write_byte(Addr::new(data + 1), Byte::new(0x22))
+            .unwrap();
+        bus.write_byte(Addr::new(data + 2), Byte::new(0x33))
+            .unwrap();
+        bus.write_byte(Addr::new(data + 3), Byte::new(0x44))
+            .unwrap();
+
+        write_u32(&mut bus, req, 1);
+        write_u64(&mut bus, req + 8, 6);
+        write_u16(&mut bus, avail + 2, 1);
+        write_u16(&mut bus, avail + 4, 0);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x0FC, 0);
+
+        assert_eq!(bus.read_byte(Addr::new(status)).unwrap().raw(), 0);
+        assert_eq!(read_u16(&bus, used + 2), 1);
+
+        bus.write_byte(Addr::new(data), Byte::new(0x00)).unwrap();
+        bus.write_byte(Addr::new(data + 1), Byte::new(0x00))
+            .unwrap();
+        bus.write_byte(Addr::new(data + 2), Byte::new(0x00))
+            .unwrap();
+        bus.write_byte(Addr::new(data + 3), Byte::new(0x00))
+            .unwrap();
+
+        write_u32(&mut bus, req, 0);
+        write_u64(&mut bus, req + 8, 6);
+        write_u16(&mut bus, avail + 2, 2);
+        write_u16(&mut bus, avail + 6, 0);
+        write_u32(&mut bus, VIRTIO_BLK_BASE + 0x0FC, 0);
+
+        assert_eq!(bus.read_byte(Addr::new(data)).unwrap().raw(), 0x11);
+        assert_eq!(bus.read_byte(Addr::new(data + 1)).unwrap().raw(), 0x22);
+        assert_eq!(bus.read_byte(Addr::new(data + 2)).unwrap().raw(), 0x33);
+        assert_eq!(bus.read_byte(Addr::new(data + 3)).unwrap().raw(), 0x44);
+        assert_eq!(bus.read_byte(Addr::new(status)).unwrap().raw(), 0);
+        assert_eq!(read_u16(&bus, used + 2), 2);
+        assert_eq!(read_u32(&bus, used + 4), 0);
+        assert_eq!(read_u32(&bus, used + 16), SECTOR_SIZE);
     }
 }

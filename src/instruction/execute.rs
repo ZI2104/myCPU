@@ -4,8 +4,8 @@
 
 use super::decoder::DecodedInstr;
 use super::format::{BType, IType, JType, RType, SType, UType};
-use super::opcode::{funct3, funct7};
-use crate::cpu::csr::ExceptionCause;
+use super::opcode::{funct3, funct7, opcode};
+use crate::cpu::csr::{CsrOp, ExceptionCause};
 use crate::cpu::Cpu;
 use crate::error::{Result, SimError};
 use crate::types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
@@ -28,7 +28,13 @@ impl Cpu {
             DecodedInstr::B(b) => self.execute_b_type(b),
             DecodedInstr::U(u) => self.execute_u_type(u),
             DecodedInstr::J(j) => self.execute_j_type(j),
-            DecodedInstr::System { funct3, imm } => self.execute_system(funct3, imm),
+            DecodedInstr::System {
+                opcode,
+                rd,
+                rs1,
+                funct3,
+                imm,
+            } => self.execute_system(opcode, rd, rs1, funct3, imm),
         }
     }
 
@@ -440,11 +446,61 @@ impl Cpu {
         Ok(())
     }
 
-    /// Execute system instructions (ECALL, EBREAK, ERET, FENCE).
-    fn execute_system(&mut self, funct3: u8, imm: u32) -> Result<()> {
+    /// Execute a minimal subset of RV32A atomic instructions.
+    ///
+    /// Currently supported:
+    /// - `amoswap.w` (including aq/rl variants)
+    pub fn execute_amo(&mut self, instruction: u32) -> Result<()> {
+        let funct3 = ((instruction >> 12) & 0x7) as u8;
+        let rd = RegIdx::new(((instruction >> 7) & 0x1F) as u8);
+        let rs1 = RegIdx::new(((instruction >> 15) & 0x1F) as u8);
+        let rs2 = RegIdx::new(((instruction >> 20) & 0x1F) as u8);
+        let funct5 = ((instruction >> 27) & 0x1F) as u8;
+
+        // RV32A word operations use funct3=010.
+        if funct3 != 0b010 {
+            return Err(SimError::UnsupportedInstruction {
+                pc: self.pc(),
+                message: format!("Unsupported AMO width funct3={:03b}", funct3),
+            });
+        }
+
+        match funct5 {
+            // AMOSWAP.W
+            0b00001 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2);
+                let old = self.read_word(addr)?;
+                self.write_word(addr, src)?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            _ => Err(SimError::UnsupportedInstruction {
+                pc: self.pc(),
+                message: format!("Unsupported AMO funct5={:05b}", funct5),
+            }),
+        }
+    }
+
+    /// Execute SYSTEM/FENCE instructions.
+    fn execute_system(
+        &mut self,
+        op: u8,
+        rd: RegIdx,
+        rs1: RegIdx,
+        funct3: u8,
+        imm: u32,
+    ) -> Result<()> {
+        if op == opcode::FENCE {
+            // FENCE/FENCE.I are treated as NOP in this single-core in-order simulator.
+            self.increment_pc();
+            return Ok(());
+        }
+
         match funct3 {
             0 => {
-                // PRIV instructions (ECALL, EBREAK, MRET, SRET, URET, etc.)
+                // PRIV instructions (ECALL, EBREAK, MRET, SRET, WFI, SFENCE.VMA, ...)
                 match imm & 0xFFF {
                     0 => {
                         // ECALL - Environment call
@@ -456,13 +512,20 @@ impl Cpu {
                         self.raise_exception(ExceptionCause::Breakpoint, 0);
                     }
                     0x002 => {
-                        // URET - Return from User-mode trap
-                        // For now, just advance PC (simplified implementation)
+                        // URET - Return from User-mode trap (not yet modeled)
                         self.increment_pc();
                     }
                     0x102 => {
                         // SRET - Return from Supervisor-mode trap
                         self.execute_sret()?;
+                    }
+                    0x105 => {
+                        // WFI - wait for interrupt (modeled as NOP)
+                        self.increment_pc();
+                    }
+                    0x120 => {
+                        // SFENCE.VMA - TLB flush (no cached TLB in current model)
+                        self.increment_pc();
                     }
                     0x302 => {
                         // MRET - Return from Machine-mode trap
@@ -476,13 +539,41 @@ impl Cpu {
                     }
                 }
             }
-            1 => {
-                // FENCE.I - instruction cache flush (NOP for single-threaded simulator)
+            0b001 | 0b010 | 0b011 | 0b101 | 0b110 | 0b111 => {
+                let csr_addr = (imm & 0xFFF) as u16;
+                let op = match funct3 {
+                    0b001 => CsrOp::ReadWrite,
+                    0b010 => CsrOp::ReadSet,
+                    0b011 => CsrOp::ReadClear,
+                    0b101 => CsrOp::ReadWriteImm,
+                    0b110 => CsrOp::ReadSetImm,
+                    0b111 => CsrOp::ReadClearImm,
+                    _ => unreachable!(),
+                };
+
+                let rs1_val = if matches!(
+                    op,
+                    CsrOp::ReadWriteImm | CsrOp::ReadSetImm | CsrOp::ReadClearImm
+                ) {
+                    rs1.raw() as u32
+                } else {
+                    self.registers().read(rs1).raw()
+                };
+
+                let privilege = self.privilege();
+                let old = self.csr_mut().execute(op, csr_addr, rs1_val, privilege)?;
+
+                if !rd.is_zero() {
+                    self.registers_mut().write(rd, Word::new(old));
+                }
+
                 self.increment_pc();
             }
             _ => {
-                // Other FENCE variants - treat as NOP
-                self.increment_pc();
+                return Err(SimError::UnsupportedInstruction {
+                    pc: self.pc(),
+                    message: format!("Unknown SYSTEM funct3: {:03b}", funct3),
+                });
             }
         }
 
@@ -860,7 +951,8 @@ mod tests {
         cpu.csr_mut().sstatus.set_spie(true);
         cpu.csr_mut().sstatus.set_sie(false);
 
-        cpu.execute_system(0, 0x102).unwrap();
+        cpu.execute_system(opcode::SYSTEM, RegIdx::new(0), RegIdx::new(0), 0, 0x102)
+            .unwrap();
 
         assert_eq!(cpu.pc(), Addr::new(0x2200));
         assert_eq!(cpu.privilege(), PrivilegeLevel::User);
@@ -877,7 +969,8 @@ mod tests {
         cpu.csr_mut().mtvec.set_base(Addr::new(0x800));
         cpu.csr_mut().mtvec.set_mode(TrapVectorMode::Direct);
 
-        cpu.execute_system(0, 0).unwrap();
+        cpu.execute_system(opcode::SYSTEM, RegIdx::new(0), RegIdx::new(0), 0, 0)
+            .unwrap();
 
         assert_eq!(cpu.privilege(), PrivilegeLevel::Machine);
         assert_eq!(cpu.pc(), Addr::new(0x800));
@@ -901,12 +994,86 @@ mod tests {
             )
             .unwrap();
 
-        cpu.execute_system(0, 0).unwrap();
+        cpu.execute_system(opcode::SYSTEM, RegIdx::new(0), RegIdx::new(0), 0, 0)
+            .unwrap();
 
         assert_eq!(cpu.privilege(), PrivilegeLevel::Supervisor);
         assert_eq!(cpu.pc(), Addr::new(0x900));
         assert_eq!(cpu.csr().sepc.get(), Addr::new(0x1234));
         assert_eq!(cpu.csr().scause.code(), exception_code::ECALL_USER);
         assert!(!cpu.csr().scause.is_interrupt());
+    }
+
+    #[test]
+    fn test_csrrw_writes_mepc_and_returns_old_value() {
+        let mut cpu = create_test_cpu();
+        cpu.set_privilege(PrivilegeLevel::Machine);
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(0x1234));
+
+        // CSRRW x1, mepc, x2
+        cpu.execute_system(
+            opcode::SYSTEM,
+            RegIdx::new(1),
+            RegIdx::new(2),
+            0b001,
+            crate::cpu::csr::csr_addr::MEPC as u32,
+        )
+        .unwrap();
+
+        // old mepc defaults to 0
+        assert_eq!(cpu.registers().read(RegIdx::new(1)).raw(), 0);
+        // mepc is naturally aligned (bit1:0 cleared)
+        assert_eq!(cpu.csr().mepc.get(), Addr::new(0x1234));
+    }
+
+    #[test]
+    fn test_csrrs_with_x0_reads_without_modifying_csr() {
+        let mut cpu = create_test_cpu();
+        cpu.set_privilege(PrivilegeLevel::Machine);
+        cpu.csr_mut()
+            .write(csr_addr::MSCRATCH, 0xA5A5_5A5A, PrivilegeLevel::Machine)
+            .unwrap();
+
+        // CSRRS x3, mscratch, x0 (read-only access pattern)
+        cpu.execute_system(
+            opcode::SYSTEM,
+            RegIdx::new(3),
+            RegIdx::new(0),
+            0b010,
+            csr_addr::MSCRATCH as u32,
+        )
+        .unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0xA5A5_5A5A);
+        assert_eq!(
+            cpu.csr()
+                .read(csr_addr::MSCRATCH, PrivilegeLevel::Machine)
+                .unwrap(),
+            0xA5A5_5A5A
+        );
+    }
+
+    #[test]
+    fn test_amoswap_w_basic() {
+        let mut cpu = create_test_cpu();
+        cpu.write_word(Addr::new(0x100), Word::new(0xDEAD_BEEF))
+            .unwrap();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0x100));
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0x1234_5678));
+
+        // amoswap.w x3, x2, (x1)
+        // funct5=00001, aq=0, rl=0, rs2=2, rs1=1, funct3=010, rd=3, opcode=0101111
+        let instr = (0b00001u32 << 27)
+            | (2u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (3u32 << 7)
+            | 0x2F;
+
+        cpu.execute_amo(instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0xDEAD_BEEF);
+        assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x1234_5678);
     }
 }
