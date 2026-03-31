@@ -55,6 +55,9 @@ impl fmt::Debug for Bus {
 }
 
 impl Bus {
+    const VIRTIO_IRQ_SOURCE: usize = 1;
+    const UART_IRQ_SOURCE: usize = 10;
+
     /// Create a new empty system bus.
     pub fn new() -> Self {
         Self {
@@ -277,6 +280,24 @@ impl Bus {
         (false, false)
     }
 
+    /// Advance CLINT timer by a given number of cycles.
+    ///
+    /// This updates `mtime` for any attached CLINT peripheral so MTIP can
+    /// become pending when `mtime >= mtimecmp`.
+    pub fn tick_clint(&mut self, cycles: u64) {
+        use crate::interrupt::Clint;
+
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() == "CLINT" {
+                let any = peripheral.as_any_mut();
+                if let Some(clint) = any.downcast_mut::<Clint>() {
+                    clint.tick(cycles);
+                    return;
+                }
+            }
+        }
+    }
+
     /// Get external interrupt status from PLIC.
     ///
     /// Returns (meip, seip) where:
@@ -301,6 +322,45 @@ impl Bus {
             }
         }
         (false, false)
+    }
+
+    /// Reflect peripheral IRQ lines into PLIC pending bits.
+    ///
+    /// Current source mapping follows xv6-rv32 memlayout:
+    /// - VirtIO block -> source 1
+    /// - UART        -> source 10
+    pub fn sync_plic_pending_from_peripherals(&mut self) {
+        let mut virtio_pending = false;
+        let mut uart_pending = false;
+
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() == "VirtIO-Block" && peripheral.has_interrupt() {
+                virtio_pending = true;
+            }
+            if peripheral.name() == "UART" && peripheral.has_interrupt() {
+                uart_pending = true;
+            }
+        }
+
+        if !virtio_pending && !uart_pending {
+            return;
+        }
+
+        use crate::interrupt::Plic;
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() == "PLIC" {
+                let any = peripheral.as_any_mut();
+                if let Some(plic) = any.downcast_mut::<Plic>() {
+                    if virtio_pending {
+                        plic.set_pending(Self::VIRTIO_IRQ_SOURCE);
+                    }
+                    if uart_pending {
+                        plic.set_pending(Self::UART_IRQ_SOURCE);
+                    }
+                }
+                return;
+            }
+        }
     }
 
     /// Claim the highest priority external interrupt from PLIC.

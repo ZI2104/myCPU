@@ -156,6 +156,9 @@ impl PipelineCpu {
         self.csr.mip.set_mtip(mtip);
         self.csr.mip.set_msip(msip);
 
+        // Reflect peripheral IRQ lines into PLIC pending sources.
+        self.bus.sync_plic_pending_from_peripherals();
+
         // Sync PLIC interrupts (External)
         let (meip, _seip) = self.bus.get_plic_interrupt_status();
         self.csr.mip.set_meip(meip);
@@ -416,6 +419,9 @@ impl PipelineCpu {
         if self.halted {
             return Err(SimError::Halted);
         }
+
+        // Advance CLINT timer by one cycle before sampling interrupt state.
+        self.bus.tick_clint(1);
 
         // ========== Step 0: Synchronize interrupts from CLINT ==========
         self.sync_interrupts();

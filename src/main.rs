@@ -3,6 +3,7 @@
 //! Command-line interface for the myCPU RISC-V simulator.
 
 use clap::{Parser, Subcommand};
+use mycpu::cpu::csr::CsrRegister;
 use mycpu::cpu::{Cpu, ExecutionModel};
 use mycpu::debug::GdbServer;
 use mycpu::interrupt::{Clint, Plic};
@@ -15,6 +16,7 @@ use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Instant;
 
 const VIRTIO_SECTOR_SIZE: usize = 512;
 const VIRTIO_MIN_SECTORS: usize = 1024;
@@ -45,6 +47,10 @@ enum Commands {
         /// Number of instructions to execute (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         count: u64,
+
+        /// Print heartbeat every N instructions (0 = disabled)
+        #[arg(long, default_value = "0")]
+        heartbeat_every: u64,
 
         /// Enable verbose output
         #[arg(short, long)]
@@ -126,11 +132,21 @@ fn main() -> anyhow::Result<()> {
             memory,
             pc,
             count,
+            heartbeat_every,
             verbose,
             perf_report,
             file,
             virtio_disk,
-        } => run_program(memory, &pc, count, verbose, perf_report, file, virtio_disk),
+        } => run_program(
+            memory,
+            &pc,
+            count,
+            heartbeat_every,
+            verbose,
+            perf_report,
+            file,
+            virtio_disk,
+        ),
         Commands::Debug {
             port,
             memory,
@@ -155,6 +171,7 @@ fn run_program(
     memory_mb: usize,
     pc_str: &str,
     max_count: u64,
+    heartbeat_every: u64,
     verbose: bool,
     show_perf_report: bool,
     file: PathBuf,
@@ -193,11 +210,30 @@ fn run_program(
     );
     println!("\n--- Starting execution ---\n");
 
-    let instructions_executed = cpu.run(max_count)?;
+    if heartbeat_every > 0 {
+        println!("Heartbeat enabled: every {} instructions", heartbeat_every);
+    }
+
+    let start_time = Instant::now();
+    let instructions_executed = if heartbeat_every == 0 {
+        cpu.run(max_count)?
+    } else {
+        run_with_heartbeat(&mut cpu, max_count, heartbeat_every)?
+    };
+    let elapsed = start_time.elapsed();
 
     println!("\n--- Execution complete ---");
     println!("Instructions executed: {}", instructions_executed);
     println!("Final PC: {}", cpu.pc());
+    println!(
+        "Elapsed: {:.3}s ({} instr/s)",
+        elapsed.as_secs_f64(),
+        if elapsed.as_secs_f64() > 0.0 {
+            (instructions_executed as f64 / elapsed.as_secs_f64()) as u64
+        } else {
+            0
+        }
+    );
 
     if verbose {
         println!("\nFinal register state:");
@@ -211,6 +247,61 @@ fn run_program(
     }
 
     Ok(())
+}
+
+fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> anyhow::Result<u64> {
+    let mut count = 0u64;
+    let mut last_hb_pc: Option<Addr> = None;
+    let mut same_pc_streak = 0u64;
+
+    while !cpu.is_halted() {
+        if max_count > 0 && count >= max_count {
+            break;
+        }
+
+        cpu.step()?;
+        count += 1;
+
+        if count % heartbeat_every == 0 {
+            let csr = cpu.csr();
+            let mip = csr.mip.read();
+            let mie = csr.mie.read();
+            let global_mie = csr.mstatus.mie();
+            let sip = csr.sip.read();
+            let sie = csr.sie.read();
+            let global_sie = csr.sstatus.sie();
+            let (mtip, msip) = cpu.bus().get_clint_interrupt_status();
+            let (meip, _seip) = cpu.bus().get_plic_interrupt_status();
+            let pc = cpu.pc();
+
+            if Some(pc) == last_hb_pc {
+                same_pc_streak += 1;
+            } else {
+                same_pc_streak = 0;
+                last_hb_pc = Some(pc);
+            }
+
+            println!(
+                "[hb] step={} pc={} priv={} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} mtip={} msip={} meip={} pc_streak={}",
+                count,
+                pc,
+                cpu.privilege(),
+                if global_mie { 1 } else { 0 },
+                if global_sie { 1 } else { 0 },
+                mip,
+                mie,
+                sip,
+                sie,
+                if mtip { 1 } else { 0 },
+                if msip { 1 } else { 0 },
+                if meip { 1 } else { 0 },
+                same_pc_streak
+            );
+            std::io::stdout().flush().ok();
+        }
+    }
+
+    Ok(count)
 }
 
 /// Start GDB debug server

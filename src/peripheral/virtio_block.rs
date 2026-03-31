@@ -26,6 +26,18 @@ const REG_MAGIC: u32 = 0x000;
 const REG_VERSION: u32 = 0x004;
 const REG_DEVICE_ID: u32 = 0x008;
 const REG_VENDOR_ID: u32 = 0x00C;
+const REG_DEVICE_FEATURES: u32 = 0x010;
+const REG_DRIVER_FEATURES: u32 = 0x020;
+const REG_GUEST_PAGE_SIZE: u32 = 0x028;
+const REG_QUEUE_SEL: u32 = 0x030;
+const REG_QUEUE_NUM_MAX_LEGACY: u32 = 0x034;
+const REG_QUEUE_NUM_LEGACY: u32 = 0x038;
+const REG_QUEUE_ALIGN: u32 = 0x03C;
+const REG_QUEUE_PFN: u32 = 0x040;
+const REG_QUEUE_READY_LEGACY: u32 = 0x044;
+const REG_QUEUE_NOTIFY_LEGACY: u32 = 0x050;
+const REG_INTERRUPT_STATUS: u32 = 0x060;
+const REG_INTERRUPT_ACK: u32 = 0x064;
 const REG_STATUS: u32 = 0x070;
 
 const REG_QUEUE_DESC_LOW: u32 = 0x080;
@@ -86,6 +98,7 @@ mod request_type {
     pub const OUT: u32 = 1;
 }
 
+#[cfg(test)]
 mod control_bits {
     pub const IRQ_EN: u32 = 1 << 0;
 }
@@ -129,6 +142,12 @@ impl VirtioGuestMemory for Vec<(Addr, usize, Box<dyn Memory>)> {
 pub struct VirtioBlock {
     base: Addr,
     status: u32,
+    device_features: u32,
+    driver_features: u32,
+    guest_page_size: u32,
+    queue_sel: u32,
+    queue_align: u32,
+    queue_pfn: u32,
     sector: u64,
     command: u32,
     result: u32,
@@ -171,6 +190,12 @@ impl VirtioBlock {
         Self {
             base: Addr::new(VIRTIO_BLK_BASE),
             status: 0,
+            device_features: 0,
+            driver_features: 0,
+            guest_page_size: 4096,
+            queue_sel: 0,
+            queue_align: 4096,
+            queue_pfn: 0,
             sector: 0,
             command: 0,
             result: RESULT_OK,
@@ -272,9 +297,8 @@ impl VirtioBlock {
             }
         }
 
-        if (self.control & control_bits::IRQ_EN) != 0 {
-            self.irq_pending = true;
-        }
+        // Legacy xv6 virtio path relies on completion interrupts.
+        self.irq_pending = true;
     }
 
     fn execute_queue_notify(&mut self, _queue_selector: u32) {
@@ -321,9 +345,7 @@ impl VirtioBlock {
             self.req_status = 1;
         }
 
-        if (self.control & control_bits::IRQ_EN) != 0 {
-            self.irq_pending = true;
-        }
+        self.irq_pending = true;
     }
 
     fn descriptor_mode_enabled(&self) -> bool {
@@ -417,9 +439,7 @@ impl VirtioBlock {
         self.queue_used_idx = self.queue_used_idx.wrapping_add(1);
         let _ = self.write_guest_u16(guest_memory, self.queue_used_addr + 2, self.queue_used_idx);
 
-        if (self.control & control_bits::IRQ_EN) != 0 {
-            self.irq_pending = true;
-        }
+        self.irq_pending = true;
 
         Ok(())
     }
@@ -660,9 +680,35 @@ impl VirtioBlock {
     fn read_reg_u32(&self, reg: u32) -> u32 {
         match reg {
             REG_MAGIC => 0x7472_6976, // "virt" little-endian
-            REG_VERSION => 2,
-            REG_DEVICE_ID => 2,           // block device
-            REG_VENDOR_ID => 0x4D59_4350, // "MYCP"
+            // xv6-rv32 expects legacy virtio-mmio version 1.
+            REG_VERSION => 1,
+            REG_DEVICE_ID => 2, // block device
+            // QEMU-compatible vendor ID expected by xv6: "QEMU" in LE.
+            REG_VENDOR_ID => 0x554D_4551,
+            REG_DEVICE_FEATURES => self.device_features,
+            REG_DRIVER_FEATURES => self.driver_features,
+            REG_GUEST_PAGE_SIZE => self.guest_page_size,
+            REG_QUEUE_SEL => self.queue_sel,
+            REG_QUEUE_NUM_MAX_LEGACY => {
+                if self.queue_sel == 0 {
+                    QUEUE_RING_MAX as u32
+                } else {
+                    0
+                }
+            }
+            REG_QUEUE_NUM_LEGACY => self.queue_num as u32,
+            REG_QUEUE_ALIGN => self.queue_align,
+            REG_QUEUE_PFN => self.queue_pfn,
+            REG_QUEUE_READY_LEGACY => self.queue_ready as u32,
+            REG_QUEUE_NOTIFY_LEGACY => 0,
+            REG_INTERRUPT_STATUS => {
+                if self.irq_pending {
+                    1
+                } else {
+                    0
+                }
+            }
+            REG_INTERRUPT_ACK => 0,
             REG_STATUS => self.status,
 
             REG_QUEUE_DESC_LOW => self.queue_desc_addr as u32,
@@ -699,6 +745,43 @@ impl VirtioBlock {
     fn write_reg_u32(&mut self, reg: u32, value: u32) {
         match reg {
             REG_STATUS => self.status = value,
+
+            REG_DRIVER_FEATURES => self.driver_features = value,
+            REG_GUEST_PAGE_SIZE => {
+                if value != 0 {
+                    self.guest_page_size = value;
+                }
+            }
+            REG_QUEUE_SEL => self.queue_sel = value,
+            REG_QUEUE_NUM_LEGACY => {
+                let requested = value as usize;
+                self.queue_num = requested.min(QUEUE_RING_MAX) as u16;
+            }
+            REG_QUEUE_ALIGN => {
+                if value != 0 {
+                    self.queue_align = value;
+                }
+            }
+            REG_QUEUE_PFN => {
+                self.queue_pfn = value;
+                if self.queue_sel == 0 && self.queue_pfn != 0 {
+                    let base = (self.queue_pfn as u64) * (self.guest_page_size as u64);
+                    self.queue_desc_addr = base;
+                    self.queue_avail_addr = base + (self.queue_num as u64) * 16;
+                    self.queue_used_addr = base + (self.queue_align as u64);
+                }
+            }
+            REG_QUEUE_READY_LEGACY => {
+                self.queue_ready = (value & 0x1) != 0;
+            }
+            REG_QUEUE_NOTIFY_LEGACY => {
+                self.execute_queue_notify(value);
+            }
+            REG_INTERRUPT_ACK => {
+                if (value & 0x1) != 0 {
+                    self.irq_pending = false;
+                }
+            }
 
             REG_QUEUE_DESC_LOW => {
                 self.queue_desc_addr =
@@ -774,6 +857,13 @@ impl VirtioBlock {
         let shift = (offset & 0x3) * 8;
 
         if reg == REG_COMMAND || reg == REG_QUEUE_NOTIFY {
+            if shift == 0 {
+                self.write_reg_u32(reg, value as u32);
+            }
+            return;
+        }
+
+        if reg == REG_QUEUE_NOTIFY_LEGACY || reg == REG_INTERRUPT_ACK {
             if shift == 0 {
                 self.write_reg_u32(reg, value as u32);
             }
@@ -938,8 +1028,9 @@ mod tests {
     fn test_virtio_block_identity_registers() {
         let dev = VirtioBlock::new();
         assert_eq!(read_u32(&dev, REG_MAGIC), 0x7472_6976);
-        assert_eq!(read_u32(&dev, REG_VERSION), 2);
+        assert_eq!(read_u32(&dev, REG_VERSION), 1);
         assert_eq!(read_u32(&dev, REG_DEVICE_ID), 2);
+        assert_eq!(read_u32(&dev, REG_VENDOR_ID), 0x554D_4551);
     }
 
     #[test]
