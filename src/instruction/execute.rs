@@ -49,17 +49,66 @@ impl Cpu {
                 Word::new(rs1_val.raw().wrapping_sub(rs2_val.raw()))
             }
 
+            // MUL: lower 32 bits of signed * signed
+            (funct3::ADD_SUB, funct7::M_EXT) => {
+                Word::new(rs1_val.raw().wrapping_mul(rs2_val.raw()))
+            }
+
             // AND: rd = rs1 & rs2
-            (funct3::AND, _) => Word::new(rs1_val.raw() & rs2_val.raw()),
+            (funct3::AND, funct7::BASE) => Word::new(rs1_val.raw() & rs2_val.raw()),
+
+            // REMU: unsigned remainder
+            (funct3::AND, funct7::M_EXT) => {
+                let dividend = rs1_val.raw();
+                let divisor = rs2_val.raw();
+                if divisor == 0 {
+                    Word::new(dividend)
+                } else {
+                    Word::new(dividend % divisor)
+                }
+            }
 
             // OR: rd = rs1 | rs2
-            (funct3::OR, _) => Word::new(rs1_val.raw() | rs2_val.raw()),
+            (funct3::OR, funct7::BASE) => Word::new(rs1_val.raw() | rs2_val.raw()),
+
+            // REM: signed remainder
+            (funct3::OR, funct7::M_EXT) => {
+                let dividend = rs1_val.as_signed();
+                let divisor = rs2_val.as_signed();
+                if divisor == 0 {
+                    Word::new(dividend as u32)
+                } else if dividend == i32::MIN && divisor == -1 {
+                    Word::new(0)
+                } else {
+                    Word::new((dividend % divisor) as u32)
+                }
+            }
 
             // XOR: rd = rs1 ^ rs2
-            (funct3::XOR, _) => Word::new(rs1_val.raw() ^ rs2_val.raw()),
+            (funct3::XOR, funct7::BASE) => Word::new(rs1_val.raw() ^ rs2_val.raw()),
+
+            // DIV: signed division
+            (funct3::XOR, funct7::M_EXT) => {
+                let dividend = rs1_val.as_signed();
+                let divisor = rs2_val.as_signed();
+                if divisor == 0 {
+                    Word::new(u32::MAX)
+                } else if dividend == i32::MIN && divisor == -1 {
+                    Word::new(i32::MIN as u32)
+                } else {
+                    Word::new((dividend / divisor) as u32)
+                }
+            }
 
             // SLL: rd = rs1 << (rs2 & 0x1F)
-            (funct3::SLL, _) => Word::new(rs1_val.raw() << (rs2_val.raw() & 0x1F)),
+            (funct3::SLL, funct7::BASE) => Word::new(rs1_val.raw() << (rs2_val.raw() & 0x1F)),
+
+            // MULH: upper 32 bits of signed * signed
+            (funct3::SLL, funct7::M_EXT) => {
+                let a = rs1_val.as_signed() as i128;
+                let b = rs2_val.as_signed() as i128;
+                Word::new(((a * b) >> 32) as u32)
+            }
 
             // SRL: rd = rs1 >> (rs2 & 0x1F) (logical)
             (funct3::SRL_SRA, funct7::BASE) => {
@@ -72,14 +121,39 @@ impl Cpu {
                 Word::new((rs1_val.as_signed() >> shift) as u32)
             }
 
+            // DIVU: unsigned division
+            (funct3::SRL_SRA, funct7::M_EXT) => {
+                let dividend = rs1_val.raw();
+                let divisor = rs2_val.raw();
+                if divisor == 0 {
+                    Word::new(u32::MAX)
+                } else {
+                    Word::new(dividend / divisor)
+                }
+            }
+
             // SLT: rd = (rs1 < rs2) ? 1 : 0 (signed)
-            (funct3::SLT, _) => {
+            (funct3::SLT, funct7::BASE) => {
                 Word::new(if rs1_val.as_signed() < rs2_val.as_signed() { 1 } else { 0 })
             }
 
+            // MULHSU: upper 32 bits of signed * unsigned
+            (funct3::SLT, funct7::M_EXT) => {
+                let a = rs1_val.as_signed() as i128;
+                let b = rs2_val.raw() as i128;
+                Word::new(((a * b) >> 32) as u32)
+            }
+
             // SLTU: rd = (rs1 < rs2) ? 1 : 0 (unsigned)
-            (funct3::SLTU, _) => {
+            (funct3::SLTU, funct7::BASE) => {
                 Word::new(if rs1_val.raw() < rs2_val.raw() { 1 } else { 0 })
+            }
+
+            // MULHU: upper 32 bits of unsigned * unsigned
+            (funct3::SLTU, funct7::M_EXT) => {
+                let a = rs1_val.raw() as u128;
+                let b = rs2_val.raw() as u128;
+                Word::new(((a * b) >> 32) as u32)
             }
 
             _ => {
@@ -604,5 +678,129 @@ mod tests {
         // AUIPC x1, 0x12345
         cpu.execute_auipc(RegIdx::new(1), 0x12345000).unwrap();
         assert_eq!(cpu.registers().read(RegIdx::new(1)).raw(), 0x12346000);
+    }
+
+    #[test]
+    fn test_rv32m_mul_div_rem() {
+        let mut cpu = create_test_cpu();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(21));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(6));
+
+        // MUL x3, x1, x2 => 126
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(3),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::ADD_SUB,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 126);
+
+        // DIV x4, x1, x2 => 3
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(4),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::XOR,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(4)).raw(), 3);
+
+        // REM x5, x1, x2 => 3
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(5),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::OR,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(5)).raw(), 3);
+    }
+
+    #[test]
+    fn test_rv32m_div_by_zero_behavior() {
+        let mut cpu = create_test_cpu();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0xFFFF_FFF0));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(0));
+
+        // DIV by zero => -1
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(6),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::XOR,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(6)).raw(), u32::MAX);
+
+        // REM by zero => dividend
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(7),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::OR,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(7)).raw(), 0xFFFF_FFF0);
+    }
+
+    #[test]
+    fn test_rv32m_mulh_divu_remu() {
+        let mut cpu = create_test_cpu();
+
+        // Use values that produce a non-zero high part.
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0xFFFF_FFFF)); // -1 signed
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(0x8000_0000));
+
+        // MULH(-1, 0x8000_0000) => upper 32 bits of signed product = 0
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(8),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::SLL,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(8)).raw(), 0);
+
+        // MULHU(0xFFFF_FFFF, 0x8000_0000) => upper 32 bits = 0x7FFF_FFFF
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(9),
+            rs1: RegIdx::new(1),
+            rs2: RegIdx::new(2),
+            funct3: funct3::SLTU,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(9)).raw(), 0x7FFF_FFFF);
+
+        // DIVU / REMU
+        cpu.registers_mut().write(RegIdx::new(3), Word::new(100));
+        cpu.registers_mut().write(RegIdx::new(4), Word::new(9));
+
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(10),
+            rs1: RegIdx::new(3),
+            rs2: RegIdx::new(4),
+            funct3: funct3::SRL_SRA,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(10)).raw(), 11);
+
+        cpu.execute_r_type(RType {
+            rd: RegIdx::new(11),
+            rs1: RegIdx::new(3),
+            rs2: RegIdx::new(4),
+            funct3: funct3::AND,
+            funct7: funct7::M_EXT,
+        })
+        .unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(11)).raw(), 1);
     }
 }

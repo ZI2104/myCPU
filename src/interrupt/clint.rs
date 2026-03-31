@@ -117,6 +117,15 @@ impl Clint {
         self.mtime = self.mtime.wrapping_add(cycles);
     }
 
+    /// Build a memory alignment error for a CLINT offset.
+    fn alignment_error(&self, offset: u32, size: usize, alignment: usize) -> SimError {
+        SimError::MemoryAlignment {
+            addr: Addr::new(self.base.raw().wrapping_add(offset)),
+            size,
+            alignment,
+        }
+    }
+
     /// Read from CLINT registers.
     fn read_register(&self, offset: u32, _width: u32) -> Result<u32> {
         match offset {
@@ -126,7 +135,7 @@ impl Clint {
                 if o % 4 == 0 {
                     Ok(self.msip)
                 } else {
-                    Ok(0) // Unaligned reads return 0
+                    Err(self.alignment_error(o, 4, 4))
                 }
             }
 
@@ -135,7 +144,7 @@ impl Clint {
                 match o - MTIMECMP_OFFSET {
                     0 => Ok((self.mtimecmp & 0xFFFFFFFF) as u32),
                     4 => Ok((self.mtimecmp >> 32) as u32),
-                    _ => Ok(0),
+                    _ => Err(self.alignment_error(o, 4, 4)),
                 }
             }
 
@@ -144,7 +153,7 @@ impl Clint {
                 match o - MTIME_OFFSET {
                     0 => Ok((self.mtime & 0xFFFFFFFF) as u32),
                     4 => Ok((self.mtime >> 32) as u32),
-                    _ => Ok(0),
+                    _ => Err(self.alignment_error(o, 4, 4)),
                 }
             }
 
@@ -162,8 +171,10 @@ impl Clint {
             o if (MSIP_OFFSET..MTIMECMP_OFFSET).contains(&o) => {
                 if o % 4 == 0 {
                     self.msip = value & 0x1;
+                    Ok(())
+                } else {
+                    Err(self.alignment_error(o, 4, 4))
                 }
-                Ok(())
             }
 
             // mtimecmp (offset 0x4000-0x4007, 64-bit)
@@ -177,7 +188,7 @@ impl Clint {
                         let low = self.mtimecmp & 0xFFFFFFFF;
                         self.mtimecmp = ((value as u64) << 32) | low;
                     }
-                    _ => {}
+                    _ => return Err(self.alignment_error(o, 4, 4)),
                 }
                 Ok(())
             }
@@ -193,7 +204,7 @@ impl Clint {
                         let low = self.mtime & 0xFFFFFFFF;
                         self.mtime = ((value as u64) << 32) | low;
                     }
-                    _ => {}
+                    _ => return Err(self.alignment_error(o, 4, 4)),
                 }
                 Ok(())
             }
@@ -496,5 +507,19 @@ mod tests {
         clint.acknowledge_interrupt();
         assert!(!clint.msip()); // Software interrupt cleared
         assert!(clint.mtip()); // Timer interrupt still pending
+    }
+
+    #[test]
+    fn test_clint_unaligned_word_access_errors() {
+        let mut clint = Clint::new();
+
+        let read_err = clint.read_word(Addr::new(CLINT_BASE + MTIMECMP_OFFSET + 2));
+        assert!(matches!(read_err, Err(SimError::MemoryAlignment { .. })));
+
+        let write_err = clint.write_word(
+            Addr::new(CLINT_BASE + MTIME_OFFSET + 2),
+            Word::new(0x1234_5678),
+        );
+        assert!(matches!(write_err, Err(SimError::MemoryAlignment { .. })));
     }
 }

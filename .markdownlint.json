@@ -1,0 +1,21 @@
+{
+  "default": true,
+  "MD013": false,
+  "MD022": {
+    "lines_above": 1,
+    "lines_below": 1
+  },
+  "MD024": false,
+  "MD029": false,
+  "MD034": false,
+  "MD007": false,
+  "MD032": {
+    "list_items": false
+  },
+  "MD040": {
+    "allowed_languages": ["bash", "rust", "json", "text", "toml", "yaml", "yml"]
+  },
+  "MD060": {
+    "style": "consistent"
+  }
+}

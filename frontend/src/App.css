@@ -592,3 +592,88 @@ body {
 .memory-row:hover {
   background: #2a2a2a;
 }
+
+/* Debug Inspector */
+.debug-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.debug-inspector h3 {
+  margin: 0;
+}
+
+.debug-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fafafa;
+}
+
+.debug-section-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.debug-controls-inline {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.debug-controls-inline input,
+.debug-controls-inline button {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.debug-controls-inline button {
+  background: var(--secondary-bg);
+  color: white;
+  cursor: pointer;
+}
+
+.debug-list {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.debug-list.mono {
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.debug-list-item {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  align-items: center;
+}
+
+.debug-list-item:last-child {
+  border-bottom: none;
+}
+
+.debug-list-item.current-pc {
+  background: #e3f2fd;
+}
+
+.debug-label {
+  color: #444;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-empty {
+  padding: 10px;
+  color: var(--text-light);
+}

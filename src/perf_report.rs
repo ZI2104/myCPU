@@ -25,6 +25,14 @@ pub struct PerfReport {
     pub total_stalls: u64,
     /// Stall rate (percentage)
     pub stall_rate: f64,
+    /// Load-use stall rate among cycles (percentage)
+    pub load_use_stall_rate: f64,
+    /// Control hazard rate among cycles (percentage)
+    pub control_hazard_rate: f64,
+    /// Load-use share among total stalls (percentage)
+    pub load_use_stall_share: f64,
+    /// Control hazard share among total stalls (percentage)
+    pub control_hazard_share: f64,
     /// Branch statistics
     pub branches: BranchStats,
     /// Memory statistics
@@ -74,6 +82,26 @@ impl PerfReport {
         let control_hazards = collector.control_hazards;
         let total_stalls = collector.total_stalls();
         let stall_rate = collector.stall_rate() * 100.0;
+        let load_use_stall_rate = if cycles > 0 {
+            load_use_stalls as f64 / cycles as f64 * 100.0
+        } else {
+            0.0
+        };
+        let control_hazard_rate = if cycles > 0 {
+            control_hazards as f64 / cycles as f64 * 100.0
+        } else {
+            0.0
+        };
+        let load_use_stall_share = if total_stalls > 0 {
+            load_use_stalls as f64 / total_stalls as f64 * 100.0
+        } else {
+            0.0
+        };
+        let control_hazard_share = if total_stalls > 0 {
+            control_hazards as f64 / total_stalls as f64 * 100.0
+        } else {
+            0.0
+        };
 
         // Calculate branch statistics
         let branches = BranchStats {
@@ -103,6 +131,10 @@ impl PerfReport {
             control_hazards,
             total_stalls,
             stall_rate,
+            load_use_stall_rate,
+            control_hazard_rate,
+            load_use_stall_share,
+            control_hazard_share,
             branches,
             memory,
             efficiency,
@@ -126,42 +158,155 @@ impl PerfReport {
 impl fmt::Display for PerfReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f)?;
-        writeln!(f, "╔══════════════════════════════════════════════════════════════╗")?;
-        writeln!(f, "║                    Performance Report                         ║")?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Execution Summary                                            ║")?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Cycles:          {:>42} ║", Self::format_number(self.cycles))?;
-        writeln!(f, "║  Instructions:    {:>42} ║", Self::format_number(self.instructions))?;
+        writeln!(
+            f,
+            "╔══════════════════════════════════════════════════════════════╗"
+        )?;
+        writeln!(
+            f,
+            "║                    Performance Report                         ║"
+        )?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Execution Summary                                            ║"
+        )?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Cycles:          {:>42} ║",
+            Self::format_number(self.cycles)
+        )?;
+        writeln!(
+            f,
+            "║  Instructions:    {:>42} ║",
+            Self::format_number(self.instructions)
+        )?;
         writeln!(f, "║  IPC:             {:>42.4} ║", self.ipc)?;
         writeln!(f, "║  CPI:             {:>42.4} ║", self.cpi)?;
         writeln!(f, "║  Efficiency:      {:>41.1}% ║", self.efficiency)?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Pipeline Hazards                                             ║")?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Load-Use Stalls: {:>42} ║", Self::format_number(self.load_use_stalls))?;
-        writeln!(f, "║  Control Hazards: {:>42} ║", Self::format_number(self.control_hazards))?;
-        writeln!(f, "║  Total Stalls:    {:>42} ║", Self::format_number(self.total_stalls))?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Pipeline Hazards                                             ║"
+        )?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Load-Use Stalls: {:>42} ║",
+            Self::format_number(self.load_use_stalls)
+        )?;
+        writeln!(
+            f,
+            "║    └─ Cycle Rate: {:>39.1}% ║",
+            self.load_use_stall_rate
+        )?;
+        writeln!(
+            f,
+            "║    └─ Stall Share:{:>39.1}% ║",
+            self.load_use_stall_share
+        )?;
+        writeln!(
+            f,
+            "║  Control Hazards: {:>42} ║",
+            Self::format_number(self.control_hazards)
+        )?;
+        writeln!(
+            f,
+            "║    └─ Cycle Rate: {:>39.1}% ║",
+            self.control_hazard_rate
+        )?;
+        writeln!(
+            f,
+            "║    └─ Stall Share:{:>39.1}% ║",
+            self.control_hazard_share
+        )?;
+        writeln!(
+            f,
+            "║  Total Stalls:    {:>42} ║",
+            Self::format_number(self.total_stalls)
+        )?;
         writeln!(f, "║  Stall Rate:      {:>41.1}% ║", self.stall_rate)?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Branch Statistics                                            ║")?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Total Branches:  {:>42} ║", Self::format_number(self.branches.total))?;
-        writeln!(f, "║  Taken:           {:>42} ║", Self::format_number(self.branches.taken))?;
-        writeln!(f, "║  Not Taken:       {:>42} ║", Self::format_number(self.branches.not_taken))?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Branch Statistics                                            ║"
+        )?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Total Branches:  {:>42} ║",
+            Self::format_number(self.branches.total)
+        )?;
+        writeln!(
+            f,
+            "║  Taken:           {:>42} ║",
+            Self::format_number(self.branches.taken)
+        )?;
+        writeln!(
+            f,
+            "║  Not Taken:       {:>42} ║",
+            Self::format_number(self.branches.not_taken)
+        )?;
         if let Some(accuracy) = self.branches.accuracy {
             writeln!(f, "║  Prediction Acc:  {:>41.1}% ║", accuracy)?;
         } else {
             writeln!(f, "║  Prediction Acc:  {:>42} ║", "N/A")?;
         }
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Memory Statistics                                            ║")?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║  Memory Reads:    {:>42} ║", Self::format_number(self.memory.reads))?;
-        writeln!(f, "║  Memory Writes:   {:>42} ║", Self::format_number(self.memory.writes))?;
-        writeln!(f, "║  Total Mem Ops:   {:>42} ║", Self::format_number(self.memory.total))?;
-        writeln!(f, "║  Mem Ops/Instr:   {:>42.2} ║", self.memory.mops_per_instruction)?;
-        writeln!(f, "╚══════════════════════════════════════════════════════════════╝")?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Memory Statistics                                            ║"
+        )?;
+        writeln!(
+            f,
+            "╠══════════════════════════════════════════════════════════════╣"
+        )?;
+        writeln!(
+            f,
+            "║  Memory Reads:    {:>42} ║",
+            Self::format_number(self.memory.reads)
+        )?;
+        writeln!(
+            f,
+            "║  Memory Writes:   {:>42} ║",
+            Self::format_number(self.memory.writes)
+        )?;
+        writeln!(
+            f,
+            "║  Total Mem Ops:   {:>42} ║",
+            Self::format_number(self.memory.total)
+        )?;
+        writeln!(
+            f,
+            "║  Mem Ops/Instr:   {:>42.2} ║",
+            self.memory.mops_per_instruction
+        )?;
+        writeln!(
+            f,
+            "╚══════════════════════════════════════════════════════════════╝"
+        )?;
 
         Ok(())
     }

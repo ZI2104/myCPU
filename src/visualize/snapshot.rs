@@ -232,6 +232,14 @@ pub struct PerfSnapshot {
     pub load_use_stalls: u64,
     /// Control hazard count
     pub control_hazards: u64,
+    /// Load-Use stall rate among cycles (percentage)
+    pub load_use_stall_rate: f64,
+    /// Control hazard rate among cycles (percentage)
+    pub control_hazard_rate: f64,
+    /// Load-Use share among total stalls (percentage)
+    pub load_use_stall_share: f64,
+    /// Control hazard share among total stalls (percentage)
+    pub control_hazard_share: f64,
     /// Branch prediction accuracy (percentage)
     pub branch_accuracy: Option<f64>,
     /// Memory read count
@@ -283,6 +291,10 @@ impl Default for PerfSnapshot {
             stalls: 0,
             load_use_stalls: 0,
             control_hazards: 0,
+            load_use_stall_rate: 0.0,
+            control_hazard_rate: 0.0,
+            load_use_stall_share: 0.0,
+            control_hazard_share: 0.0,
             branch_accuracy: None,
             memory_reads: 0,
             memory_writes: 0,
@@ -301,7 +313,8 @@ pub fn disassemble(instruction: u32) -> String {
 
     // Decode immediate values
     let imm_i = ((instruction >> 20) as i32) << 20 >> 20;
-    let imm_s = (((instruction >> 25) as i32) << 7 | ((instruction >> 7) & 0x1F) as i32) << 20 >> 18 >> 2;
+    let imm_s =
+        (((instruction >> 25) as i32) << 7 | ((instruction >> 7) & 0x1F) as i32) << 20 >> 18 >> 2;
     let imm_b = {
         let imm_12 = ((instruction >> 31) & 1) as i32;
         let imm_10_5 = ((instruction >> 25) & 0x3F) as i32;
@@ -363,51 +376,68 @@ pub fn disassemble(instruction: u32) -> String {
             };
             format!("{} x{}, {}(x{})", store_name, rs2, imm_s, rs1)
         }
-        0x13 => {
-            match funct3 {
-                0 => format!("addi x{}, x{}, {}", rd, rs1, imm_i),
-                2 => format!("slti x{}, x{}, {}", rd, rs1, imm_i),
-                3 => format!("sltiu x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
-                4 => format!("xori x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
-                6 => format!("ori x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
-                7 => format!("andi x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
-                1 => format!("slli x{}, x{}, {}", rd, rs1, rs2),
-                5 => {
-                    if funct7 == 0 {
-                        format!("srli x{}, x{}, {}", rd, rs1, rs2)
-                    } else {
-                        format!("srai x{}, x{}, {}", rd, rs1, rs2)
-                    }
+        0x13 => match funct3 {
+            0 => format!("addi x{}, x{}, {}", rd, rs1, imm_i),
+            2 => format!("slti x{}, x{}, {}", rd, rs1, imm_i),
+            3 => format!("sltiu x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
+            4 => format!("xori x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
+            6 => format!("ori x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
+            7 => format!("andi x{}, x{}, {:#x}", rd, rs1, imm_i as u32),
+            1 => format!("slli x{}, x{}, {}", rd, rs1, rs2),
+            5 => {
+                if funct7 == 0 {
+                    format!("srli x{}, x{}, {}", rd, rs1, rs2)
+                } else {
+                    format!("srai x{}, x{}, {}", rd, rs1, rs2)
                 }
-                _ => format!("unknown"),
             }
-        }
-        0x33 => {
-            match funct3 {
-                0 => {
-                    match funct7 {
-                        0x00 => format!("add x{}, x{}, x{}", rd, rs1, rs2),
-                        0x20 => format!("sub x{}, x{}, x{}", rd, rs1, rs2),
-                        0x01 => format!("mul x{}, x{}, x{}", rd, rs1, rs2),
-                        _ => format!("unknown"),
-                    }
-                }
-                1 => format!("sll x{}, x{}, x{}", rd, rs1, rs2),
-                2 => format!("slt x{}, x{}, x{}", rd, rs1, rs2),
-                3 => format!("sltu x{}, x{}, x{}", rd, rs1, rs2),
-                4 => format!("xor x{}, x{}, x{}", rd, rs1, rs2),
-                5 => {
-                    match funct7 {
-                        0x00 => format!("srl x{}, x{}, x{}", rd, rs1, rs2),
-                        0x20 => format!("sra x{}, x{}, x{}", rd, rs1, rs2),
-                        _ => format!("unknown"),
-                    }
-                }
-                6 => format!("or x{}, x{}, x{}", rd, rs1, rs2),
-                7 => format!("and x{}, x{}, x{}", rd, rs1, rs2),
+            _ => format!("unknown"),
+        },
+        0x33 => match funct3 {
+            0 => match funct7 {
+                0x00 => format!("add x{}, x{}, x{}", rd, rs1, rs2),
+                0x20 => format!("sub x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("mul x{}, x{}, x{}", rd, rs1, rs2),
                 _ => format!("unknown"),
-            }
-        }
+            },
+            1 => match funct7 {
+                0x00 => format!("sll x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("mulh x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            2 => match funct7 {
+                0x00 => format!("slt x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("mulhsu x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            3 => match funct7 {
+                0x00 => format!("sltu x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("mulhu x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            4 => match funct7 {
+                0x00 => format!("xor x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("div x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            5 => match funct7 {
+                0x00 => format!("srl x{}, x{}, x{}", rd, rs1, rs2),
+                0x20 => format!("sra x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("divu x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            6 => match funct7 {
+                0x00 => format!("or x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("rem x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            7 => match funct7 {
+                0x00 => format!("and x{}, x{}, x{}", rd, rs1, rs2),
+                0x01 => format!("remu x{}, x{}, x{}", rd, rs1, rs2),
+                _ => format!("unknown"),
+            },
+            _ => format!("unknown"),
+        },
         0x0F => {
             if instruction == 0x0000000F {
                 "fence".to_string()
@@ -415,30 +445,28 @@ pub fn disassemble(instruction: u32) -> String {
                 format!("fence")
             }
         }
-        0x73 => {
-            match funct3 {
-                0 => {
-                    if instruction == 0x00000073 {
-                        "ecall".to_string()
-                    } else if instruction == 0x00100073 {
-                        "ebreak".to_string()
-                    } else if funct7 == 0x30 {
-                        "mret".to_string()
-                    } else if funct7 == 0x25 {
-                        "sret".to_string()
-                    } else {
-                        format!("system")
-                    }
+        0x73 => match funct3 {
+            0 => {
+                if instruction == 0x00000073 {
+                    "ecall".to_string()
+                } else if instruction == 0x00100073 {
+                    "ebreak".to_string()
+                } else if funct7 == 0x30 {
+                    "mret".to_string()
+                } else if funct7 == 0x25 {
+                    "sret".to_string()
+                } else {
+                    format!("system")
                 }
-                1 => format!("csrrw x{}, csr:{:#x}, x{}", rd, imm_i as u32, rs1),
-                2 => format!("csrrs x{}, csr:{:#x}, x{}", rd, imm_i as u32, rs1),
-                3 => format!("csrrc x{}, csr:{:#x}, x{}", rd, imm_i as u32, rs1),
-                5 => format!("csrrwi x{}, csr:{:#x}, {}", rd, imm_i as u32, rs1),
-                6 => format!("csrrsi x{}, csr:{:#x}, {}", rd, imm_i as u32, rs1),
-                7 => format!("csrrci x{}, csr:{:#x}, {}", rd, imm_i as u32, rs1),
-                _ => format!("unknown"),
             }
-        }
+            1 => format!("csrrw x{}, csr:{:#x}, x{}", rd, imm_i as u32, rs1),
+            2 => format!("csrrs x{}, csr:{:#x}, x{}", rd, imm_i as u32, rs1),
+            3 => format!("csrrc x{}, csr:{:#x}, x{}", rd, imm_i as u32, rs1),
+            5 => format!("csrrwi x{}, csr:{:#x}, {}", rd, imm_i as u32, rs1),
+            6 => format!("csrrsi x{}, csr:{:#x}, {}", rd, imm_i as u32, rs1),
+            7 => format!("csrrci x{}, csr:{:#x}, {}", rd, imm_i as u32, rs1),
+            _ => format!("unknown"),
+        },
         0x00 => "nop".to_string(),
         _ => format!("unknown ({:#04x})", opcode),
     }

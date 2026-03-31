@@ -83,7 +83,6 @@ impl Memory for Rom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Word;
 
     #[test]
     fn test_rom_read() {

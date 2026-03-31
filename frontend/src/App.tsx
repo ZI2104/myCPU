@@ -1,12 +1,19 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useWebSocket } from './hooks/useWebSocket';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import './App.css';
 import { ControlPanel } from './components/ControlPanel';
+import { DebugInspector } from './components/DebugInspector';
+import { MemoryView } from './components/MemoryView';
+import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PipelineVisualizer } from './components/PipelineVisualizer';
 import { RegisterPanel } from './components/RegisterPanel';
-import { PerformanceDashboard } from './components/PerformanceDashboard';
-import { MemoryView } from './components/MemoryView';
-import type { CpuSnapshot, MemoryReadResponse } from './types/snapshot';
-import './App.css';
+import { useWebSocket } from './hooks/useWebSocket';
+import type {
+    Breakpoint,
+    CpuSnapshot,
+    DisassemblyResponse,
+    HistoryResponse,
+    MemoryReadResponse,
+} from './types/snapshot';
 
 const WS_URL = 'ws://127.0.0.1:8080';
 
@@ -14,7 +21,10 @@ function App() {
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(10);
   const [previousSnapshot, setPreviousSnapshot] = useState<CpuSnapshot | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'memory'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'memory' | 'debug'>('pipeline');
+  const [disassembly, setDisassembly] = useState<DisassemblyResponse | null>(null);
+  const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([]);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
 
   const { snapshot, connected, send, error, lastMessage } = useWebSocket(WS_URL);
@@ -24,16 +34,24 @@ function App() {
     if (lastMessage) {
       try {
         const data = JSON.parse(lastMessage);
-        if (data.addr !== undefined && data.data !== undefined) {
+        if (data.addr !== undefined && data.data !== undefined && data.success !== undefined) {
           // This is a memory response
           const memResponse = data as MemoryReadResponse;
           memoryHandlersRef.current.forEach(handler => handler(memResponse));
+        } else if (data.base_addr !== undefined && Array.isArray(data.instructions)) {
+          setDisassembly(data as DisassemblyResponse);
+        } else if (Array.isArray(data.records) && data.total !== undefined) {
+          setHistory(data as HistoryResponse);
+        } else if (data.type === 'breakpoint_list' && Array.isArray(data.breakpoints)) {
+          setBreakpoints(data.breakpoints as Breakpoint[]);
+        } else if (data.type === 'breakpoint_added' || data.type === 'breakpoint_removed') {
+          send('bp_list');
         }
       } catch {
         // Not JSON or not a memory response
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, send]);
 
   const registerMemoryHandler = useCallback((handler: (data: MemoryReadResponse) => void) => {
     memoryHandlersRef.current.push(handler);
@@ -117,6 +135,17 @@ function App() {
                 >
                   Memory
                 </button>
+                <button
+                  className={activeTab === 'debug' ? 'active' : ''}
+                  onClick={() => {
+                    setActiveTab('debug');
+                    send('bp_list');
+                    send(`disasm 0x${snapshot.pc.toString(16)} 24`);
+                    send('history 0 30');
+                  }}
+                >
+                  Debug
+                </button>
               </div>
 
               {activeTab === 'pipeline' && (
@@ -127,6 +156,16 @@ function App() {
                 <MemoryView
                   sendCommand={send}
                   onMemoryData={registerMemoryHandler}
+                />
+              )}
+
+              {activeTab === 'debug' && (
+                <DebugInspector
+                  currentPc={snapshot.pc}
+                  breakpoints={breakpoints}
+                  disassembly={disassembly}
+                  history={history}
+                  sendCommand={send}
                 />
               )}
             </div>

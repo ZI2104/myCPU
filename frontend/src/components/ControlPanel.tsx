@@ -65,10 +65,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       </div>
 
       <div className="speed-control">
-        <label>Speed: {speed} cyc/s</label>
+        <label>Speed: {speed === 0 ? 'Unlimited' : `${speed} cyc/s`}</label>
         <input
           type="range"
-          min="1"
+          min="0"
           max="100"
           value={speed}
           onChange={(e) => onSpeedChange(parseInt(e.target.value))}

@@ -283,6 +283,27 @@ impl PipelineCpu {
     /// pipeline stages, and performance counters.
     pub fn snapshot(&self) -> CpuSnapshot {
         let perf = &self.perf;
+        let total_stalls = perf.total_stalls();
+        let load_use_stall_rate = if perf.cycles > 0 {
+            perf.load_use_stalls as f64 / perf.cycles as f64 * 100.0
+        } else {
+            0.0
+        };
+        let control_hazard_rate = if perf.cycles > 0 {
+            perf.control_hazards as f64 / perf.cycles as f64 * 100.0
+        } else {
+            0.0
+        };
+        let load_use_stall_share = if total_stalls > 0 {
+            perf.load_use_stalls as f64 / total_stalls as f64 * 100.0
+        } else {
+            0.0
+        };
+        let control_hazard_share = if total_stalls > 0 {
+            perf.control_hazards as f64 / total_stalls as f64 * 100.0
+        } else {
+            0.0
+        };
 
         CpuSnapshot {
             registers: self.regs.as_slice().try_into().unwrap_or([0; 32]),
@@ -351,9 +372,13 @@ impl PipelineCpu {
                 cycles: perf.cycles,
                 instructions: perf.instructions_retired,
                 ipc: perf.ipc(),
-                stalls: perf.total_stalls(),
+                stalls: total_stalls,
                 load_use_stalls: perf.load_use_stalls,
                 control_hazards: perf.control_hazards,
+                load_use_stall_rate,
+                control_hazard_rate,
+                load_use_stall_share,
+                control_hazard_share,
                 branch_accuracy: perf.branch_accuracy(),
                 memory_reads: perf.memory_reads,
                 memory_writes: perf.memory_writes,

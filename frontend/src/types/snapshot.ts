@@ -66,6 +66,10 @@ export interface PerfSnapshot {
   stalls: number;
   load_use_stalls: number;
   control_hazards: number;
+  load_use_stall_rate: number;
+  control_hazard_rate: number;
+  load_use_stall_share: number;
+  control_hazard_share: number;
   branch_accuracy: number | null;
   memory_reads: number;
   memory_writes: number;

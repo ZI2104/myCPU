@@ -71,10 +71,34 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ perf
           <span>Load-Use Stalls:</span>
           <span>{formatNumber(perf.load_use_stalls)}</span>
         </div>
+        <ProgressBar
+          value={perf.load_use_stall_rate}
+          max={100}
+          label="Load-Use Cycle Rate"
+          color="#FF9800"
+        />
+        <ProgressBar
+          value={perf.load_use_stall_share}
+          max={100}
+          label="Load-Use Stall Share"
+          color="#FB8C00"
+        />
         <div className="detail-row">
           <span>Control Hazards:</span>
           <span>{formatNumber(perf.control_hazards)}</span>
         </div>
+        <ProgressBar
+          value={perf.control_hazard_rate}
+          max={100}
+          label="Control Hazard Cycle Rate"
+          color="#E91E63"
+        />
+        <ProgressBar
+          value={perf.control_hazard_share}
+          max={100}
+          label="Control Hazard Stall Share"
+          color="#C2185B"
+        />
         {perf.branch_accuracy !== null && (
           <div className="detail-row">
             <span>Branch Accuracy:</span>

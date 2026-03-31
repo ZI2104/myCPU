@@ -131,19 +131,26 @@ fn run_program(
 ) -> anyhow::Result<()> {
     init_logger(verbose);
 
-    let start_pc = parse_hex_address(pc_str)?;
+    let requested_pc = parse_hex_address(pc_str)?;
     let mut bus = create_bus(memory_mb);
 
     // Attach UART for output
     attach_stdout_uart(&mut bus);
 
-    load_file(&mut bus, &file, start_pc)?;
+    let file_entry = load_file(&mut bus, &file, requested_pc)?;
+    let start_pc = file_entry.unwrap_or(requested_pc);
     bus.print_memory_map();
 
     let mut cpu = Cpu::with_pc(bus, start_pc);
 
     println!("\nmyCPU RISC-V Simulator v{}", mycpu::VERSION);
     println!("Starting PC: {}", start_pc);
+    if start_pc != requested_pc {
+        println!(
+            "Requested PC {} overridden by ELF entry {}",
+            requested_pc, start_pc
+        );
+    }
     println!("Memory size: {} MB", memory_mb);
     println!(
         "Max instructions: {}",
@@ -184,24 +191,36 @@ fn start_debug_server(
 ) -> anyhow::Result<()> {
     init_logger(true);
 
-    let start_pc = parse_hex_address(pc_str)?;
+    let requested_pc = parse_hex_address(pc_str)?;
     let mut bus = create_bus(memory_mb);
 
     // Attach UART for output
     attach_stdout_uart(&mut bus);
 
-    load_file(&mut bus, &file, start_pc)?;
+    let file_entry = load_file(&mut bus, &file, requested_pc)?;
+    let start_pc = file_entry.unwrap_or(requested_pc);
+
+    let cpu = Cpu::with_pc(bus, start_pc);
 
     println!("myCPU GDB Debug Server v{}", mycpu::VERSION);
     println!("Listening on port {}", port);
     println!("Program loaded: {}", file.display());
     println!("Entry point: {}", start_pc);
-    println!("\nConnect with: riscv32-unknown-elf-gdb -ex 'target remote localhost:{}'", port);
+    if start_pc != requested_pc {
+        println!(
+            "Requested PC {} overridden by ELF entry {}",
+            requested_pc, start_pc
+        );
+    }
+    println!(
+        "\nConnect with: riscv32-unknown-elf-gdb -ex 'target remote localhost:{}'",
+        port
+    );
 
     // Create a tokio runtime for the async GDB server
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let server = GdbServer::new(port);
+        let server = GdbServer::with_cpu(port, cpu);
         server.run().await.map_err(|e| anyhow::anyhow!("{}", e))
     })
 }
@@ -239,7 +258,7 @@ fn attach_stdout_uart(bus: &mut Bus) {
 }
 
 /// Load a binary or ELF file into memory
-fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<()> {
+fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<Option<Addr>> {
     let data = std::fs::read(path)?;
 
     // Check if it's an ELF file (magic: 0x7F 'E' 'L' 'F')
@@ -255,36 +274,38 @@ fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<(
                 seg.vaddr, seg.memsz, seg.flags
             );
         }
+        Ok(Some(entry))
     } else {
         // Raw binary
         bus.write_bytes(load_addr, &data)?;
         println!("Loaded {} bytes at {}", data.len(), load_addr);
+        Ok(None)
     }
-
-    Ok(())
 }
 
 /// Start visualization server
-fn start_visualize(
-    port: u16,
-    memory_mb: usize,
-    pc_str: &str,
-    file: PathBuf,
-) -> anyhow::Result<()> {
+fn start_visualize(port: u16, memory_mb: usize, pc_str: &str, file: PathBuf) -> anyhow::Result<()> {
     init_logger(true);
 
-    let start_pc = parse_hex_address(pc_str)?;
+    let requested_pc = parse_hex_address(pc_str)?;
     let mut bus = create_bus(memory_mb);
 
     // Attach UART for output
     attach_stdout_uart(&mut bus);
 
-    load_file(&mut bus, &file, start_pc)?;
+    let file_entry = load_file(&mut bus, &file, requested_pc)?;
+    let start_pc = file_entry.unwrap_or(requested_pc);
 
     println!("myCPU Visualization Server v{}", mycpu::VERSION);
     println!("WebSocket port: {}", port);
     println!("Program loaded: {}", file.display());
     println!("Entry point: {}", start_pc);
+    if start_pc != requested_pc {
+        println!(
+            "Requested PC {} overridden by ELF entry {}",
+            requested_pc, start_pc
+        );
+    }
     println!("\nConnect with WebSocket client at ws://127.0.0.1:{}", port);
     println!("Or open frontend/index.html in browser");
 
@@ -294,6 +315,8 @@ fn start_visualize(
     // Create tokio runtime and start server
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        start_visualize_server(cpu, port).await.map_err(|e| anyhow::anyhow!("{}", e))
+        start_visualize_server(cpu, port)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
 }

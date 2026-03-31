@@ -3,16 +3,16 @@
 //! This module provides a WebSocket server that allows frontend clients
 //! to connect and control the CPU execution, receiving real-time state updates.
 
-use crate::cpu::ExecutionModel;
 use crate::cpu::pipeline::PipelineCpu;
+use crate::cpu::ExecutionModel;
 use crate::error::Result;
 use crate::types::Addr;
 use crate::visualize::snapshot::{
-    disassemble, Breakpoint, CpuSnapshot, DisassemblyResponse, DisassembledInstruction,
+    disassemble, Breakpoint, CpuSnapshot, DisassembledInstruction, DisassemblyResponse,
     HistoryRecord, HistoryResponse, MemoryReadResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -69,11 +69,10 @@ impl Command {
             "run" => Some(Command::Run),
             "pause" => Some(Command::Pause),
             "reset" => Some(Command::Reset),
-            "speed" => {
-                parts.get(1)
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .map(|value| Command::Speed { value })
-            }
+            "speed" => parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .map(|value| Command::Speed { value }),
             "memory" => {
                 if parts.len() >= 3 {
                     let addr = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16).ok()?;
@@ -155,7 +154,7 @@ pub struct CommandContext {
     /// Breakpoints map
     pub breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
     /// Execution history
-    pub history: Arc<Mutex<Vec<HistoryRecord>>>,
+    pub history: Arc<Mutex<VecDeque<HistoryRecord>>>,
 }
 
 impl CommandContext {
@@ -166,9 +165,16 @@ impl CommandContext {
         speed: Arc<Mutex<u32>>,
         tx: WsSender,
         breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
-        history: Arc<Mutex<Vec<HistoryRecord>>>,
+        history: Arc<Mutex<VecDeque<HistoryRecord>>>,
     ) -> Self {
-        Self { cpu, running, speed, tx, breakpoints, history }
+        Self {
+            cpu,
+            running,
+            speed,
+            tx,
+            breakpoints,
+            history,
+        }
     }
 
     /// Send a JSON response to the client.
@@ -196,7 +202,7 @@ pub struct VisualizeServer {
     /// Breakpoints (addr -> Breakpoint)
     breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
     /// Execution history
-    history: Arc<Mutex<Vec<HistoryRecord>>>,
+    history: Arc<Mutex<VecDeque<HistoryRecord>>>,
     /// Maximum history size
     max_history: usize,
 }
@@ -211,7 +217,7 @@ impl VisualizeServer {
             speed: Arc::new(Mutex::new(10)),
             state_tx,
             breakpoints: Arc::new(Mutex::new(HashMap::new())),
-            history: Arc::new(Mutex::new(Vec::new())),
+            history: Arc::new(Mutex::new(VecDeque::new())),
             max_history: 10000,
         }
     }
@@ -414,12 +420,15 @@ impl VisualizeServer {
             Command::BreakpointAdd { addr, label } => {
                 {
                     let mut breakpoints_guard = ctx.breakpoints.lock().await;
-                    breakpoints_guard.insert(addr, Breakpoint {
+                    breakpoints_guard.insert(
                         addr,
-                        enabled: true,
-                        label,
-                        hit_count: 0,
-                    });
+                        Breakpoint {
+                            addr,
+                            enabled: true,
+                            label,
+                            hit_count: 0,
+                        },
+                    );
                 }
                 let response = format!(r#"{{"type":"breakpoint_added","addr":"0x{:08x}"}}"#, addr);
                 ctx.send_json(response).await;
@@ -429,7 +438,8 @@ impl VisualizeServer {
                     let mut breakpoints_guard = ctx.breakpoints.lock().await;
                     breakpoints_guard.remove(&addr);
                 }
-                let response = format!(r#"{{"type":"breakpoint_removed","addr":"0x{:08x}"}}"#, addr);
+                let response =
+                    format!(r#"{{"type":"breakpoint_removed","addr":"0x{:08x}"}}"#, addr);
                 ctx.send_json(response).await;
             }
             Command::BreakpointList => {
@@ -504,7 +514,13 @@ impl VisualizeServer {
                     let history_guard = ctx.history.lock().await;
                     let total = history_guard.len();
                     let end = (start + count).min(total);
-                    let records: Vec<_> = history_guard[start..end].to_vec();
+                    let take = end.saturating_sub(start);
+                    let records: Vec<_> = history_guard
+                        .iter()
+                        .skip(start)
+                        .take(take)
+                        .cloned()
+                        .collect();
 
                     HistoryResponse {
                         records,
@@ -527,7 +543,7 @@ impl VisualizeServer {
         speed: Arc<Mutex<u32>>,
         state_tx: broadcast::Sender<CpuSnapshot>,
         breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
-        history: Arc<Mutex<Vec<HistoryRecord>>>,
+        history: Arc<Mutex<VecDeque<HistoryRecord>>>,
         max_history: usize,
     ) {
         loop {
@@ -580,9 +596,9 @@ impl VisualizeServer {
                 {
                     let mut history_guard = history.lock().await;
                     if history_guard.len() >= max_history {
-                        history_guard.remove(0);
+                        history_guard.pop_front();
                     }
-                    history_guard.push(HistoryRecord {
+                    history_guard.push_back(HistoryRecord {
                         cycle: cycles,
                         pc,
                         instruction: instr,

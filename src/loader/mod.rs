@@ -25,7 +25,7 @@
 use crate::error::{Result, SimError};
 use crate::memory::Bus;
 use crate::types::Addr;
-use goblin::elf::{Elf, program_header};
+use goblin::elf::{program_header, Elf};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -34,10 +34,21 @@ use std::path::Path;
 pub struct ElfLoader {
     /// Raw ELF bytes
     bytes: Vec<u8>,
-    /// Parsed ELF structure
-    elf: Elf<'static>,
     /// Entry point address
     entry: u64,
+    /// Cached ELF header information
+    header: ElfHeaderInfo,
+    /// Cached loadable segments for safe loading without self-referential borrows
+    loadable_segments: Vec<LoadableSegment>,
+}
+
+/// Internal loadable segment representation.
+#[derive(Debug, Clone)]
+struct LoadableSegment {
+    /// File offset for segment data
+    offset: usize,
+    /// Segment info exposed to callers
+    info: SegmentInfo,
 }
 
 impl ElfLoader {
@@ -71,16 +82,54 @@ impl ElfLoader {
             ));
         }
 
-        let entry = elf.header.e_entry;
-
-        // Safety: We're transmuting the Elf to 'static. This is safe because
-        // the bytes Vec is owned by Self and will live as long as Self.
-        // The Elf borrows from bytes, so they must have the same lifetime.
-        let elf = unsafe {
-            std::mem::transmute::<Elf<'_>, Elf<'static>>(elf)
+        let header = ElfHeaderInfo {
+            entry: elf.header.e_entry,
+            phoff: elf.header.e_phoff,
+            phnum: elf.header.e_phnum as usize,
+            shoff: elf.header.e_shoff,
+            shnum: elf.header.e_shnum as usize,
         };
 
-        Ok(Self { bytes, elf, entry })
+        let mut loadable_segments = Vec::new();
+        for ph in &elf.program_headers {
+            if ph.p_type != program_header::PT_LOAD {
+                continue;
+            }
+
+            let offset = ph.p_offset as usize;
+            let filesz = ph.p_filesz as usize;
+            let end = offset.checked_add(filesz).ok_or_else(|| {
+                SimError::ElfParseError("ELF segment offset overflow".to_string())
+            })?;
+
+            if end > bytes.len() {
+                return Err(SimError::ElfParseError(format!(
+                    "ELF segment out of bounds: offset=0x{:x}, filesz=0x{:x}, file_size=0x{:x}",
+                    offset,
+                    filesz,
+                    bytes.len()
+                )));
+            }
+
+            loadable_segments.push(LoadableSegment {
+                offset,
+                info: SegmentInfo {
+                    vaddr: ph.p_vaddr,
+                    memsz: ph.p_memsz,
+                    filesz: ph.p_filesz,
+                    flags: ph.p_flags,
+                },
+            });
+        }
+
+        let entry = header.entry;
+
+        Ok(Self {
+            bytes,
+            entry,
+            header,
+            loadable_segments,
+        })
     }
 
     /// Get the entry point address
@@ -90,25 +139,17 @@ impl ElfLoader {
 
     /// Get the number of loadable segments
     pub fn segment_count(&self) -> usize {
-        self.elf
-            .program_headers
-            .iter()
-            .filter(|ph| ph.p_type == program_header::PT_LOAD)
-            .count()
+        self.loadable_segments.len()
     }
 
     /// Load all loadable segments into memory
     pub fn load_into(&self, bus: &mut Bus) -> Result<()> {
-        for ph in &self.elf.program_headers {
-            if ph.p_type != program_header::PT_LOAD {
-                continue;
-            }
-
+        for segment in &self.loadable_segments {
             // Get segment properties
-            let vaddr = ph.p_vaddr as u32;
-            let filesz = ph.p_filesz as usize;
-            let memsz = ph.p_memsz as usize;
-            let offset = ph.p_offset as usize;
+            let vaddr = segment.info.vaddr as u32;
+            let filesz = segment.info.filesz as usize;
+            let memsz = segment.info.memsz as usize;
+            let offset = segment.offset;
 
             // Copy file contents using bulk write
             if filesz > 0 {
@@ -130,27 +171,14 @@ impl ElfLoader {
 
     /// Get the ELF header info
     pub fn header_info(&self) -> ElfHeaderInfo {
-        ElfHeaderInfo {
-            entry: self.elf.header.e_entry,
-            phoff: self.elf.header.e_phoff,
-            phnum: self.elf.header.e_phnum as usize,
-            shoff: self.elf.header.e_shoff,
-            shnum: self.elf.header.e_shnum as usize,
-        }
+        self.header.clone()
     }
 
     /// Get loadable segments info
     pub fn segments(&self) -> Vec<SegmentInfo> {
-        self.elf
-            .program_headers
+        self.loadable_segments
             .iter()
-            .filter(|ph| ph.p_type == program_header::PT_LOAD)
-            .map(|ph| SegmentInfo {
-                vaddr: ph.p_vaddr,
-                memsz: ph.p_memsz,
-                filesz: ph.p_filesz,
-                flags: ph.p_flags,
-            })
+            .map(|seg| seg.info.clone())
             .collect()
     }
 }

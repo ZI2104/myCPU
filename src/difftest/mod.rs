@@ -89,18 +89,34 @@ pub struct DiffTestError {
     pub differing_reg: Option<usize>,
     /// Human-readable description
     pub description: String,
+    /// Recent history entries before failure
+    pub recent_history: Vec<HistoryEntry>,
 }
 
 impl std::fmt::Display for DiffTestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "DiffTest mismatch at instruction {}:", self.instruction)?;
         writeln!(f, "  PC: {}", self.pc)?;
+        writeln!(f, "  Detail: {}", self.description)?;
         if let Some(reg) = self.differing_reg {
             writeln!(
                 f,
                 "  Register x{}: myCPU=0x{:08x} QEMU=0x{:08x}",
                 reg, self.mycpu_state.regs[reg], self.qemu_state.regs[reg]
             )?;
+        }
+        if !self.recent_history.is_empty() {
+            writeln!(f, "\nRecent history (oldest -> newest):")?;
+            for h in &self.recent_history {
+                writeln!(
+                    f,
+                    "  #{} PC={} instr=0x{:08x} {}",
+                    h.instr_num,
+                    h.pc,
+                    h.instruction,
+                    if h.passed { "OK" } else { "FAIL" }
+                )?;
+            }
         }
         writeln!(f, "\nmyCPU state:")?;
         writeln!(f, "  PC: 0x{:08x}", self.mycpu_state.pc.raw())?;
@@ -117,6 +133,9 @@ impl std::fmt::Display for DiffTestError {
 }
 
 impl DiffTest {
+    /// Number of recent entries to include in mismatch reports
+    const RECENT_HISTORY_LIMIT: usize = 12;
+
     /// Connect to QEMU's GDB server
     pub fn connect(addr: &str) -> Result<Self> {
         let stream = TcpStream::connect(addr)
@@ -197,6 +216,7 @@ impl DiffTest {
                 pc: self.last_pc,
                 differing_reg: None,
                 description: format!("QEMU step failed: {}", e),
+                    recent_history: self.recent_history(),
             });
         }
 
@@ -211,6 +231,7 @@ impl DiffTest {
                     pc: self.last_pc,
                     differing_reg: None,
                     description: format!("Failed to read QEMU state: {}", e),
+                    recent_history: self.recent_history(),
                 });
             }
         };
@@ -247,6 +268,7 @@ impl DiffTest {
         if !passed {
             // Find differing register
             let differing_reg = (0..32).find(|&i| mycpu_state.regs[i] != qemu_state.regs[i]);
+            let description = self.build_mismatch_description(mycpu_state, &qemu_state);
 
             return Err(DiffTestError {
                 instruction: self.instructions_compared,
@@ -254,11 +276,69 @@ impl DiffTest {
                 qemu_state,
                 pc: mycpu_state.pc,
                 differing_reg,
-                description: "State mismatch".to_string(),
+                description,
+                recent_history: self.recent_history(),
             });
         }
 
         Ok(())
+    }
+
+    fn recent_history(&self) -> Vec<HistoryEntry> {
+        self.history
+            .iter()
+            .rev()
+            .take(Self::RECENT_HISTORY_LIMIT)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
+    fn build_mismatch_description(&self, mycpu: &CpuState, qemu: &CpuState) -> String {
+        if mycpu.pc != qemu.pc {
+            return format!(
+                "PC mismatch: myCPU=0x{:08x}, QEMU=0x{:08x}",
+                mycpu.pc.raw(),
+                qemu.pc.raw()
+            );
+        }
+
+        let mut diffs = Vec::new();
+        for i in 0..32 {
+            if mycpu.regs[i] != qemu.regs[i] {
+                diffs.push(format!(
+                    "x{}:0x{:08x}/0x{:08x}",
+                    i, mycpu.regs[i], qemu.regs[i]
+                ));
+            }
+            if diffs.len() >= 4 {
+                break;
+            }
+        }
+
+        if !diffs.is_empty() {
+            return format!("Register mismatch ({})", diffs.join(", "));
+        }
+
+        if mycpu.privilege != qemu.privilege {
+            return format!(
+                "Privilege mismatch: myCPU={:?}, QEMU={:?}",
+                mycpu.privilege,
+                qemu.privilege
+            );
+        }
+
+        if mycpu.instructions_executed != qemu.instructions_executed {
+            return format!(
+                "Instruction counter mismatch: myCPU={}, QEMU={}",
+                mycpu.instructions_executed,
+                qemu.instructions_executed
+            );
+        }
+
+        "State mismatch (undetermined root cause)".to_string()
     }
 
     /// Load program into QEMU
@@ -313,6 +393,7 @@ mod tests {
             pc: Addr::new(0x80000000),
             differing_reg: Some(5),
             description: "Test error".to_string(),
+            recent_history: vec![],
         };
         let s = format!("{}", error);
         assert!(s.contains("instruction 50"));

@@ -119,6 +119,9 @@ pub mod funct7 {
 
     /// SUB, SRA
     pub const ALT: u8 = 0b0100000;
+
+    /// RV32M extension (MUL/DIV/REM family)
+    pub const M_EXT: u8 = 0b0000001;
 }
 
 #[cfg(test)]
