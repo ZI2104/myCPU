@@ -9,6 +9,6 @@ pub mod snapshot;
 
 pub use server::{start_visualize_server, VisualizeServer};
 pub use snapshot::{
-    disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo,
-    PerfSnapshot, PipelineSnapshot, WbStageInfo,
+    disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot,
+    PipelineSnapshot, WbStageInfo,
 };

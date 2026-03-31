@@ -8,7 +8,7 @@ use mycpu::debug::GdbServer;
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf_report::PerfReport;
-use mycpu::peripheral::{Lpu, Npu, Uart};
+use mycpu::peripheral::{Lpu, Npu, Uart, VirtioBlock};
 use mycpu::types::Addr;
 use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server;
@@ -257,6 +257,7 @@ fn create_bus(memory_mb: usize) -> Bus {
     bus.attach_memory(Addr::new(0x80000000), ram, "Main RAM");
     bus.attach_peripheral(Npu::new());
     bus.attach_peripheral(Lpu::new());
+    bus.attach_peripheral(VirtioBlock::new());
     bus
 }
 

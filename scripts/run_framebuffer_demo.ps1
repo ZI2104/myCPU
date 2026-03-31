@@ -25,7 +25,7 @@ function Stop-ListenerOnPort {
     )
 
     $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+    Select-Object -First 1
 
     if ($null -ne $listener) {
         Write-Host "[myCPU] Port $Port is occupied by PID $($listener.OwningProcess), stopping it for $Label..." -ForegroundColor Yellow
@@ -195,7 +195,8 @@ function Invoke-FramebufferProbe {
 
 $backendArgs = if ($Mode -eq 'linux-program') {
     @('run', '--', 'visualize', '--port', '8080', '--linux-fb-demo', '--warmup', $Warmup.ToString())
-} else {
+}
+else {
     @('run', '--', 'visualize', '--port', '8080')
 }
 

@@ -159,7 +159,10 @@ fn generate_demo_frame_rgb565(pattern: DemoPattern, width: u32, height: u32) -> 
 }
 
 fn parse_u32_auto(input: &str) -> Option<u32> {
-    if let Some(hex) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
+    if let Some(hex) = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+    {
         u32::from_str_radix(hex, 16).ok()
     } else {
         input.parse::<u32>().ok()

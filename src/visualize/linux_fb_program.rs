@@ -75,12 +75,7 @@ fn encode_sh(rs2: u8, rs1: u8, imm: i16) -> u32 {
     let imm11_5 = (imm12 >> 5) & 0x7F;
     let imm4_0 = imm12 & 0x1F;
 
-    (imm11_5 << 25)
-        | ((rs2 as u32) << 20)
-        | ((rs1 as u32) << 15)
-        | (1 << 12)
-        | (imm4_0 << 7)
-        | 0x23
+    (imm11_5 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | (1 << 12) | (imm4_0 << 7) | 0x23
 }
 
 fn encode_bne(rs1: u8, rs2: u8, imm: i16) -> u32 {
@@ -111,12 +106,7 @@ fn encode_jal(rd: u8, imm: i32) -> u32 {
     let imm11 = (imm21 >> 11) & 0x1;
     let imm19_12 = (imm21 >> 12) & 0xFF;
 
-    (imm20 << 31)
-        | (imm19_12 << 12)
-        | (imm11 << 20)
-        | (imm10_1 << 21)
-        | ((rd as u32) << 7)
-        | 0x6F
+    (imm20 << 31) | (imm19_12 << 12) | (imm11 << 20) | (imm10_1 << 21) | ((rd as u32) << 7) | 0x6F
 }
 
 #[cfg(test)]

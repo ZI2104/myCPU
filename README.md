@@ -122,13 +122,13 @@ myCPU/
 
 ## 技术栈
 
-| 组件 | 选择 | 说明 |
-|------|------|------|
-| 语言 | Rust | 内存安全、模式匹配、零成本抽象 |
-| 测试 | built-in + pretty_assertions | 单元测试 |
-| CLI | clap | 命令行框架 |
-| 日志 | log + env_logger | 日志系统 |
-| 错误处理 | thiserror + anyhow | 错误类型 |
+| 组件     | 选择                         | 说明                           |
+| -------- | ---------------------------- | ------------------------------ |
+| 语言     | Rust                         | 内存安全、模式匹配、零成本抽象 |
+| 测试     | built-in + pretty_assertions | 单元测试                       |
+| CLI      | clap                         | 命令行框架                     |
+| 日志     | log + env_logger             | 日志系统                       |
+| 错误处理 | thiserror + anyhow           | 错误类型                       |
 
 ## 参考资料
 
