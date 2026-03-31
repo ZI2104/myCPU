@@ -5,6 +5,7 @@
 use super::decoder::DecodedInstr;
 use super::format::{BType, IType, JType, RType, SType, UType};
 use super::opcode::{funct3, funct7};
+use crate::cpu::csr::ExceptionCause;
 use crate::cpu::Cpu;
 use crate::error::{Result, SimError};
 use crate::types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
@@ -40,14 +41,10 @@ impl Cpu {
 
         let result = match (instr.funct3, instr.funct7) {
             // ADD: rd = rs1 + rs2
-            (funct3::ADD_SUB, funct7::BASE) => {
-                Word::new(rs1_val.raw().wrapping_add(rs2_val.raw()))
-            }
+            (funct3::ADD_SUB, funct7::BASE) => Word::new(rs1_val.raw().wrapping_add(rs2_val.raw())),
 
             // SUB: rd = rs1 - rs2
-            (funct3::ADD_SUB, funct7::ALT) => {
-                Word::new(rs1_val.raw().wrapping_sub(rs2_val.raw()))
-            }
+            (funct3::ADD_SUB, funct7::ALT) => Word::new(rs1_val.raw().wrapping_sub(rs2_val.raw())),
 
             // MUL: lower 32 bits of signed * signed
             (funct3::ADD_SUB, funct7::M_EXT) => {
@@ -111,9 +108,7 @@ impl Cpu {
             }
 
             // SRL: rd = rs1 >> (rs2 & 0x1F) (logical)
-            (funct3::SRL_SRA, funct7::BASE) => {
-                Word::new(rs1_val.raw() >> (rs2_val.raw() & 0x1F))
-            }
+            (funct3::SRL_SRA, funct7::BASE) => Word::new(rs1_val.raw() >> (rs2_val.raw() & 0x1F)),
 
             // SRA: rd = rs1 >>> (rs2 & 0x1F) (arithmetic)
             (funct3::SRL_SRA, funct7::ALT) => {
@@ -134,7 +129,11 @@ impl Cpu {
 
             // SLT: rd = (rs1 < rs2) ? 1 : 0 (signed)
             (funct3::SLT, funct7::BASE) => {
-                Word::new(if rs1_val.as_signed() < rs2_val.as_signed() { 1 } else { 0 })
+                Word::new(if rs1_val.as_signed() < rs2_val.as_signed() {
+                    1
+                } else {
+                    0
+                })
             }
 
             // MULHSU: upper 32 bits of signed * unsigned
@@ -190,14 +189,22 @@ impl Cpu {
 
             // SLTI: rd = (rs1 < imm) ? 1 : 0 (signed)
             funct3::SLT => {
-                let result = Word::new(if rs1_val.as_signed() < instr.imm { 1 } else { 0 });
+                let result = Word::new(if rs1_val.as_signed() < instr.imm {
+                    1
+                } else {
+                    0
+                });
                 self.registers_mut().write(instr.rd, result);
                 self.increment_pc();
             }
 
             // SLTIU: rd = (rs1 < imm) ? 1 : 0 (unsigned, but imm is still sign-extended)
             funct3::SLTU => {
-                let result = Word::new(if rs1_val.raw() < (instr.imm as u32) { 1 } else { 0 });
+                let result = Word::new(if rs1_val.raw() < (instr.imm as u32) {
+                    1
+                } else {
+                    0
+                });
                 self.registers_mut().write(instr.rd, result);
                 self.increment_pc();
             }
@@ -265,28 +272,28 @@ impl Cpu {
         let result = match instr.funct3 {
             // LB: Load byte, sign-extend
             funct3::LB => {
-                let byte = self.bus().read_byte(addr)?;
+                let byte = self.read_byte(addr)?;
                 Word::from_byte(byte.raw())
             }
 
             // LH: Load halfword, sign-extend
             funct3::LH => {
-                let half = self.bus().read_half(addr)?;
+                let half = self.read_half(addr)?;
                 Word::from_half(half.raw())
             }
 
             // LW: Load word
-            funct3::LW => self.bus().read_word(addr)?,
+            funct3::LW => self.read_word(addr)?,
 
             // LBU: Load byte, zero-extend
             funct3::LBU => {
-                let byte = self.bus().read_byte(addr)?;
+                let byte = self.read_byte(addr)?;
                 Word::from_byte_zero(byte.raw())
             }
 
             // LHU: Load halfword, zero-extend
             funct3::LHU => {
-                let half = self.bus().read_half(addr)?;
+                let half = self.read_half(addr)?;
                 Word::from_half_zero(half.raw())
             }
 
@@ -309,17 +316,17 @@ impl Cpu {
         match instr.funct3 {
             // SB: Store byte
             funct3::SB => {
-                self.bus_mut().write_byte(addr, Byte::new(rs2_val.raw() as u8))?;
+                self.write_byte(addr, Byte::new(rs2_val.raw() as u8))?;
             }
 
             // SH: Store halfword
             funct3::SH => {
-                self.bus_mut().write_half(addr, Half::new(rs2_val.raw() as u16))?;
+                self.write_half(addr, Half::new(rs2_val.raw() as u16))?;
             }
 
             // SW: Store word
             funct3::SW => {
-                self.bus_mut().write_word(addr, rs2_val)?;
+                self.write_word(addr, rs2_val)?;
             }
 
             _ => {
@@ -441,13 +448,12 @@ impl Cpu {
                 match imm & 0xFFF {
                     0 => {
                         // ECALL - Environment call
-                        return Err(SimError::Ecall {
-                            mode: format!("{:?}", self.privilege()),
-                        });
+                        let cause = ExceptionCause::ecall_from(self.privilege());
+                        self.raise_exception(cause, 0);
                     }
                     1 => {
                         // EBREAK - Environment break
-                        return Err(SimError::Ebreak(self.pc()));
+                        self.raise_exception(ExceptionCause::Breakpoint, 0);
                     }
                     0x002 => {
                         // URET - Return from User-mode trap
@@ -456,8 +462,7 @@ impl Cpu {
                     }
                     0x102 => {
                         // SRET - Return from Supervisor-mode trap
-                        // For now, just advance PC (simplified implementation)
-                        self.increment_pc();
+                        self.execute_sret()?;
                     }
                     0x302 => {
                         // MRET - Return from Machine-mode trap
@@ -521,11 +526,50 @@ impl Cpu {
 
         Ok(())
     }
+
+    /// Execute SRET instruction.
+    ///
+    /// SRET is used to return from a trap taken in S-mode.
+    /// It restores the PC from sepc and privilege level from sstatus.SPP.
+    fn execute_sret(&mut self) -> Result<()> {
+        if self.privilege() != PrivilegeLevel::Supervisor {
+            return Err(SimError::InvalidInstruction {
+                pc: self.pc(),
+                instruction: 0x10200073, // SRET instruction encoding
+            });
+        }
+
+        // Get return PC from sepc
+        let return_pc = self.csr().sepc.get();
+
+        // Restore privilege level from sstatus.SPP
+        let new_priv = if self.csr().sstatus.spp() {
+            PrivilegeLevel::Supervisor
+        } else {
+            PrivilegeLevel::User
+        };
+
+        // Restore interrupt enable from sstatus.SPIE to sstatus.SIE
+        let spie = self.csr().sstatus.spie();
+        self.csr_mut().sstatus.set_sie(spie);
+
+        // Set SPIE to 1 and SPP to U per spec
+        self.csr_mut().sstatus.set_spie(true);
+        self.csr_mut().sstatus.set_spp(PrivilegeLevel::User);
+
+        // Update privilege level and jump to return PC
+        self.set_privilege(new_priv);
+        self.set_pc(return_pc);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::csr::machine::medeleg_bits;
+    use crate::cpu::csr::{csr_addr, exception_code, TrapVectorMode};
     use crate::memory::Ram;
 
     fn create_test_cpu() -> Cpu {
@@ -723,7 +767,8 @@ mod tests {
     #[test]
     fn test_rv32m_div_by_zero_behavior() {
         let mut cpu = create_test_cpu();
-        cpu.registers_mut().write(RegIdx::new(1), Word::new(0xFFFF_FFF0));
+        cpu.registers_mut()
+            .write(RegIdx::new(1), Word::new(0xFFFF_FFF0));
         cpu.registers_mut().write(RegIdx::new(2), Word::new(0));
 
         // DIV by zero => -1
@@ -754,8 +799,10 @@ mod tests {
         let mut cpu = create_test_cpu();
 
         // Use values that produce a non-zero high part.
-        cpu.registers_mut().write(RegIdx::new(1), Word::new(0xFFFF_FFFF)); // -1 signed
-        cpu.registers_mut().write(RegIdx::new(2), Word::new(0x8000_0000));
+        cpu.registers_mut()
+            .write(RegIdx::new(1), Word::new(0xFFFF_FFFF)); // -1 signed
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0x8000_0000));
 
         // MULH(-1, 0x8000_0000) => upper 32 bits of signed product = 0
         cpu.execute_r_type(RType {
@@ -802,5 +849,64 @@ mod tests {
         })
         .unwrap();
         assert_eq!(cpu.registers().read(RegIdx::new(11)).raw(), 1);
+    }
+
+    #[test]
+    fn test_sret_restores_pc_privilege_and_interrupt_bits() {
+        let mut cpu = create_test_cpu();
+        cpu.set_privilege(PrivilegeLevel::Supervisor);
+        cpu.csr_mut().sepc.set(Addr::new(0x2200));
+        cpu.csr_mut().sstatus.set_spp(PrivilegeLevel::User);
+        cpu.csr_mut().sstatus.set_spie(true);
+        cpu.csr_mut().sstatus.set_sie(false);
+
+        cpu.execute_system(0, 0x102).unwrap();
+
+        assert_eq!(cpu.pc(), Addr::new(0x2200));
+        assert_eq!(cpu.privilege(), PrivilegeLevel::User);
+        assert!(cpu.csr().sstatus.sie());
+        assert!(cpu.csr().sstatus.spie());
+        assert!(!cpu.csr().sstatus.spp());
+    }
+
+    #[test]
+    fn test_ecall_takes_machine_trap_by_default() {
+        let mut cpu = create_test_cpu();
+        cpu.set_pc(Addr::new(0x1000));
+        cpu.set_privilege(PrivilegeLevel::User);
+        cpu.csr_mut().mtvec.set_base(Addr::new(0x800));
+        cpu.csr_mut().mtvec.set_mode(TrapVectorMode::Direct);
+
+        cpu.execute_system(0, 0).unwrap();
+
+        assert_eq!(cpu.privilege(), PrivilegeLevel::Machine);
+        assert_eq!(cpu.pc(), Addr::new(0x800));
+        assert_eq!(cpu.csr().mepc.get(), Addr::new(0x1000));
+        assert_eq!(cpu.csr().mcause.code(), exception_code::ECALL_USER);
+        assert!(!cpu.csr().mcause.is_interrupt());
+    }
+
+    #[test]
+    fn test_ecall_delegates_to_supervisor_when_enabled() {
+        let mut cpu = create_test_cpu();
+        cpu.set_pc(Addr::new(0x1234));
+        cpu.set_privilege(PrivilegeLevel::User);
+        cpu.csr_mut().stvec.write(0x900);
+
+        cpu.csr_mut()
+            .write(
+                csr_addr::MEDELEG,
+                medeleg_bits::UECL,
+                PrivilegeLevel::Machine,
+            )
+            .unwrap();
+
+        cpu.execute_system(0, 0).unwrap();
+
+        assert_eq!(cpu.privilege(), PrivilegeLevel::Supervisor);
+        assert_eq!(cpu.pc(), Addr::new(0x900));
+        assert_eq!(cpu.csr().sepc.get(), Addr::new(0x1234));
+        assert_eq!(cpu.csr().scause.code(), exception_code::ECALL_USER);
+        assert!(!cpu.csr().scause.is_interrupt());
     }
 }

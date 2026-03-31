@@ -4,7 +4,7 @@
 
 use crate::cpu::pipeline::registers::{ExMemRegister, MemWbRegister};
 use crate::cpu::pipeline::control::{WbControlSignals, mem_width};
-use crate::error::Result;
+use crate::error::{MemoryAccessType, Result};
 use crate::memory::Bus;
 use crate::types::{Addr, Byte, Half, Word};
 
@@ -34,6 +34,19 @@ impl MemoryStage {
         ex_mem: &ExMemRegister,
         bus: &mut Bus,
     ) -> Result<MemWbRegister> {
+        self.execute_with_translate(ex_mem, bus, |_bus, addr, _access| Ok(addr))
+    }
+
+    /// Execute MEM stage with address translation hook.
+    pub fn execute_with_translate<F>(
+        &mut self,
+        ex_mem: &ExMemRegister,
+        bus: &mut Bus,
+        translate: F,
+    ) -> Result<MemWbRegister>
+    where
+        F: Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
+    {
         // Handle invalid instruction
         if !ex_mem.valid {
             return Ok(MemWbRegister {
@@ -50,13 +63,13 @@ impl MemoryStage {
 
         // Handle memory read
         if ex_mem.ctrl.mem_read {
-            mem_data = self.read_memory(bus, addr, &ex_mem.ctrl)?;
+            mem_data = self.read_memory(bus, addr, &ex_mem.ctrl, &translate)?;
             self.mem_data = mem_data;
         }
 
         // Handle memory write
         if ex_mem.ctrl.mem_write {
-            self.write_memory(bus, addr, ex_mem.store_data, &ex_mem.ctrl)?;
+            self.write_memory(bus, addr, ex_mem.store_data, &ex_mem.ctrl, &translate)?;
         }
 
         // Determine write-back data
@@ -87,10 +100,12 @@ impl MemoryStage {
         bus: &Bus,
         addr: Addr,
         ctrl: &crate::cpu::pipeline::control::MemControlSignals,
+        translate: &impl Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
     ) -> Result<Word> {
+        let paddr = translate(bus, addr, MemoryAccessType::Load)?;
         match ctrl.mem_width {
             mem_width::BYTE => {
-                let byte = bus.read_byte(addr)?;
+                let byte = bus.read_byte(paddr)?;
                 if ctrl.mem_sign_extend {
                     Ok(Word::from_byte(byte.raw()))
                 } else {
@@ -98,14 +113,14 @@ impl MemoryStage {
                 }
             }
             mem_width::HALF => {
-                let half = bus.read_half(addr)?;
+                let half = bus.read_half(paddr)?;
                 if ctrl.mem_sign_extend {
                     Ok(Word::from_half(half.raw()))
                 } else {
                     Ok(Word::from_half_zero(half.raw()))
                 }
             }
-            mem_width::WORD => bus.read_word(addr),
+            mem_width::WORD => bus.read_word(paddr),
             _ => Ok(Word::ZERO),
         }
     }
@@ -117,16 +132,18 @@ impl MemoryStage {
         addr: Addr,
         data: Word,
         ctrl: &crate::cpu::pipeline::control::MemControlSignals,
+        translate: &impl Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
     ) -> Result<()> {
+        let paddr = translate(bus, addr, MemoryAccessType::Store)?;
         match ctrl.mem_width {
             mem_width::BYTE => {
-                bus.write_byte(addr, Byte::new(data.byte()))?;
+                bus.write_byte(paddr, Byte::new(data.byte()))?;
             }
             mem_width::HALF => {
-                bus.write_half(addr, Half::new(data.half()))?;
+                bus.write_half(paddr, Half::new(data.half()))?;
             }
             mem_width::WORD => {
-                bus.write_word(addr, data)?;
+                bus.write_word(paddr, data)?;
             }
             _ => {}
         }

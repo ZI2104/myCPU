@@ -18,6 +18,10 @@
 //! bus.attach_peripheral(Addr::new(0x1000_0000), Box::new(uart));
 //! ```
 
+mod lpu;
+mod npu;
 mod uart;
 
+pub use lpu::{Lpu, LPU_BASE, LPU_SIZE};
+pub use npu::{Npu, NPU_BASE, NPU_SIZE};
 pub use uart::{OutputCallback, Uart, UART_BASE, UART_IRQ, UART_SIZE};

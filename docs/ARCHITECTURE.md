@@ -313,6 +313,8 @@ src/memory/
 │   ├── page_table.rs # 页表管理
 │   └── sv32.rs      # Sv32 分页实现
 └── address.rs       # 地址空间定义
+
+> 2026-03-31 进展说明：当前仓库已在 `src/cpu/mmu.rs` 实现 Sv32 软件页表遍历（两级 walk），并在**单周期 CPU**的取指与 Load/Store 路径接入翻译入口；页故障已接入 trap 流程。
 ```
 
 ### 4. 中断模块
@@ -325,6 +327,19 @@ src/interrupt/
 ├── exception.rs     # 异常处理
 └── trap.rs          # 陷阱处理
 ```
+
+### 4.1 NPU/LPU MMIO 协处理器（新增）
+
+```
+src/peripheral/
+├── npu.rs           # NPU: Add/Mul/Max/Relu
+└── lpu.rs           # LPU: And/Or/Xor/Shifts
+```
+
+- NPU 基地址：`0x2000_0000`
+- LPU 基地址：`0x2000_1000`
+- 统一寄存器风格：`CONTROL/STATUS/OP_A/OP_B/RESULT/OPCODE/CYCLES`
+- 中断模型：计算完成后置位 `IRQ_PENDING`，CPU 可通过总线轮询并确认
 
 ### 5. 外设模块
 
@@ -351,9 +366,23 @@ src/peripheral/
 0x0200_0000 ─ 0x0200_FFFF  CLINT (Core Local Interruptor)
 0x0C00_0000 ─ 0x0FFF_FFFF  PLIC (Platform Level Interrupt Controller)
 0x1000_1000 ─ 0x1000_1FFF  UART (Serial Port)
-0x2000_0000 ─ 0x2FFF_FFFF  VirtIO Devices
+0x2000_0000 ─ 0x2000_00FF  NPU (MMIO Coprocessor)
+0x2000_1000 ─ 0x2000_10FF  LPU (MMIO Coprocessor)
+0x2001_0000 ─ 0x2FFF_FFFF  VirtIO Devices
 0x8000_0000 ─ 0xFFFF_FFFF  Reserved / Expansion
 ```
+
+### Sv32 当前实现边界（里程碑）
+
+- 已完成：
+    - Bare/Sv32 模式分流
+    - 两级页表遍历（根表 + 次级表）
+    - Instruction/Load/Store 权限位检查（X/R/W）
+    - 页故障触发 `InstructionPageFault/LoadPageFault/StorePageFault`
+- 暂未完成：
+    - TLB / ASID 相关优化
+    - A/D 位硬件更新语义
+    - 细粒度权限语义（SUM/MXR）与缺页性能优化
 
 ---
 
@@ -879,12 +908,12 @@ pub enum ModelType {
 
 **使用场景：**
 
-| 场景 | 推荐模型 | 原因 |
-|------|----------|------|
+| 场景          | 推荐模型    | 原因               |
+| ------------- | ----------- | ------------------ |
 | DiffTest 调试 | SingleCycle | 状态简单，易于对比 |
-| 功能验证 | SingleCycle | 排除流水线干扰 |
-| 性能测试 | Pipeline | 真实性能指标 |
-| 运行 OS | Pipeline | 完整功能 |
+| 功能验证      | SingleCycle | 排除流水线干扰     |
+| 性能测试      | Pipeline    | 真实性能指标       |
+| 运行 OS       | Pipeline    | 完整功能           |
 
 ---
 
@@ -1348,13 +1377,13 @@ graph TB
 
 ### 6. 扩展点总结
 
-| 扩展点 | 抽象接口 | 扩展方式 | 典型场景 |
-|--------|----------|----------|----------|
-| 执行模型 | `ExecutionModel` | 实现 trait | 单周期调试、流水线优化 |
-| CSR 寄存器 | `CsrRegister` | 实现 trait + 注册 | 自定义 CSR、新扩展 |
-| 外设 | `Peripheral` | 实现 trait + 挂载 | VirtIO、自定义外设 |
-| 状态对比 | `StateSnapshot` | 实现 trait | DiffTest 不同粒度 |
-| 指令扩展 | `Instruction` trait | 实现 trait + 注册 | M/F/D/A 扩展 |
+| 扩展点     | 抽象接口            | 扩展方式          | 典型场景               |
+| ---------- | ------------------- | ----------------- | ---------------------- |
+| 执行模型   | `ExecutionModel`    | 实现 trait        | 单周期调试、流水线优化 |
+| CSR 寄存器 | `CsrRegister`       | 实现 trait + 注册 | 自定义 CSR、新扩展     |
+| 外设       | `Peripheral`        | 实现 trait + 挂载 | VirtIO、自定义外设     |
+| 状态对比   | `StateSnapshot`     | 实现 trait        | DiffTest 不同粒度      |
+| 指令扩展   | `Instruction` trait | 实现 trait + 注册 | M/F/D/A 扩展           |
 
 ---
 
@@ -1366,35 +1395,35 @@ myCPU 实现了符合 RISC-V 硬件性能监控 (HPM) 规范的 CSR 寄存器。
 
 #### 性能计数器 CSR
 
-| CSR 地址 | 名称 | 说明 |
-|----------|------|------|
-| 0xB00 | mcycle | 周期计数器低 32 位 |
-| 0xB80 | mcycleh | 周期计数器高 32 位 |
-| 0xB02 | minstret | 指令计数器低 32 位 |
-| 0xB82 | minstreth | 指令计数器高 32 位 |
-| 0xB03-0xB1F | mhpmcounter3-31 | 可编程计数器 (低 32 位) |
+| CSR 地址    | 名称             | 说明                    |
+| ----------- | ---------------- | ----------------------- |
+| 0xB00       | mcycle           | 周期计数器低 32 位      |
+| 0xB80       | mcycleh          | 周期计数器高 32 位      |
+| 0xB02       | minstret         | 指令计数器低 32 位      |
+| 0xB82       | minstreth        | 指令计数器高 32 位      |
+| 0xB03-0xB1F | mhpmcounter3-31  | 可编程计数器 (低 32 位) |
 | 0xB83-0xB9F | mhpmcounter3-31h | 可编程计数器 (高 32 位) |
-| 0x323-0x33F | mhpmevent3-31 | 事件选择器 |
-| 0x320 | mcountinhibit | 计数器禁止寄存器 |
+| 0x323-0x33F | mhpmevent3-31    | 事件选择器              |
+| 0x320       | mcountinhibit    | 计数器禁止寄存器        |
 
 #### 支持的性能事件
 
-| 事件 ID | 事件名称 | 说明 |
-|---------|----------|------|
-| 0 | None | 禁用计数 |
-| 1 | Cycles | CPU 周期 |
-| 2 | InstructionsRetired | 已完成指令 |
-| 3 | LoadUseStalls | Load-Use 暂停周期 |
-| 4 | ControlHazards | 控制冒险 (分支预测错误) |
-| 5 | BranchExecuted | 执行的分支指令 |
-| 6 | BranchTaken | 跳转的分支 |
-| 7 | BranchNotTaken | 未跳转的分支 |
-| 8 | MemoryReads | 内存读取次数 |
-| 9 | MemoryWrites | 内存写入次数 |
-| 10 | AluOperations | ALU 操作次数 |
-| 11 | CsrAccesses | CSR 访问次数 |
-| 12 | InterruptsTaken | 已处理中断数 |
-| 13 | PipelineFlushes | 流水线冲刷次数 |
+| 事件 ID | 事件名称            | 说明                    |
+| ------- | ------------------- | ----------------------- |
+| 0       | None                | 禁用计数                |
+| 1       | Cycles              | CPU 周期                |
+| 2       | InstructionsRetired | 已完成指令              |
+| 3       | LoadUseStalls       | Load-Use 暂停周期       |
+| 4       | ControlHazards      | 控制冒险 (分支预测错误) |
+| 5       | BranchExecuted      | 执行的分支指令          |
+| 6       | BranchTaken         | 跳转的分支              |
+| 7       | BranchNotTaken      | 未跳转的分支            |
+| 8       | MemoryReads         | 内存读取次数            |
+| 9       | MemoryWrites        | 内存写入次数            |
+| 10      | AluOperations       | ALU 操作次数            |
+| 11      | CsrAccesses         | CSR 访问次数            |
+| 12      | InterruptsTaken     | 已处理中断数            |
+| 13      | PipelineFlushes     | 流水线冲刷次数          |
 
 ### 性能收集器架构
 
@@ -1467,11 +1496,11 @@ cargo run --release -- run --perf-report program.elf
 
 ### 关键实现文件
 
-| 文件 | 说明 |
-|------|------|
-| `src/cpu/csr/perf.rs` | HPM CSR 实现 (Counter64, Mcycle, Minstret, Mhpmcounter) |
-| `src/cpu/perf_collector.rs` | 性能事件收集器 |
-| `src/perf_report.rs` | 性能报告格式化输出 |
+| 文件                        | 说明                                                    |
+| --------------------------- | ------------------------------------------------------- |
+| `src/cpu/csr/perf.rs`       | HPM CSR 实现 (Counter64, Mcycle, Minstret, Mhpmcounter) |
+| `src/cpu/perf_collector.rs` | 性能事件收集器                                          |
+| `src/perf_report.rs`        | 性能报告格式化输出                                      |
 
 ---
 

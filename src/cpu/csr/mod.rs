@@ -16,14 +16,14 @@ pub mod user;
 
 pub use csr_trait::{CsrAccessCheck, CsrRegister};
 pub use machine::{
-    exception_code, interrupt_code, ie_bits, ip_bits, Mcause, Mepc, Medeleg, Mideleg, Mie, Mip, Misa,
-    Mscratch, Mstatus, Mtval, Mtvec, TrapVectorMode,
+    exception_code, ie_bits, interrupt_code, ip_bits, Mcause, Medeleg, Mepc, Mideleg, Mie, Mip,
+    Misa, Mscratch, Mstatus, Mtval, Mtvec, TrapVectorMode,
 };
 pub use perf::{
-    csr_addr as perf_csr_addr, HPM_COUNTER_BASE, HPM_COUNTER_COUNT, Mcountinhibit, Mcycle,
-    Mcycleh, Mhpmcounter, Mhpmevent, Minstret, Minstreth, PerfCounters, PerfEvent,
+    csr_addr as perf_csr_addr, Mcountinhibit, Mcycle, Mcycleh, Mhpmcounter, Mhpmevent, Minstret,
+    Minstreth, PerfCounters, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT,
 };
-pub use supervisor::{Scause, Sepc, Sie, Sip, Sscratch, Sstatus, Stval, Stvec};
+pub use supervisor::{Satp, Scause, Sepc, Sie, Sip, Sscratch, Sstatus, Stval, Stvec};
 pub use trap::{ExceptionCause, InterruptCause, Trap, TrapCause};
 pub use user::{Ucause, Uepc, Ustatus, Utvec};
 
@@ -49,6 +49,7 @@ pub mod csr_addr {
     pub const SSTATUS: u16 = 0x100;
     pub const SIE: u16 = 0x104;
     pub const STVEC: u16 = 0x105;
+    pub const SATP: u16 = 0x180;
     pub const SSCRATCH: u16 = 0x140;
     pub const SEPC: u16 = 0x141;
     pub const SCAUSE: u16 = 0x142;
@@ -133,6 +134,7 @@ pub struct CsrFile {
     pub sstatus: Sstatus,
     pub sie: Sie,
     pub stvec: Stvec,
+    pub satp: Satp,
     pub sscratch: Sscratch,
     pub sepc: Sepc,
     pub scause: Scause,
@@ -167,6 +169,7 @@ impl CsrFile {
             sstatus: Sstatus::new(),
             sie: Sie::new(),
             stvec: Stvec::new(),
+            satp: Satp::new(),
             sscratch: Sscratch::new(),
             sepc: Sepc::new(),
             scause: Scause::new(),
@@ -239,6 +242,7 @@ impl CsrFile {
             csr_addr::SSTATUS => Ok(self.sstatus.read()),
             csr_addr::SIE => Ok(self.sie.read()),
             csr_addr::STVEC => Ok(self.stvec.read()),
+            csr_addr::SATP => Ok(self.satp.read()),
             csr_addr::SSCRATCH => Ok(self.sscratch.read()),
             csr_addr::SEPC => Ok(self.sepc.read()),
             csr_addr::SCAUSE => Ok(self.scause.read()),
@@ -257,7 +261,9 @@ impl CsrFile {
             perf_csr_addr::MINSTRET => Ok(self.perf.minstret.read_low()),
             perf_csr_addr::MINSTRETH => Ok(self.perf.minstreth.read()),
             perf_csr_addr::MCOUNTINHIBIT => Ok(self.perf.mcountinhibit.read()),
-            addr if (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END).contains(&addr) => {
+            addr if (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END)
+                .contains(&addr) =>
+            {
                 let index = (addr - perf_csr_addr::MHPMCOUNTER_BASE) as usize + 3;
                 if index <= 31 {
                     Ok(self.perf.mhpmcounters[index - 3].read_low())
@@ -265,7 +271,9 @@ impl CsrFile {
                     Err(SimError::InvalidCsr(addr))
                 }
             }
-            addr if (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END).contains(&addr) => {
+            addr if (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END)
+                .contains(&addr) =>
+            {
                 let index = (addr - perf_csr_addr::MHPMCOUNTERH_BASE) as usize + 3;
                 if index <= 31 {
                     Ok(self.perf.mhpmcounters[index - 3].read_high())
@@ -273,7 +281,9 @@ impl CsrFile {
                     Err(SimError::InvalidCsr(addr))
                 }
             }
-            addr if (perf_csr_addr::MHPMEVENT_BASE..=perf_csr_addr::MHPMEVENT_END).contains(&addr) => {
+            addr if (perf_csr_addr::MHPMEVENT_BASE..=perf_csr_addr::MHPMEVENT_END)
+                .contains(&addr) =>
+            {
                 let index = (addr - perf_csr_addr::MHPMEVENT_BASE) as usize + 3;
                 if index <= 31 {
                     Ok(self.perf.mhpmevents[index - 3].read())
@@ -351,6 +361,10 @@ impl CsrFile {
                 self.stvec.write(value);
                 Ok(())
             }
+            csr_addr::SATP => {
+                self.satp.write(value);
+                Ok(())
+            }
             csr_addr::SSCRATCH => {
                 self.sscratch.write(value);
                 Ok(())
@@ -411,7 +425,9 @@ impl CsrFile {
                 self.perf.mcountinhibit.write(value);
                 Ok(())
             }
-            addr if (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END).contains(&addr) => {
+            addr if (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END)
+                .contains(&addr) =>
+            {
                 let index = (addr - perf_csr_addr::MHPMCOUNTER_BASE) as usize + 3;
                 if index <= 31 {
                     self.perf.mhpmcounters[index - 3].write_low(value);
@@ -420,7 +436,9 @@ impl CsrFile {
                     Err(SimError::InvalidCsr(addr))
                 }
             }
-            addr if (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END).contains(&addr) => {
+            addr if (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END)
+                .contains(&addr) =>
+            {
                 let index = (addr - perf_csr_addr::MHPMCOUNTERH_BASE) as usize + 3;
                 if index <= 31 {
                     self.perf.mhpmcounters[index - 3].write_high(value);
@@ -429,7 +447,9 @@ impl CsrFile {
                     Err(SimError::InvalidCsr(addr))
                 }
             }
-            addr if (perf_csr_addr::MHPMEVENT_BASE..=perf_csr_addr::MHPMEVENT_END).contains(&addr) => {
+            addr if (perf_csr_addr::MHPMEVENT_BASE..=perf_csr_addr::MHPMEVENT_END)
+                .contains(&addr) =>
+            {
                 let index = (addr - perf_csr_addr::MHPMEVENT_BASE) as usize + 3;
                 if index <= 31 {
                     self.perf.mhpmevents[index - 3].write(value);
@@ -447,7 +467,13 @@ impl CsrFile {
     /// Execute a CSR operation (CSRRW/CSRRS/CSRRC variants).
     ///
     /// Returns the old CSR value (for reading into rd).
-    pub fn execute(&mut self, op: CsrOp, addr: u16, rs1_val: u32, privilege: PrivilegeLevel) -> Result<u32> {
+    pub fn execute(
+        &mut self,
+        op: CsrOp,
+        addr: u16,
+        rs1_val: u32,
+        privilege: PrivilegeLevel,
+    ) -> Result<u32> {
         let is_write = op.is_write();
         let is_imm = op.is_imm();
         let write_val = if is_imm { rs1_val & 0x1F } else { rs1_val };
@@ -526,8 +552,18 @@ mod tests {
         csr_file
             .write(csr_addr::MSCRATCH, 0x12345678, PrivilegeLevel::Machine)
             .unwrap();
-        let val = csr_file.read(csr_addr::MSCRATCH, PrivilegeLevel::Machine).unwrap();
+        let val = csr_file
+            .read(csr_addr::MSCRATCH, PrivilegeLevel::Machine)
+            .unwrap();
         assert_eq!(val, 0x12345678);
+
+        csr_file
+            .write(csr_addr::SATP, 0x8123_4567, PrivilegeLevel::Supervisor)
+            .unwrap();
+        let satp = csr_file
+            .read(csr_addr::SATP, PrivilegeLevel::Supervisor)
+            .unwrap();
+        assert_eq!(satp, 0x8123_4567 & 0xFFFF_FFFF);
     }
 
     #[test]
@@ -536,6 +572,9 @@ mod tests {
 
         let result = csr_file.read(csr_addr::MSTATUS, PrivilegeLevel::User);
         assert!(result.is_err());
+
+        let satp_from_user = csr_file.read(csr_addr::SATP, PrivilegeLevel::User);
+        assert!(satp_from_user.is_err());
     }
 
     #[test]
@@ -551,24 +590,45 @@ mod tests {
         let mut csr_file = CsrFile::new();
 
         let old = csr_file
-            .execute(CsrOp::ReadWrite, csr_addr::MSCRATCH, 0x11111111, PrivilegeLevel::Machine)
+            .execute(
+                CsrOp::ReadWrite,
+                csr_addr::MSCRATCH,
+                0x11111111,
+                PrivilegeLevel::Machine,
+            )
             .unwrap();
         assert_eq!(old, 0);
-        let val = csr_file.read(csr_addr::MSCRATCH, PrivilegeLevel::Machine).unwrap();
+        let val = csr_file
+            .read(csr_addr::MSCRATCH, PrivilegeLevel::Machine)
+            .unwrap();
         assert_eq!(val, 0x11111111);
 
         let old = csr_file
-            .execute(CsrOp::ReadSet, csr_addr::MSCRATCH, 0x00001111, PrivilegeLevel::Machine)
+            .execute(
+                CsrOp::ReadSet,
+                csr_addr::MSCRATCH,
+                0x00001111,
+                PrivilegeLevel::Machine,
+            )
             .unwrap();
         assert_eq!(old, 0x11111111);
-        let val = csr_file.read(csr_addr::MSCRATCH, PrivilegeLevel::Machine).unwrap();
+        let val = csr_file
+            .read(csr_addr::MSCRATCH, PrivilegeLevel::Machine)
+            .unwrap();
         assert_eq!(val, 0x11111111 | 0x00001111);
 
         let old = csr_file
-            .execute(CsrOp::ReadClear, csr_addr::MSCRATCH, 0x00000001, PrivilegeLevel::Machine)
+            .execute(
+                CsrOp::ReadClear,
+                csr_addr::MSCRATCH,
+                0x00000001,
+                PrivilegeLevel::Machine,
+            )
             .unwrap();
         assert_eq!(old, 0x11111111 | 0x00001111);
-        let val = csr_file.read(csr_addr::MSCRATCH, PrivilegeLevel::Machine).unwrap();
+        let val = csr_file
+            .read(csr_addr::MSCRATCH, PrivilegeLevel::Machine)
+            .unwrap();
         assert_eq!(val, (0x11111111 | 0x00001111) & !0x00000001);
     }
 }

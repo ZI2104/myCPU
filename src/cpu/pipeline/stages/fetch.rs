@@ -39,6 +39,23 @@ impl FetchStage {
         branch_target: Addr,
         branch_taken: bool,
     ) -> Result<IfIdRegister> {
+        self.execute_with_translate(bus, stall, branch_target, branch_taken, |_bus, addr| {
+            Ok(addr)
+        })
+    }
+
+    /// Execute IF stage with address translation hook.
+    pub fn execute_with_translate<F>(
+        &mut self,
+        bus: &Bus,
+        stall: bool,
+        branch_target: Addr,
+        branch_taken: bool,
+        translate: F,
+    ) -> Result<IfIdRegister>
+    where
+        F: Fn(&Bus, Addr) -> Result<Addr>,
+    {
         if stall {
             // Don't update anything on stall
             return Ok(IfIdRegister {
@@ -54,7 +71,8 @@ impl FetchStage {
         }
 
         // Fetch instruction
-        let instruction = bus.read_word(self.pc)?;
+        let phys_pc = translate(bus, self.pc)?;
+        let instruction = bus.read_word(phys_pc)?;
         self.pc_plus_4 = self.pc + Addr::new(4);
 
         // Create IF/ID register output

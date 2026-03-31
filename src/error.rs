@@ -6,6 +6,24 @@ use thiserror::Error;
 
 use crate::types::Addr;
 
+/// Memory access kind, used for translation and page-fault reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryAccessType {
+    Instruction,
+    Load,
+    Store,
+}
+
+impl std::fmt::Display for MemoryAccessType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Instruction => write!(f, "instruction"),
+            Self::Load => write!(f, "load"),
+            Self::Store => write!(f, "store"),
+        }
+    }
+}
+
 /// The main error type for the simulator.
 #[derive(Debug, Error)]
 pub enum SimError {
@@ -28,7 +46,9 @@ pub enum SimError {
     },
 
     /// Memory alignment error
-    #[error("Memory alignment error at {addr}: {size}-byte access requires {alignment}-byte alignment")]
+    #[error(
+        "Memory alignment error at {addr}: {size}-byte access requires {alignment}-byte alignment"
+    )]
     MemoryAlignment {
         /// The address that was accessed
         addr: Addr,
@@ -36,6 +56,15 @@ pub enum SimError {
         size: usize,
         /// The required alignment in bytes
         alignment: usize,
+    },
+
+    /// Virtual memory page fault.
+    #[error("{access} page fault at virtual address {addr}")]
+    PageFault {
+        /// Faulting virtual address.
+        addr: Addr,
+        /// Access type that triggered the fault.
+        access: MemoryAccessType,
     },
 
     /// Invalid instruction

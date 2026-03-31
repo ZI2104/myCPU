@@ -2,15 +2,15 @@
 
 ## 开发阶段总览
 
-| 阶段 | 内容 | 产出 | 周期 |
-|------|------|------|------|
-| Phase 1 | 基础框架 | 可编译的项目骨架 | 1 周 |
-| Phase 2 | 指令集 | 可运行简单程序 | 1.5 周 |
-| Phase 3 | 流水线 | 5 级流水线 + 冒险处理 | 1.5 周 |
-| Phase 4 | 特权级 | M/S/U 模式 + 异常中断 | 2 周 |
-| Phase 5 | 外设 | UART + 调试器 + DiffTest | 1 周 |
-| Phase 6 P0 | 性能监控 | HPM CSR + PerfCollector | 1 周 |
-| **总计** | - | - | **8 周** |
+| 阶段       | 内容     | 产出                     | 周期     |
+| ---------- | -------- | ------------------------ | -------- |
+| Phase 1    | 基础框架 | 可编译的项目骨架         | 1 周     |
+| Phase 2    | 指令集   | 可运行简单程序           | 1.5 周   |
+| Phase 3    | 流水线   | 5 级流水线 + 冒险处理    | 1.5 周   |
+| Phase 4    | 特权级   | M/S/U 模式 + 异常中断    | 2 周     |
+| Phase 5    | 外设     | UART + 调试器 + DiffTest | 1 周     |
+| Phase 6 P0 | 性能监控 | HPM CSR + PerfCollector  | 1 周     |
+| **总计**   | -        | -                        | **8 周** |
 
 ---
 
@@ -283,15 +283,51 @@
 - [ ] 常用指令的压缩形式
 
 ### P3: Sv32 分页 (可选)
-- [ ] 页表结构
+- [x] 页表结构（SATP CSR + Sv32 两级页表遍历骨架）
 - [ ] TLB 缓存
-- [ ] 地址翻译
-- [ ] 页错误异常
+- [x] 地址翻译入口（单周期 CPU：取指/Load/Store）
+- [x] 页错误异常（Instruction/Load/Store Page Fault）
+
+#### P3 当前里程碑验收（2026-03-31）
+
+- 已实现内容：
+  - `satp` CSR（RV32: MODE/ASID/PPN）接入 `CsrFile`
+  - `src/cpu/mmu.rs`：Sv32 软件页表遍历（Bare 直通）
+  - 单周期 CPU 取指、Load/Store 统一接入地址翻译入口
+  - 页故障从错误返回改为 trap 路径（`mcause/mtval/mepc` 正确写入）
+- 验收测试：
+  - `cargo test --lib` 通过（202 passed, 0 failed）
+  - 新增验收用例：
+    - `test_sv32_instruction_page_fault_enters_trap`
+    - `test_sv32_load_page_fault_enters_trap`
+- 当前边界：
+  - 暂未实现 TLB
+  - 暂未实现 A/D 位硬件更新语义与权限细则（SUM/MXR 等）
 
 ### P4: 多核支持 (可选)
 - [ ] 多个 Hart (硬件线程)
 - [ ] 核间中断 (IPI)
 - [ ] 共享内存
+
+### P5: NPU/LPU 协处理器 (MMIO 路径)（进行中）
+
+- [x] NPU MMIO 外设骨架（`0x2000_0000`）
+- [x] LPU MMIO 外设骨架（`0x2000_1000`）
+- [x] 启动命令默认挂载到系统总线（CLI 运行/调试/可视化）
+- [x] 中断查询与确认接口（`has_interrupt` / `acknowledge_interrupt`）
+- [x] 单元测试覆盖基础算子和中断行为
+- [ ] 可视化前端寄存器面板与任务时间线
+- [ ] DMA/描述符队列（大任务模式）
+- [ ] 自定义指令加速路径（后续阶段）
+
+#### P5 当前里程碑验收（2026-03-31）
+
+- 新增文件：
+  - `src/peripheral/npu.rs`
+  - `src/peripheral/lpu.rs`
+- 验收测试：
+  - `cargo test --lib` 通过（208 passed, 0 failed）
+  - `cargo build` 通过
 
 ---
 

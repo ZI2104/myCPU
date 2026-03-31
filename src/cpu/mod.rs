@@ -5,6 +5,7 @@
 
 mod core;
 mod execution_model;
+mod mmu;
 mod pc;
 mod perf_collector;
 mod registers;

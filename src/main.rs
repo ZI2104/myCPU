@@ -8,7 +8,7 @@ use mycpu::debug::GdbServer;
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf_report::PerfReport;
-use mycpu::peripheral::Uart;
+use mycpu::peripheral::{Lpu, Npu, Uart};
 use mycpu::types::Addr;
 use mycpu::visualize::start_visualize_server;
 use std::io::Write;
@@ -244,6 +244,8 @@ fn create_bus(memory_mb: usize) -> Bus {
     let memory_size = memory_mb * 1024 * 1024;
     let ram = Ram::new(memory_size);
     bus.attach_memory(Addr::new(0x80000000), ram, "Main RAM");
+    bus.attach_peripheral(Npu::new());
+    bus.attach_peripheral(Lpu::new());
     bus
 }
 

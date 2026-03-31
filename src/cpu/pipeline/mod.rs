@@ -9,20 +9,29 @@ mod hazard;
 mod registers;
 pub mod stages;
 
-pub use control::{AluOp, AluSrc, BranchType, ExControlSignals, MemControlSignals, WbControlSignals};
+pub use control::{
+    AluOp, AluSrc, BranchType, ExControlSignals, MemControlSignals, WbControlSignals,
+};
 pub use forward::{ForwardSource, ForwardUnit};
 pub use hazard::HazardUnit;
 pub use registers::{ExMemRegister, IdExRegister, IfIdRegister, MemWbRegister};
 
 // Re-export for visualization
-use crate::visualize::snapshot::{disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot, WbStageInfo};
+use crate::visualize::snapshot::{
+    disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot,
+    PipelineSnapshot, WbStageInfo,
+};
 
-use crate::cpu::csr::{CsrFile, HPM_COUNTER_BASE, HPM_COUNTER_COUNT, PerfEvent};
+use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
+use crate::cpu::csr::{ExceptionCause, InterruptCause, Trap};
 use crate::cpu::execution_model::ExecutionModel;
+use crate::cpu::mmu;
 use crate::cpu::perf_collector::PerfCollector;
-use crate::cpu::pipeline::stages::{DecodeStage, ExecuteStage, FetchStage, MemoryStage, WritebackStage};
+use crate::cpu::pipeline::stages::{
+    DecodeStage, ExecuteStage, FetchStage, MemoryStage, WritebackStage,
+};
 use crate::cpu::{CpuState, ProgramCounter, Registers};
-use crate::error::{Result, SimError};
+use crate::error::{MemoryAccessType, Result, SimError};
 use crate::memory::Bus;
 use crate::types::{Addr, PrivilegeLevel, Word};
 
@@ -165,9 +174,16 @@ impl PipelineCpu {
 
         if mie_enabled && pending {
             // Get the highest priority pending interrupt
-            if let Some((is_interrupt, cause)) = self.csr.mip.highest_priority_interrupt(&self.csr.mie) {
+            if let Some((is_interrupt, cause)) =
+                self.csr.mip.highest_priority_interrupt(&self.csr.mie)
+            {
                 // Take the trap - flush pipeline and jump to handler
-                self.take_trap(is_interrupt, cause, self.pc.get());
+                let trap = if is_interrupt {
+                    Trap::interrupt(InterruptCause::from_code(cause), self.pc.get())
+                } else {
+                    Trap::exception(ExceptionCause::from_code(cause), self.pc.get(), 0)
+                };
+                self.take_trap(trap);
                 return true;
             }
         }
@@ -175,33 +191,38 @@ impl PipelineCpu {
         false
     }
 
-    /// Take a trap (interrupt or exception).
-    ///
-    /// This saves the current context, flushes the pipeline, and jumps to the trap handler.
-    fn take_trap(&mut self, is_interrupt: bool, cause: u32, epc: Addr) {
-        // Save current PC to mepc
-        self.csr.mepc.set(epc);
+    /// Take a trap and route it to M-mode or S-mode based on delegation state.
+    fn take_trap(&mut self, trap: Trap) {
+        // Per RISC-V spec, traps from M-mode are not delegated.
+        let can_delegate = self.privilege != PrivilegeLevel::Machine
+            && trap.should_delegate(&self.csr.mideleg, &self.csr.medeleg);
 
-        // Set mcause
-        self.csr.mcause.set(is_interrupt, cause);
+        let (handler_addr, new_privilege) = if can_delegate {
+            trap.take_s_trap(
+                &mut self.csr.sstatus,
+                &mut self.csr.sepc,
+                &mut self.csr.scause,
+                &mut self.csr.stval,
+                &self.csr.stvec,
+                self.privilege,
+            )
+        } else {
+            trap.take_m_trap(
+                &mut self.csr.mstatus,
+                &mut self.csr.mepc,
+                &mut self.csr.mcause,
+                &mut self.csr.mtval,
+                &self.csr.mtvec,
+                self.privilege,
+            )
+        };
 
-        // Save current privilege to mstatus.MPP
-        self.csr.mstatus.set_mpp(self.privilege);
-
-        // Save current interrupt enable to mstatus.MPIE
-        self.csr.mstatus.set_mpie(self.csr.mstatus.mie());
-
-        // Disable interrupts
-        self.csr.mstatus.set_mie(false);
-
-        // Switch to machine mode
-        self.privilege = PrivilegeLevel::Machine;
+        self.privilege = new_privilege;
 
         // Flush the pipeline
         self.flush_pipeline();
 
-        // Jump to trap handler (based on mtvec mode)
-        let handler_addr = self.csr.mtvec.trap_address(cause, is_interrupt);
+        // Jump to trap handler
         self.pc.set(handler_addr);
         self.fetch_stage.set_pc(handler_addr);
     }
@@ -412,7 +433,8 @@ impl PipelineCpu {
         }
 
         // ========== Step 1: Update hazard detection ==========
-        self.hazard_unit.update(&self.id_ex, &self.if_id, &self.ex_mem);
+        self.hazard_unit
+            .update(&self.id_ex, &self.if_id, &self.ex_mem);
 
         // Record stall events
         if self.hazard_unit.stall {
@@ -432,7 +454,30 @@ impl PipelineCpu {
 
         // 2b. Memory stage - perform memory access
         // Use old ex_mem value, produce new mem_wb
-        let new_mem_wb = self.memory_stage.execute(&self.ex_mem, &mut self.bus)?;
+        let satp_for_mem = self.csr.satp;
+        let privilege_for_mem = self.privilege;
+        let new_mem_wb = match self.memory_stage.execute_with_translate(
+            &self.ex_mem,
+            &mut self.bus,
+            |bus, vaddr, access| {
+                mmu::translate_addr(bus, &satp_for_mem, privilege_for_mem, vaddr, access)
+            },
+        ) {
+            Ok(mem_wb) => mem_wb,
+            Err(SimError::PageFault { addr, access }) => {
+                self.take_trap(Trap::exception(
+                    Self::page_fault_cause(access),
+                    self.ex_mem.pc,
+                    addr.raw(),
+                ));
+                self.cycles += 1;
+                self.perf.record(PerfEvent::Cycles);
+                self.perf.record(PerfEvent::PipelineFlushes);
+                self.csr.perf.tick();
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
 
         // Track memory accesses
         if self.ex_mem.ctrl.mem_read {
@@ -487,20 +532,44 @@ impl PipelineCpu {
         }
 
         // 2d. Decode stage - decode instruction and read registers
-        let new_id_ex = self.decode_stage.execute(
-            &self.if_id,
-            &self.regs,
-            self.hazard_unit.flush_id_ex,
-        )?;
+        let new_id_ex =
+            self.decode_stage
+                .execute(&self.if_id, &self.regs, self.hazard_unit.flush_id_ex)?;
 
         // 2e. Fetch stage - fetch instruction from memory
         // Handle stall and branch prediction
-        let new_if_id = self.fetch_stage.execute(
+        let satp_for_if = self.csr.satp;
+        let privilege_for_if = self.privilege;
+        let new_if_id = match self.fetch_stage.execute_with_translate(
             &self.bus,
             self.hazard_unit.stall,
             self.ex_mem.branch_target,
             self.ex_mem.branch_taken,
-        )?;
+            |bus, vaddr| {
+                mmu::translate_addr(
+                    bus,
+                    &satp_for_if,
+                    privilege_for_if,
+                    vaddr,
+                    MemoryAccessType::Instruction,
+                )
+            },
+        ) {
+            Ok(if_id) => if_id,
+            Err(SimError::PageFault { addr, access }) => {
+                self.take_trap(Trap::exception(
+                    Self::page_fault_cause(access),
+                    self.fetch_stage.pc(),
+                    addr.raw(),
+                ));
+                self.cycles += 1;
+                self.perf.record(PerfEvent::Cycles);
+                self.perf.record(PerfEvent::PipelineFlushes);
+                self.csr.perf.tick();
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
 
         // ========== Step 3: Update pipeline registers ==========
         // Update in forward order to maintain correct state
@@ -561,6 +630,14 @@ impl PipelineCpu {
         }
 
         Ok(())
+    }
+
+    fn page_fault_cause(access: MemoryAccessType) -> ExceptionCause {
+        match access {
+            MemoryAccessType::Instruction => ExceptionCause::InstructionPageFault,
+            MemoryAccessType::Load => ExceptionCause::LoadPageFault,
+            MemoryAccessType::Store => ExceptionCause::StorePageFault,
+        }
     }
 }
 
@@ -634,11 +711,13 @@ mod tests {
         let mut ram = Ram::new(4096);
         // Fill with NOP instructions (addi x0, x0, 0 = 0x00000013)
         for i in 0..1024 {
-            ram.write_word(Addr::new(i * 4), Word::new(0x00000013)).unwrap();
+            ram.write_word(Addr::new(i * 4), Word::new(0x00000013))
+                .unwrap();
         }
         // Write actual program
         for (i, &instr) in program.iter().enumerate() {
-            ram.write_word(Addr::new((i * 4) as u32), Word::new(instr)).unwrap();
+            ram.write_word(Addr::new((i * 4) as u32), Word::new(instr))
+                .unwrap();
         }
         bus.attach_memory(Addr::new(0), ram, "RAM");
         bus
@@ -686,20 +765,45 @@ mod tests {
         // Debug: print pipeline state BEFORE each cycle
         for cycle in 0..10 {
             println!("=== Before Cycle {} ===", cycle);
-            println!("  IF/ID: pc={:08x}, instr={:08x}, valid={}",
-                cpu.if_id.pc.raw(), cpu.if_id.instruction, cpu.if_id.valid);
-            println!("  ID/EX: pc={:08x}, rd={}, rs1_val={}, imm={}, ctrl.reg_write={}, valid={}",
-                cpu.id_ex.pc.raw(), cpu.id_ex.rd.raw(), cpu.id_ex.rs1_val.raw(), cpu.id_ex.imm,
-                cpu.id_ex.ctrl.reg_write, cpu.id_ex.valid);
-            println!("  EX/MEM: pc={:08x}, alu_result={:08x}, rd={}, ctrl.reg_write={}, valid={}",
-                cpu.ex_mem.pc.raw(), cpu.ex_mem.alu_result.raw(), cpu.ex_mem.rd.raw(),
-                cpu.ex_mem.ctrl.reg_write, cpu.ex_mem.valid);
-            println!("  MEM/WB: pc={:08x}, write_data={:08x}, rd={}, ctrl.reg_write={}, valid={}",
-                cpu.mem_wb.pc.raw(), cpu.mem_wb.write_data.raw(), cpu.mem_wb.rd.raw(),
-                cpu.mem_wb.ctrl.reg_write, cpu.mem_wb.valid);
-            println!("  HazardUnit: stall={}, flush_id_ex={}",
-                cpu.hazard_unit.stall, cpu.hazard_unit.flush_id_ex);
-            println!("  x1 = {}", cpu.regs.read(crate::types::RegIdx::new(1)).raw());
+            println!(
+                "  IF/ID: pc={:08x}, instr={:08x}, valid={}",
+                cpu.if_id.pc.raw(),
+                cpu.if_id.instruction,
+                cpu.if_id.valid
+            );
+            println!(
+                "  ID/EX: pc={:08x}, rd={}, rs1_val={}, imm={}, ctrl.reg_write={}, valid={}",
+                cpu.id_ex.pc.raw(),
+                cpu.id_ex.rd.raw(),
+                cpu.id_ex.rs1_val.raw(),
+                cpu.id_ex.imm,
+                cpu.id_ex.ctrl.reg_write,
+                cpu.id_ex.valid
+            );
+            println!(
+                "  EX/MEM: pc={:08x}, alu_result={:08x}, rd={}, ctrl.reg_write={}, valid={}",
+                cpu.ex_mem.pc.raw(),
+                cpu.ex_mem.alu_result.raw(),
+                cpu.ex_mem.rd.raw(),
+                cpu.ex_mem.ctrl.reg_write,
+                cpu.ex_mem.valid
+            );
+            println!(
+                "  MEM/WB: pc={:08x}, write_data={:08x}, rd={}, ctrl.reg_write={}, valid={}",
+                cpu.mem_wb.pc.raw(),
+                cpu.mem_wb.write_data.raw(),
+                cpu.mem_wb.rd.raw(),
+                cpu.mem_wb.ctrl.reg_write,
+                cpu.mem_wb.valid
+            );
+            println!(
+                "  HazardUnit: stall={}, flush_id_ex={}",
+                cpu.hazard_unit.stall, cpu.hazard_unit.flush_id_ex
+            );
+            println!(
+                "  x1 = {}",
+                cpu.regs.read(crate::types::RegIdx::new(1)).raw()
+            );
             println!("");
 
             cpu.clock().unwrap();
@@ -722,7 +826,6 @@ mod tests {
         for _ in 0..5 {
             cpu.clock().unwrap();
         }
-
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod s_csr_addr {
     pub const SSTATUS: u16 = 0x100;
     pub const SIE: u16 = 0x104;
     pub const STVEC: u16 = 0x105;
+    pub const SATP: u16 = 0x180;
     pub const SSCRATCH: u16 = 0x140;
     pub const SEPC: u16 = 0x141;
     pub const SCAUSE: u16 = 0x142;
@@ -309,6 +310,58 @@ impl Stval {
     }
 }
 
+/// Supervisor Address Translation and Protection register (satp).
+///
+/// RV32 format:
+/// - [31]     MODE (0=Bare, 1=Sv32)
+/// - [30:22]  ASID (9 bits)
+/// - [21:0]   PPN (root page table physical page number)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Satp {
+    value: u32,
+}
+
+impl Satp {
+    const MODE_MASK: u32 = 1 << 31;
+    const ASID_MASK: u32 = 0x1FF << 22;
+    const PPN_MASK: u32 = 0x003F_FFFF;
+
+    pub fn new() -> Self {
+        Self { value: 0 }
+    }
+
+    pub fn read(&self) -> u32 {
+        self.value
+    }
+
+    pub fn write(&mut self, value: u32) {
+        // RV32 supports only MODE bit[31] plus ASID[30:22] and PPN[21:0].
+        self.value = value & (Self::MODE_MASK | Self::ASID_MASK | Self::PPN_MASK);
+    }
+
+    /// Returns SATP mode (0 = Bare, 1 = Sv32 for RV32).
+    pub fn mode(&self) -> u8 {
+        ((self.value & Self::MODE_MASK) >> 31) as u8
+    }
+
+    pub fn is_sv32(&self) -> bool {
+        self.mode() == 1
+    }
+
+    pub fn asid(&self) -> u16 {
+        ((self.value & Self::ASID_MASK) >> 22) as u16
+    }
+
+    pub fn ppn(&self) -> u32 {
+        self.value & Self::PPN_MASK
+    }
+
+    /// Root page table physical base address.
+    pub fn root_table_addr(&self) -> Addr {
+        Addr::new(self.ppn() << 12)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +387,17 @@ mod tests {
 
         sip.set_ssip(false);
         assert!(!sip.ssip());
+    }
+
+    #[test]
+    fn test_satp_rv32_fields() {
+        let mut satp = Satp::new();
+        satp.write(0xC123_4567);
+
+        assert_eq!(satp.mode(), 1);
+        assert!(satp.is_sv32());
+        assert_eq!(satp.asid(), 0x104);
+        assert_eq!(satp.ppn(), 0x0023_4567);
+        assert_eq!(satp.root_table_addr(), Addr::new(0x34567000));
     }
 }
