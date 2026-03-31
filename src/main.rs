@@ -7,8 +7,10 @@ use mycpu::cpu::Cpu;
 use mycpu::debug::GdbServer;
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
+use mycpu::perf_report::PerfReport;
 use mycpu::peripheral::Uart;
 use mycpu::types::Addr;
+use mycpu::visualize::start_visualize_server;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -43,6 +45,10 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
+        /// Generate performance report after execution
+        #[arg(long)]
+        perf_report: bool,
+
         /// Binary or ELF file to load
         #[arg(name = "FILE")]
         file: PathBuf,
@@ -52,6 +58,25 @@ enum Commands {
     Debug {
         /// GDB server port
         #[arg(short, long, default_value = "1234")]
+        port: u16,
+
+        /// Memory size in MB
+        #[arg(short, long, default_value = "16")]
+        memory: usize,
+
+        /// Starting PC address (hex)
+        #[arg(short, long, default_value = "0x80000000")]
+        pc: String,
+
+        /// Binary or ELF file to load
+        #[arg(name = "FILE")]
+        file: PathBuf,
+    },
+
+    /// Start visualization server
+    Visualize {
+        /// WebSocket server port
+        #[arg(short, long, default_value = "8080")]
         port: u16,
 
         /// Memory size in MB
@@ -77,14 +102,21 @@ fn main() -> anyhow::Result<()> {
             pc,
             count,
             verbose,
+            perf_report,
             file,
-        } => run_program(memory, &pc, count, verbose, file),
+        } => run_program(memory, &pc, count, verbose, perf_report, file),
         Commands::Debug {
             port,
             memory,
             pc,
             file,
         } => start_debug_server(port, memory, &pc, file),
+        Commands::Visualize {
+            port,
+            memory,
+            pc,
+            file,
+        } => start_visualize(port, memory, &pc, file),
     }
 }
 
@@ -94,6 +126,7 @@ fn run_program(
     pc_str: &str,
     max_count: u64,
     verbose: bool,
+    show_perf_report: bool,
     file: PathBuf,
 ) -> anyhow::Result<()> {
     init_logger(verbose);
@@ -131,6 +164,12 @@ fn run_program(
     if verbose {
         println!("\nFinal register state:");
         println!("{}", cpu.registers());
+    }
+
+    // Generate performance report if requested
+    if show_perf_report {
+        let report = PerfReport::from_collector(cpu.perf_collector());
+        println!("{}", report);
     }
 
     Ok(())
@@ -223,4 +262,38 @@ fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<(
     }
 
     Ok(())
+}
+
+/// Start visualization server
+fn start_visualize(
+    port: u16,
+    memory_mb: usize,
+    pc_str: &str,
+    file: PathBuf,
+) -> anyhow::Result<()> {
+    init_logger(true);
+
+    let start_pc = parse_hex_address(pc_str)?;
+    let mut bus = create_bus(memory_mb);
+
+    // Attach UART for output
+    attach_stdout_uart(&mut bus);
+
+    load_file(&mut bus, &file, start_pc)?;
+
+    println!("myCPU Visualization Server v{}", mycpu::VERSION);
+    println!("WebSocket port: {}", port);
+    println!("Program loaded: {}", file.display());
+    println!("Entry point: {}", start_pc);
+    println!("\nConnect with WebSocket client at ws://127.0.0.1:{}", port);
+    println!("Or open frontend/index.html in browser");
+
+    // Create CPU with pipeline (for visualization)
+    let cpu = mycpu::cpu::pipeline::PipelineCpu::with_pc(bus, start_pc);
+
+    // Create tokio runtime and start server
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        start_visualize_server(cpu, port).await.map_err(|e| anyhow::anyhow!("{}", e))
+    })
 }

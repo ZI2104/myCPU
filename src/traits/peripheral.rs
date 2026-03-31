@@ -12,7 +12,9 @@ use std::any::Any;
 /// This trait defines the interface for peripheral devices that can be
 /// attached to the system bus. Peripherals respond to memory-mapped I/O
 /// operations within their address range.
-pub trait Peripheral {
+///
+/// The `Send` bound is required for async visualization support.
+pub trait Peripheral: Send {
     /// Read a byte from the peripheral.
     ///
     /// # Arguments

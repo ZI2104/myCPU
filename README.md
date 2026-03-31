@@ -21,6 +21,11 @@ myCPU 是一个使用 Rust 实现的 RISC-V (RV32I) 指令集模拟器，面向"
   - 程序计数器 (PC)
   - CPU 核心结构和主循环框架
   - 系统总线 (Bus) 和内存映射
+- ✅ **Phase 2 完成**: RV32I 指令集 (40 条)
+- ✅ **Phase 3 完成**: 5 级流水线 + 冒险处理
+- ✅ **Phase 4 完成**: M/S/U 特权级 + 异常中断
+- ✅ **Phase 5 完成**: UART + ELF 加载 + GDB 调试 + DiffTest
+- ✅ **Phase 6 P0 完成**: 性能监控 (HPM CSR + PerfCollector)
 
 ## 项目目标
 
@@ -38,11 +43,17 @@ cargo build --release
 # 运行测试
 cargo test
 
-# 运行模拟器 (加载二进制文件)
-cargo run -- program.bin
+# 运行模拟器 (ELF 文件)
+cargo run --release -- run program.elf
 
 # 带详细输出运行
-cargo run -- --verbose program.bin
+cargo run --release -- run --verbose program.elf
+
+# 生成性能报告
+cargo run --release -- run --perf-report program.elf
+
+# 启动 GDB 调试服务器
+cargo run --release -- debug program.elf
 ```
 
 ## 文档
@@ -60,6 +71,7 @@ myCPU/
 │   ├── main.rs          # CLI 入口
 │   ├── types.rs         # 基础类型 (Addr, Word, Byte 等)
 │   ├── error.rs         # 错误类型定义
+│   ├── perf_report.rs   # 性能报告生成
 │   ├── traits/          # 核心 trait 定义
 │   │   ├── memory.rs    # Memory trait
 │   │   └── peripheral.rs # Peripheral trait
@@ -67,11 +79,30 @@ myCPU/
 │   │   ├── ram.rs       # RAM 实现
 │   │   ├── rom.rs       # ROM 实现
 │   │   └── bus.rs       # 系统总线
-│   └── cpu/             # CPU 核心
-│       ├── core.rs      # CPU 核心结构
-│       ├── registers.rs # 通用寄存器
-│       ├── pc.rs        # 程序计数器
-│       └── state.rs     # CPU 状态快照
+│   ├── cpu/             # CPU 核心
+│   │   ├── mod.rs       # CPU 模块导出
+│   │   ├── core.rs      # 单周期 CPU 实现
+│   │   ├── registers.rs # 通用寄存器
+│   │   ├── pc.rs        # 程序计数器
+│   │   ├── state.rs     # CPU 状态快照
+│   │   ├── perf_collector.rs # 性能事件收集器
+│   │   ├── csr/         # CSR 寄存器
+│   │   │   ├── mod.rs   # CSR 模块
+│   │   │   ├── perf.rs  # 性能计数器 CSR
+│   │   │   ├── machine.rs # M-mode CSR
+│   │   │   └── ...
+│   │   ├── pipeline/    # 5 级流水线
+│   │   │   ├── mod.rs   # 流水线控制
+│   │   │   ├── stages/  # 各阶段实现
+│   │   │   ├── hazard.rs # 冒险检测
+│   │   │   └── forward.rs # 前递逻辑
+│   │   └── ...
+│   ├── instruction/     # 指令译码和执行
+│   ├── interrupt/       # 中断控制器 (CLINT/PLIC)
+│   ├── peripheral/      # 外设 (UART)
+│   ├── loader/          # ELF 加载器
+│   ├── debug/           # GDB 调试接口
+│   └── difftest/        # QEMU DiffTest
 ├── docs/                # 设计文档
 ├── tests/               # 集成测试
 └── firmware/            # 测试固件

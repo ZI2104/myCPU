@@ -361,38 +361,34 @@ src/peripheral/
 
 ```mermaid
 gantt
-    title myCPU 开发路线图
+    title myCPU 开发路线图 (8 周)
     dateFormat  YYYY-MM-DD
     section Phase 1
-    项目骨架搭建           :a1, 2024-01-01, 7d
-    内存模块实现           :a2, after a1, 7d
-    CPU 寄存器组           :a3, after a2, 5d
-    主循环框架             :a4, after a3, 5d
+    项目骨架搭建           :a1, 2024-01-01, 3d
+    内存模块实现           :a2, after a1, 2d
+    CPU 寄存器组           :a3, after a2, 2d
 
     section Phase 2
-    译码器实现             :b1, after a4, 5d
-    RV32I 基础指令         :b2, after b1, 14d
-    基础测试程序           :b3, after b2, 5d
+    译码器实现             :b1, after a3, 3d
+    RV32I 基础指令         :b2, after b1, 7d
 
     section Phase 3
-    流水线实现             :c1, after b3, 10d
-    冒险处理               :c2, after c1, 7d
-    CSR 寄存器             :c3, after c2, 5d
+    流水线实现             :c1, after b2, 5d
+    冒险处理               :c2, after c1, 4d
+    CSR 寄存器             :c3, after c2, 2d
 
     section Phase 4
-    异常处理机制           :d1, after c3, 7d
-    中断控制器             :d2, after d1, 7d
-    特权级切换             :d3, after d2, 5d
+    异常处理机制           :d1, after c3, 5d
+    中断控制器             :d2, after d1, 5d
+    特权级切换             :d3, after d2, 4d
 
     section Phase 5
-    UART 串口              :e1, after d3, 5d
-    ELF 加载器             :e2, after e1, 5d
-    调试器                 :e3, after e2, 7d
+    UART 串口              :e1, after d3, 3d
+    ELF 加载器             :e2, after e1, 2d
+    调试器 + DiffTest      :e3, after e2, 2d
 
-    section 加分项
-    M 扩展 (乘除法)        :f1, after e3, 7d
-    Sv32 分页              :f2, after f1, 10d
-    多核支持               :f3, after f2, 14d
+    section Phase 6 P0
+    性能监控               :f1, after e3, 7d
 ```
 
 ---
@@ -1362,7 +1358,124 @@ graph TB
 
 ---
 
-## 十三、后续扩展
+## 十三、性能监控
+
+### RISC-V HPM 规范实现
+
+myCPU 实现了符合 RISC-V 硬件性能监控 (HPM) 规范的 CSR 寄存器。
+
+#### 性能计数器 CSR
+
+| CSR 地址 | 名称 | 说明 |
+|----------|------|------|
+| 0xB00 | mcycle | 周期计数器低 32 位 |
+| 0xB80 | mcycleh | 周期计数器高 32 位 |
+| 0xB02 | minstret | 指令计数器低 32 位 |
+| 0xB82 | minstreth | 指令计数器高 32 位 |
+| 0xB03-0xB1F | mhpmcounter3-31 | 可编程计数器 (低 32 位) |
+| 0xB83-0xB9F | mhpmcounter3-31h | 可编程计数器 (高 32 位) |
+| 0x323-0x33F | mhpmevent3-31 | 事件选择器 |
+| 0x320 | mcountinhibit | 计数器禁止寄存器 |
+
+#### 支持的性能事件
+
+| 事件 ID | 事件名称 | 说明 |
+|---------|----------|------|
+| 0 | None | 禁用计数 |
+| 1 | Cycles | CPU 周期 |
+| 2 | InstructionsRetired | 已完成指令 |
+| 3 | LoadUseStalls | Load-Use 暂停周期 |
+| 4 | ControlHazards | 控制冒险 (分支预测错误) |
+| 5 | BranchExecuted | 执行的分支指令 |
+| 6 | BranchTaken | 跳转的分支 |
+| 7 | BranchNotTaken | 未跳转的分支 |
+| 8 | MemoryReads | 内存读取次数 |
+| 9 | MemoryWrites | 内存写入次数 |
+| 10 | AluOperations | ALU 操作次数 |
+| 11 | CsrAccesses | CSR 访问次数 |
+| 12 | InterruptsTaken | 已处理中断数 |
+| 13 | PipelineFlushes | 流水线冲刷次数 |
+
+### 性能收集器架构
+
+```mermaid
+flowchart LR
+    subgraph Pipeline["流水线"]
+        IF["IF"] --> ID["ID"] --> EX["EX"] --> MEM["MEM"] --> WB["WB"]
+    end
+
+    subgraph PerfCollector["PerfCollector"]
+        Events["事件记录"]
+        Counters["计数器"]
+    end
+
+    subgraph CSR["CSR HPM"]
+        Mcycle["mcycle"]
+        Minstret["minstret"]
+        Mhpm["mhpmcounter3-31"]
+        Mhpmevent["mhpmevent3-31"]
+    end
+
+    Pipeline -->|记录事件| PerfCollector
+    PerfCollector -->|更新计数| CSR
+```
+
+### 性能报告
+
+通过 `--perf-report` CLI 选项生成性能报告：
+
+```bash
+cargo run --release -- run --perf-report program.elf
+```
+
+输出示例：
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║                    Performance Report                         ║
+╠══════════════════════════════════════════════════════════════╣
+║  Execution Summary                                            ║
+╠══════════════════════════════════════════════════════════════╣
+║  Cycles:                                          1,234,567  ║
+║  Instructions:                                      987,654  ║
+║  IPC:                                                 0.80   ║
+║  CPI:                                                1.25   ║
+║  Efficiency:                                        80.0%   ║
+╠══════════════════════════════════════════════════════════════╣
+║  Pipeline Hazards                                             ║
+╠══════════════════════════════════════════════════════════════╣
+║  Load-Use Stalls:                                    12,345  ║
+║  Control Hazards:                                     8,765  ║
+║  Total Stalls:                                       21,110  ║
+║  Stall Rate:                                          1.7%   ║
+╠══════════════════════════════════════════════════════════════╣
+║  Branch Statistics                                            ║
+╠══════════════════════════════════════════════════════════════╣
+║  Total Branches:                                     45,678  ║
+║  Taken:                                              23,456  ║
+║  Not Taken:                                          22,222  ║
+║  Prediction Acc:                                     51.4%   ║
+╠══════════════════════════════════════════════════════════════╣
+║  Memory Statistics                                            ║
+╠══════════════════════════════════════════════════════════════╣
+║  Memory Reads:                                      123,456  ║
+║  Memory Writes:                                      45,678  ║
+║  Total Mem Ops:                                     169,134  ║
+║  Mem Ops/Instr:                                      0.17   ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+### 关键实现文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/cpu/csr/perf.rs` | HPM CSR 实现 (Counter64, Mcycle, Minstret, Mhpmcounter) |
+| `src/cpu/perf_collector.rs` | 性能事件收集器 |
+| `src/perf_report.rs` | 性能报告格式化输出 |
+
+---
+
+## 十四、后续扩展
 
 - [ ] Zicsr 扩展 (CSR 指令)
 - [ ] Zifencei 扩展 (指令缓存刷新)
@@ -1370,4 +1483,4 @@ graph TB
 - [ ] A 扩展 (原子操作)
 - [ ] 多核 SMP 支持
 - [ ] JTAG 调试接口
-- [ ] 性能计数器 (PMU)
+- [ ] ~~性能计数器 (PMU)~~ ✅ 已完成

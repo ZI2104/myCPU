@@ -17,6 +17,7 @@ struct MemoryRegion {
 }
 
 impl MemoryRegion {
+    #[allow(dead_code)]
     fn contains(&self, addr: Addr) -> bool {
         let base = self.base.raw() as usize;
         let target = addr.raw() as usize;

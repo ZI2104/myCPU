@@ -6,6 +6,7 @@
 mod core;
 mod execution_model;
 mod pc;
+mod perf_collector;
 mod registers;
 mod state;
 
@@ -16,5 +17,6 @@ pub use core::Cpu;
 pub use csr::{CsrFile, CsrOp};
 pub use execution_model::ExecutionModel;
 pub use pc::ProgramCounter;
+pub use perf_collector::PerfCollector;
 pub use registers::Registers;
 pub use state::{ComparisonLevel, CpuState};

@@ -45,7 +45,8 @@ pub struct GdbServer {
     port: u16,
     /// Breakpoint addresses
     breakpoints: Arc<Mutex<HashSet<u32>>>,
-    /// Whether the server should stop
+    /// Whether the server should stop (reserved for future use)
+    #[allow(dead_code)]
     running: Arc<Mutex<bool>>,
 }
 

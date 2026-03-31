@@ -48,21 +48,25 @@ const SCR: u32 = 0x07;
 mod ier {
     pub const RX_ENABLE: u8 = 0x01; // Enable receive data interrupt
     pub const TX_ENABLE: u8 = 0x02; // Enable transmit empty interrupt
+    #[allow(dead_code)]
     pub const LS_ENABLE: u8 = 0x04; // Enable line status interrupt
+    #[allow(dead_code)]
     pub const MS_ENABLE: u8 = 0x08; // Enable modem status interrupt
-}
-
-/// IIR bits
+}/// IIR bits
 mod iir {
     pub const NO_INTERRUPT: u8 = 0x01; // No interrupt pending (bit 0)
+    #[allow(dead_code)]
     pub const ID_MASK: u8 = 0x0E; // Interrupt ID mask (bits 3-1)
     pub const FIFO_ENABLE: u8 = 0xC0; // FIFO enabled (bits 7-6)
 
     // Interrupt IDs (bits 3-1)
+    #[allow(dead_code)]
     pub const ID_LINE_STATUS: u8 = 0x06; // Overrun/parity/framing error
     pub const ID_RX_READY: u8 = 0x04; // Data available
+    #[allow(dead_code)]
     pub const ID_TIMEOUT: u8 = 0x0C; // Character timeout
     pub const ID_TX_EMPTY: u8 = 0x02; // Transmitter empty
+    #[allow(dead_code)]
     pub const ID_MODEM_STATUS: u8 = 0x00; // Modem status change
 }
 
@@ -71,16 +75,22 @@ mod fcr {
     pub const FIFO_ENABLE: u8 = 0x01; // Enable FIFO
     pub const RX_FIFO_RESET: u8 = 0x02; // Clear receive FIFO
     pub const TX_FIFO_RESET: u8 = 0x04; // Clear transmit FIFO
+    #[allow(dead_code)]
     pub const DMA_MODE: u8 = 0x08; // DMA mode select
 
     // Trigger levels (bits 7-6)
+    #[allow(dead_code)]
     pub const TRIGGER_1: u8 = 0x00; // 1 byte
+    #[allow(dead_code)]
     pub const TRIGGER_4: u8 = 0x40; // 4 bytes
+    #[allow(dead_code)]
     pub const TRIGGER_8: u8 = 0x80; // 8 bytes
+    #[allow(dead_code)]
     pub const TRIGGER_14: u8 = 0xC0; // 14 bytes
 }
 
 /// LCR bits
+#[allow(dead_code)]
 mod lcr {
     pub const WORD_LENGTH_5: u8 = 0x00; // 5 bits
     pub const WORD_LENGTH_6: u8 = 0x01; // 6 bits
@@ -95,6 +105,7 @@ mod lcr {
 }
 
 /// LSR bits
+#[allow(dead_code)]
 mod lsr {
     pub const DATA_READY: u8 = 0x01; // Data ready in RBR
     pub const OVERRUN_ERROR: u8 = 0x02; // Overrun error
@@ -107,6 +118,7 @@ mod lsr {
 }
 
 /// MCR bits
+#[allow(dead_code)]
 mod mcr {
     pub const DTR: u8 = 0x01; // Data Terminal Ready
     pub const RTS: u8 = 0x02; // Request To Send
@@ -116,6 +128,7 @@ mod mcr {
 }
 
 /// MSR bits
+#[allow(dead_code)]
 mod msr {
     pub const DELTA_CTS: u8 = 0x01; // CTS changed
     pub const DELTA_DSR: u8 = 0x02; // DSR changed

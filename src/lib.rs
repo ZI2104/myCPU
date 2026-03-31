@@ -49,14 +49,17 @@ pub mod instruction;
 pub mod interrupt;
 pub mod loader;
 pub mod memory;
+pub mod perf_report;
 pub mod peripheral;
 pub mod traits;
 pub mod types;
+pub mod visualize;
 
 // Re-export commonly used types
-pub use cpu::{Cpu, CpuState, ProgramCounter, Registers};
+pub use cpu::{Cpu, CpuState, PerfCollector, ProgramCounter, Registers};
 pub use error::{Result, SimError};
 pub use memory::{Bus, Ram, Rom};
+pub use perf_report::PerfReport;
 pub use traits::{Memory, Peripheral};
 pub use types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
 

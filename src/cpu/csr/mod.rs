@@ -4,10 +4,12 @@
 //! - Machine-mode CSRs (mstatus, mtvec, mepc, mcause, etc.)
 //! - Supervisor-mode CSRs (sstatus, stvec, sepc, etc.)
 //! - User-mode CSRs (ustatus, utvec, etc.)
+//! - Performance Monitor CSRs (mcycle, minstret, mhpmcounter3-31)
 //! - CSR access instructions (CSRRW, CSRRS, CSRRC)
 
 pub mod csr_trait;
 pub mod machine;
+pub mod perf;
 pub mod supervisor;
 pub mod trap;
 pub mod user;
@@ -16,6 +18,10 @@ pub use csr_trait::{CsrAccessCheck, CsrRegister};
 pub use machine::{
     exception_code, interrupt_code, ie_bits, ip_bits, Mcause, Mepc, Medeleg, Mideleg, Mie, Mip, Misa,
     Mscratch, Mstatus, Mtval, Mtvec, TrapVectorMode,
+};
+pub use perf::{
+    csr_addr as perf_csr_addr, HPM_COUNTER_BASE, HPM_COUNTER_COUNT, Mcountinhibit, Mcycle,
+    Mcycleh, Mhpmcounter, Mhpmevent, Minstret, Minstreth, PerfCounters, PerfEvent,
 };
 pub use supervisor::{Scause, Sepc, Sie, Sip, Sscratch, Sstatus, Stval, Stvec};
 pub use trap::{ExceptionCause, InterruptCause, Trap, TrapCause};
@@ -138,6 +144,9 @@ pub struct CsrFile {
     pub utvec: Utvec,
     pub uepc: Uepc,
     pub ucause: Ucause,
+
+    // Performance Monitor CSRs
+    pub perf: PerfCounters,
 }
 
 impl CsrFile {
@@ -167,6 +176,7 @@ impl CsrFile {
             utvec: Utvec::new(),
             uepc: Uepc::new(),
             ucause: Ucause::new(),
+            perf: PerfCounters::new(),
         }
     }
 
@@ -240,6 +250,37 @@ impl CsrFile {
             csr_addr::UTVEC => Ok(self.utvec.read()),
             csr_addr::UEPC => Ok(self.uepc.read()),
             csr_addr::UCAUSE => Ok(self.ucause.read()),
+
+            // Performance Monitor CSRs
+            perf_csr_addr::MCYCLE => Ok(self.perf.mcycle.read_low()),
+            perf_csr_addr::MCYCLEH => Ok(self.perf.mcycleh.read()),
+            perf_csr_addr::MINSTRET => Ok(self.perf.minstret.read_low()),
+            perf_csr_addr::MINSTRETH => Ok(self.perf.minstreth.read()),
+            perf_csr_addr::MCOUNTINHIBIT => Ok(self.perf.mcountinhibit.read()),
+            addr if (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END).contains(&addr) => {
+                let index = (addr - perf_csr_addr::MHPMCOUNTER_BASE) as usize + 3;
+                if index <= 31 {
+                    Ok(self.perf.mhpmcounters[index - 3].read_low())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
+            addr if (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END).contains(&addr) => {
+                let index = (addr - perf_csr_addr::MHPMCOUNTERH_BASE) as usize + 3;
+                if index <= 31 {
+                    Ok(self.perf.mhpmcounters[index - 3].read_high())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
+            addr if (perf_csr_addr::MHPMEVENT_BASE..=perf_csr_addr::MHPMEVENT_END).contains(&addr) => {
+                let index = (addr - perf_csr_addr::MHPMEVENT_BASE) as usize + 3;
+                if index <= 31 {
+                    Ok(self.perf.mhpmevents[index - 3].read())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
 
             // Unimplemented
             _ => Err(SimError::InvalidCsr(addr)),
@@ -347,6 +388,55 @@ impl CsrFile {
             csr_addr::UCAUSE => {
                 self.ucause.write(value);
                 Ok(())
+            }
+
+            // Performance Monitor CSRs
+            perf_csr_addr::MCYCLE => {
+                self.perf.mcycle.write_low(value);
+                Ok(())
+            }
+            perf_csr_addr::MCYCLEH => {
+                self.perf.mcycleh.write(value);
+                Ok(())
+            }
+            perf_csr_addr::MINSTRET => {
+                self.perf.minstret.write_low(value);
+                Ok(())
+            }
+            perf_csr_addr::MINSTRETH => {
+                self.perf.minstreth.write(value);
+                Ok(())
+            }
+            perf_csr_addr::MCOUNTINHIBIT => {
+                self.perf.mcountinhibit.write(value);
+                Ok(())
+            }
+            addr if (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END).contains(&addr) => {
+                let index = (addr - perf_csr_addr::MHPMCOUNTER_BASE) as usize + 3;
+                if index <= 31 {
+                    self.perf.mhpmcounters[index - 3].write_low(value);
+                    Ok(())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
+            addr if (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END).contains(&addr) => {
+                let index = (addr - perf_csr_addr::MHPMCOUNTERH_BASE) as usize + 3;
+                if index <= 31 {
+                    self.perf.mhpmcounters[index - 3].write_high(value);
+                    Ok(())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
+            addr if (perf_csr_addr::MHPMEVENT_BASE..=perf_csr_addr::MHPMEVENT_END).contains(&addr) => {
+                let index = (addr - perf_csr_addr::MHPMEVENT_BASE) as usize + 3;
+                if index <= 31 {
+                    self.perf.mhpmevents[index - 3].write(value);
+                    Ok(())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
             }
 
             // Unimplemented

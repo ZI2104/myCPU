@@ -31,11 +31,15 @@ bitflags = "2.4"
 # ELF parsing
 goblin = "0.8"
 
-# Async runtime for GDB server
-tokio = { version = "1.0", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "sync"] }
+# Async runtime for GDB server and visualization
+tokio = { version = "1.0", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "sync", "time"] }
 
 # Byte handling
 byteorder = "1.5"
+
+# WebSocket for visualization
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
 
 [dev-dependencies]
 # Testing

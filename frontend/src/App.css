@@ -1,0 +1,594 @@
+/* myCPU Visualizer Styles */
+
+:root {
+  --primary-bg: #1a1a2e;
+  --secondary-bg: #2d3748;
+  --accent-bg: #4CAF50;
+  --warning-bg: #FF5722;
+  --border: #e0e0e0;
+  --text: #333;
+  --text-light: #666;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f5f5f5;
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.app-header {
+  text-align: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+  color: var(--primary-bg);
+}
+
+.app-header p {
+  color: var(--text-light);
+  margin: 5px 0 0;
+}
+
+/* Control Panel */
+.control-panel {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 15px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.status-indicator.connected {
+  background: var(--accent-bg);
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+}
+
+.status-indicator.disconnected {
+  background: var(--warning-bg);
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-step {
+  background: var(--secondary-bg);
+  color: white;
+}
+
+.btn-run {
+  background: var(--accent-bg);
+  color: white;
+}
+
+.btn-pause {
+  background: var(--warning-bg);
+  color: white;
+}
+
+.btn-reset {
+  background: #9c27b0;
+  color: white;
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.speed-control input[type="range"] {
+  width: 100px;
+}
+
+/* Main Layout */
+.main-content {
+  display: grid;
+  grid-template-columns: 280px 1fr 280px;
+  gap: 20px;
+}
+
+.left-panel,
+.right-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.center-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* PC Display */
+.pc-display {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.pc-display h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text-light);
+}
+
+.pc-value {
+  font-family: 'Fira Code', monospace;
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--primary-bg);
+}
+
+.privilege {
+  font-size: 12px;
+  color: var(--text-light);
+  margin-top: 5px;
+}
+
+/* Pipeline Visualizer */
+.pipeline-visualizer h3 {
+  margin: 0 0 15px;
+}
+
+.pipeline-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+}
+
+.pipeline-stage {
+  flex: 1;
+  min-width: 100px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pipeline-stage.active {
+  border-color: var(--secondary-bg);
+}
+
+.pipeline-stage.highlight {
+  border-color: var(--warning-bg);
+  background: #fff8f0;
+}
+
+.stage-header {
+  background: var(--border);
+  color: white;
+  padding: 5px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.pipeline-stage.active .stage-header {
+  background: var(--secondary-bg);
+}
+
+.pipeline-stage.highlight .stage-header {
+  background: var(--warning-bg);
+}
+
+.stage-content {
+  padding: 10px;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  min-height: 80px;
+}
+
+.bubble {
+  color: var(--text-light);
+  font-style: italic;
+}
+
+.arrow {
+  display: flex;
+  align-items: center;
+  font-size: 20px;
+  color: var(--text-light);
+}
+
+.pipeline-status {
+  margin-top: 15px;
+  display: flex;
+  gap: 10px;
+}
+
+.status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.status.stall {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.status.flush {
+  background: #ffe0e0;
+  color: #c00;
+}
+
+/* Register Panel */
+.register-panel {
+  height: fit-content;
+  overflow-y: auto;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.display-mode button {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.display-mode button.active {
+  background: var(--secondary-bg);
+  color: white;
+  border-color: var(--secondary-bg);
+}
+
+.register-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.register-row {
+  display: grid;
+  grid-template-columns: 30px 60px 1fr;
+  padding: 3px 5px;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  border-radius: 3px;
+}
+
+.register-row.modified {
+  background: #e8f5e9;
+}
+
+.reg-name {
+  color: var(--text-light);
+}
+
+.reg-alias {
+  color: var(--text-light);
+  font-size: 10px;
+}
+
+.reg-value {
+  text-align: right;
+}
+
+/* Performance Dashboard */
+.perf-dashboard h3 {
+  margin: 0 0 15px;
+  font-size: 14px;
+}
+
+.perf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.perf-card {
+  text-align: center;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f0f0f0;
+}
+
+.perf-card .perf-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--primary-bg);
+}
+
+.perf-card .perf-label {
+  font-size: 11px;
+  color: var(--text-light);
+}
+
+.progress-item {
+  margin-top: 8px;
+}
+
+.progress-label {
+  font-size: 10px;
+  color: var(--text-light);
+}
+
+.progress-bar {
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.progress-value {
+  font-size: 10px;
+  text-align: right;
+}
+
+.perf-details {
+  font-size: 11px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Messages */
+.error-message {
+  background: #ffe0e0;
+  color: #c00;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.waiting,
+.disconnected {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-light);
+}
+
+.disconnected code {
+  display: block;
+  background: #f0f0f0;
+  padding: 10px;
+  border-radius: 4px;
+  margin-top: 10px;
+  font-family: 'Fira Code', monospace;
+}
+
+.halted-message {
+  text-align: center;
+  padding: 20px;
+  background: #fff8e1;
+  color: #e65100;
+  border-radius: 8px;
+  margin-top: 20px;
+  font-weight: bold;
+}
+
+/* Tab bar for switching views */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  background: #e0e0e0;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.tab-bar button {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: 500;
+  color: var(--text);
+  transition: all 0.2s;
+}
+
+.tab-bar button:hover {
+  background: #d0d0d0;
+}
+
+.tab-bar button.active {
+  background: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* PC Display */
+.pc-display {
+  text-align: center;
+  padding: 15px;
+  background: linear-gradient(135deg, #f5f5f5, #e8e8e8);
+  border-radius: 8px;
+  margin-bottom: 15px;
+}
+
+.pc-display h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-light);
+  text-transform: uppercase;
+}
+
+.pc-value {
+  font-family: 'Fira Code', monospace;
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--primary-bg);
+}
+
+.privilege {
+  font-size: 12px;
+  color: var(--text-light);
+  margin-top: 5px;
+}
+
+/* Center panel */
+.center-panel {
+  flex: 2;
+  min-width: 400px;
+}
+
+/* Memory View */
+.memory-view {
+  font-family: 'Fira Code', monospace;
+}
+
+.memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.memory-header h3 {
+  margin: 0;
+}
+
+.memory-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.addr-input {
+  width: 120px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: 'Fira Code', monospace;
+}
+
+.memory-controls button {
+  padding: 4px 12px;
+  background: var(--secondary-bg);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.memory-controls select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.memory-content {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+}
+
+.memory-row {
+  display: flex;
+  padding: 2px 0;
+  border-bottom: 1px solid #333;
+}
+
+.memory-row:last-child {
+  border-bottom: none;
+}
+
+.memory-row.header-row {
+  color: #569cd6;
+  border-bottom: 1px solid #444;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+}
+
+.memory-addr {
+  width: 100px;
+  color: #569cd6;
+  flex-shrink: 0;
+}
+
+.memory-hex {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+}
+
+.memory-hex .byte {
+  width: 24px;
+  text-align: center;
+  color: #ce9178;
+}
+
+.memory-ascii {
+  width: 80px;
+  margin-left: 10px;
+  color: #6a9955;
+  white-space: pre;
+}
+
+.memory-row:hover {
+  background: #2a2a2a;
+}

@@ -10,7 +10,9 @@ use crate::types::{Addr, Byte, Half, Word};
 ///
 /// This trait defines the interface for all memory-like components
 /// in the simulator, including RAM, ROM, and memory-mapped peripherals.
-pub trait Memory {
+///
+/// The `Send` bound is required for async visualization support.
+pub trait Memory: Send {
     /// Read a byte from memory.
     ///
     /// # Arguments

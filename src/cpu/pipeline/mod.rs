@@ -14,8 +14,12 @@ pub use forward::{ForwardSource, ForwardUnit};
 pub use hazard::HazardUnit;
 pub use registers::{ExMemRegister, IdExRegister, IfIdRegister, MemWbRegister};
 
-use crate::cpu::csr::CsrFile;
+// Re-export for visualization
+use crate::visualize::snapshot::{disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot, WbStageInfo};
+
+use crate::cpu::csr::{CsrFile, HPM_COUNTER_BASE, HPM_COUNTER_COUNT, PerfEvent};
 use crate::cpu::execution_model::ExecutionModel;
+use crate::cpu::perf_collector::PerfCollector;
 use crate::cpu::pipeline::stages::{DecodeStage, ExecuteStage, FetchStage, MemoryStage, WritebackStage};
 use crate::cpu::{CpuState, ProgramCounter, Registers};
 use crate::error::{Result, SimError};
@@ -50,6 +54,9 @@ pub struct PipelineCpu {
     // Hazard and forwarding units
     hazard_unit: HazardUnit,
 
+    // Performance tracking
+    perf: PerfCollector,
+
     // CPU state
     instructions_executed: u64,
     cycles: u64,
@@ -75,6 +82,7 @@ impl PipelineCpu {
             memory_stage: MemoryStage::new(),
             writeback_stage: WritebackStage::new(),
             hazard_unit: HazardUnit::default(),
+            perf: PerfCollector::new(),
             instructions_executed: 0,
             cycles: 0,
             halted: false,
@@ -117,6 +125,16 @@ impl PipelineCpu {
     /// Set the privilege level.
     pub fn set_privilege(&mut self, level: PrivilegeLevel) {
         self.privilege = level;
+    }
+
+    /// Get a reference to the performance collector.
+    pub fn perf_collector(&self) -> &PerfCollector {
+        &self.perf
+    }
+
+    /// Get a mutable reference to the performance collector.
+    pub fn perf_collector_mut(&mut self) -> &mut PerfCollector {
+        &mut self.perf
     }
 
     /// Synchronize external interrupt status from CLINT and PLIC to MIP CSR.
@@ -259,6 +277,91 @@ impl PipelineCpu {
         }
     }
 
+    /// Create a snapshot of the CPU state for visualization.
+    ///
+    /// This returns a serializable snapshot containing all registers,
+    /// pipeline stages, and performance counters.
+    pub fn snapshot(&self) -> CpuSnapshot {
+        let perf = &self.perf;
+
+        CpuSnapshot {
+            registers: self.regs.as_slice().try_into().unwrap_or([0; 32]),
+            pc: self.pc.get().raw(),
+            privilege: format!("{:?}", self.privilege),
+            pipeline: PipelineSnapshot {
+                if_stage: if self.if_id.valid {
+                    Some(IfStageInfo {
+                        pc: self.if_id.pc.raw(),
+                        instruction: self.if_id.instruction,
+                        instruction_str: disassemble(self.if_id.instruction),
+                    })
+                } else {
+                    None
+                },
+                id_stage: if self.id_ex.valid {
+                    Some(IdStageInfo {
+                        pc: self.id_ex.pc.raw(),
+                        rs1: self.id_ex.rs1.raw(),
+                        rs2: self.id_ex.rs2.raw(),
+                        rd: self.id_ex.rd.raw(),
+                        rs1_val: self.id_ex.rs1_val.raw(),
+                        rs2_val: self.id_ex.rs2_val.raw(),
+                        imm: self.id_ex.imm,
+                    })
+                } else {
+                    None
+                },
+                ex_stage: if self.ex_mem.valid {
+                    Some(ExStageInfo {
+                        pc: self.ex_mem.pc.raw(),
+                        alu_result: self.ex_mem.alu_result.raw(),
+                        rd: self.ex_mem.rd.raw(),
+                        branch_taken: self.ex_mem.branch_taken,
+                        branch_target: self.ex_mem.branch_target.raw(),
+                        is_branch: self.ex_mem.branch_taken,
+                    })
+                } else {
+                    None
+                },
+                mem_stage: if self.ex_mem.valid {
+                    Some(MemStageInfo {
+                        pc: self.ex_mem.pc.raw(),
+                        alu_result: self.ex_mem.alu_result.raw(),
+                        mem_read: self.ex_mem.ctrl.mem_read,
+                        mem_write: self.ex_mem.ctrl.mem_write,
+                        rd: self.ex_mem.rd.raw(),
+                    })
+                } else {
+                    None
+                },
+                wb_stage: if self.mem_wb.valid {
+                    Some(WbStageInfo {
+                        pc: self.mem_wb.pc.raw(),
+                        write_data: self.mem_wb.write_data.raw(),
+                        rd: self.mem_wb.rd.raw(),
+                        reg_write: self.mem_wb.ctrl.reg_write,
+                    })
+                } else {
+                    None
+                },
+                stall: self.hazard_unit.stall,
+                flush: self.hazard_unit.flush_id_ex,
+            },
+            perf: PerfSnapshot {
+                cycles: perf.cycles,
+                instructions: perf.instructions_retired,
+                ipc: perf.ipc(),
+                stalls: perf.total_stalls(),
+                load_use_stalls: perf.load_use_stalls,
+                control_hazards: perf.control_hazards,
+                branch_accuracy: perf.branch_accuracy(),
+                memory_reads: perf.memory_reads,
+                memory_writes: perf.memory_writes,
+            },
+            halted: self.halted,
+        }
+    }
+
     /// Execute one clock cycle (advance all pipeline stages).
     ///
     /// The pipeline executes stages in reverse order (WB -> MEM -> EX -> ID -> IF)
@@ -275,11 +378,21 @@ impl PipelineCpu {
         if self.check_and_handle_interrupt() {
             // Interrupt was taken - pipeline is flushed, skip rest of cycle
             self.cycles += 1;
+            self.perf.record(PerfEvent::Cycles);
+            self.perf.record(PerfEvent::InterruptsTaken);
+            self.perf.record(PerfEvent::PipelineFlushes);
+            // Update CSR counters
+            self.csr.perf.tick();
             return Ok(());
         }
 
         // ========== Step 1: Update hazard detection ==========
         self.hazard_unit.update(&self.id_ex, &self.if_id, &self.ex_mem);
+
+        // Record stall events
+        if self.hazard_unit.stall {
+            self.perf.record(PerfEvent::LoadUseStalls);
+        }
 
         // ========== Step 2: Execute stages in reverse order ==========
         // This prevents overwriting pipeline registers before they're read
@@ -288,11 +401,21 @@ impl PipelineCpu {
         let wb_completed = self.writeback_stage.execute(&self.mem_wb, &mut self.regs)?;
         if wb_completed {
             self.instructions_executed += 1;
+            self.perf.record(PerfEvent::InstructionsRetired);
+            self.csr.perf.instruction_retired();
         }
 
         // 2b. Memory stage - perform memory access
         // Use old ex_mem value, produce new mem_wb
         let new_mem_wb = self.memory_stage.execute(&self.ex_mem, &mut self.bus)?;
+
+        // Track memory accesses
+        if self.ex_mem.ctrl.mem_read {
+            self.perf.record(PerfEvent::MemoryReads);
+        }
+        if self.ex_mem.ctrl.mem_write {
+            self.perf.record(PerfEvent::MemoryWrites);
+        }
 
         // 2c. Execute stage - perform ALU operations and branch evaluation
         // Use old id_ex value and old pipeline registers for forwarding
@@ -302,6 +425,20 @@ impl PipelineCpu {
             &self.mem_wb,
             self.hazard_unit.flush_id_ex,
         )?;
+
+        // Track ALU operations and branches
+        if self.id_ex.valid && self.id_ex.ctrl.alu_op != AluOp::Nop {
+            self.perf.record(PerfEvent::AluOperations);
+        }
+        if self.id_ex.ctrl.branch {
+            self.perf.record(PerfEvent::BranchExecuted);
+            if new_ex_mem.branch_taken {
+                self.perf.record(PerfEvent::BranchTaken);
+                self.perf.record(PerfEvent::ControlHazards);
+            } else {
+                self.perf.record(PerfEvent::BranchNotTaken);
+            }
+        }
 
         // 2c-2. Handle CSR instructions and trap returns
         if self.id_ex.ctrl.csr_op {
@@ -315,11 +452,13 @@ impl PipelineCpu {
             )?;
             // Override ALU result with CSR read value
             new_ex_mem.alu_result = Word::new(csr_result);
+            self.perf.record(PerfEvent::CsrAccesses);
         } else if self.id_ex.ctrl.trap_return {
             // Handle trap return (mret/sret/uret)
             self.execute_trap_return()?;
             // Flush the pipeline after trap return
             new_ex_mem.valid = false;
+            self.perf.record(PerfEvent::PipelineFlushes);
         }
 
         // 2d. Decode stage - decode instruction and read registers
@@ -361,7 +500,40 @@ impl PipelineCpu {
             self.pc.set(self.fetch_stage.pc());
         }
 
+        // ========== Step 5: Update performance counters ==========
         self.cycles += 1;
+        self.perf.record(PerfEvent::Cycles);
+        self.csr.perf.tick();
+
+        // Record events to HPM counters (skip if all inhibited)
+        if !self.csr.perf.mcountinhibit.hpms() {
+            for i in 0..HPM_COUNTER_COUNT {
+                // Skip if this specific counter is inhibited
+                if self.csr.perf.mcountinhibit.hpm(i + HPM_COUNTER_BASE) {
+                    continue;
+                }
+
+                let event = self.csr.perf.mhpmevents[i].event();
+                if event == PerfEvent::None {
+                    continue;
+                }
+
+                // Check if this event occurred this cycle
+                match event {
+                    PerfEvent::Cycles => self.csr.perf.mhpmcounters[i].increment(),
+                    PerfEvent::InstructionsRetired if wb_completed => {
+                        self.csr.perf.mhpmcounters[i].increment()
+                    }
+                    PerfEvent::LoadUseStalls if self.hazard_unit.stall => {
+                        self.csr.perf.mhpmcounters[i].increment()
+                    }
+                    PerfEvent::ControlHazards if self.ex_mem.branch_taken => {
+                        self.csr.perf.mhpmcounters[i].increment()
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         Ok(())
     }
@@ -388,6 +560,7 @@ impl ExecutionModel for PipelineCpu {
         self.memory_stage.reset();
         self.writeback_stage.reset();
         self.hazard_unit.reset();
+        self.perf.reset();
         self.instructions_executed = 0;
         self.cycles = 0;
         self.halted = false;

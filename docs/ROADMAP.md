@@ -2,14 +2,15 @@
 
 ## 开发阶段总览
 
-| 阶段 | 内容 | 产出 | 预计周期 |
-|------|------|------|----------|
-| Phase 1 | 基础框架 | 可编译的项目骨架 | 1-2 周 |
-| Phase 2 | 指令集 | 可运行简单程序 | 2-3 周 |
-| Phase 3 | 流水线 | 5 级流水线 + 冒险处理 | 2 周 |
+| 阶段 | 内容 | 产出 | 周期 |
+|------|------|------|------|
+| Phase 1 | 基础框架 | 可编译的项目骨架 | 1 周 |
+| Phase 2 | 指令集 | 可运行简单程序 | 1.5 周 |
+| Phase 3 | 流水线 | 5 级流水线 + 冒险处理 | 1.5 周 |
 | Phase 4 | 特权级 | M/S/U 模式 + 异常中断 | 2 周 |
-| Phase 5 | 外设 | UART + 调试器 | 1-2 周 |
-| Phase 6 | 加分项 | MMU + 扩展指令 | 可选 |
+| Phase 5 | 外设 | UART + 调试器 + DiffTest | 1 周 |
+| Phase 6 P0 | 性能监控 | HPM CSR + PerfCollector | 1 周 |
+| **总计** | - | - | **8 周** |
 
 ---
 
@@ -237,21 +238,57 @@
 
 ## Phase 6: 加分项 (可选)
 
-### M 扩展 (乘除法)
+### P0: 性能监控 ✅ 完成
+
+- [x] RISC-V HPM CSR 寄存器
+  - [x] mcycle/mcycleh (周期计数器)
+  - [x] minstret/minstreth (指令计数器)
+  - [x] mhpmcounter3-31 (可编程计数器)
+  - [x] mhpmevent3-31 (事件选择器)
+  - [x] mcountinhibit (计数器禁止)
+- [x] 性能事件收集器 (PerfCollector)
+  - [x] 周期计数 (Cycles)
+  - [x] 指令退休计数 (InstructionsRetired)
+  - [x] Load-Use 暂停计数
+  - [x] 控制冒险计数
+  - [x] 分支统计 (Taken/NotTaken)
+  - [x] 内存访问统计
+- [x] 流水线性能集成
+  - [x] 单周期 CPU 集成
+  - [x] 流水线 CPU 集成
+  - [x] CSR HPM 计数器更新
+- [x] 性能报告生成
+  - [x] IPC/CPI 计算
+  - [x] 暂停率统计
+  - [x] 分支预测准确率
+  - [x] 格式化输出
+- [x] CLI 集成
+  - [x] --perf-report 选项
+
+### 产出
+- ✅ 性能计数器 CSR 实现 (符合 RISC-V HPM 规范)
+- ✅ PerfCollector 事件收集器
+- ✅ PerfReport 格式化报告
+- ✅ CLI --perf-report 选项
+- ✅ 182 个测试全部通过
+
+---
+
+### P1: M 扩展 (乘除法) (可选)
 - [ ] MUL, MULH, MULHSU, MULHU
 - [ ] DIV, DIVU, REM, REMU
 
-### C 扩展 (压缩指令)
+### P2: C 扩展 (压缩指令) (可选)
 - [ ] 16 位压缩指令解码
 - [ ] 常用指令的压缩形式
 
-### Sv32 分页
+### P3: Sv32 分页 (可选)
 - [ ] 页表结构
 - [ ] TLB 缓存
 - [ ] 地址翻译
 - [ ] 页错误异常
 
-### 多核支持
+### P4: 多核支持 (可选)
 - [ ] 多个 Hart (硬件线程)
 - [ ] 核间中断 (IPI)
 - [ ] 共享内存
