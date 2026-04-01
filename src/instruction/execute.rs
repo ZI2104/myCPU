@@ -449,6 +449,8 @@ impl Cpu {
     /// Execute a minimal subset of RV32A atomic instructions.
     ///
     /// Currently supported:
+    /// - `lr.w` / `sc.w` (including aq/rl variants)
+    /// - `amoadd.w` (including aq/rl variants)
     /// - `amoswap.w` (including aq/rl variants)
     pub fn execute_amo(&mut self, instruction: u32) -> Result<()> {
         let funct3 = ((instruction >> 12) & 0x7) as u8;
@@ -466,6 +468,43 @@ impl Cpu {
         }
 
         match funct5 {
+            // LR.W
+            0b00010 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let old = self.read_word(addr)?;
+                self.set_atomic_reservation(addr);
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // SC.W
+            0b00011 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2);
+                let success = self.has_atomic_reservation(addr);
+
+                if success {
+                    self.write_word(addr, src)?;
+                    self.registers_mut().write(rd, Word::new(0));
+                } else {
+                    self.registers_mut().write(rd, Word::new(1));
+                }
+
+                self.clear_atomic_reservation();
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOADD.W
+            0b00000 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_value = Word::new(old.raw().wrapping_add(src));
+                self.write_word(addr, new_value)?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
             // AMOSWAP.W
             0b00001 => {
                 let addr = Addr::new(self.registers().read(rs1).raw());
@@ -1075,5 +1114,82 @@ mod tests {
 
         assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0xDEAD_BEEF);
         assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x1234_5678);
+    }
+
+    #[test]
+    fn test_amoadd_w_basic() {
+        let mut cpu = create_test_cpu();
+        cpu.write_word(Addr::new(0x100), Word::new(0x0000_0007))
+            .unwrap();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0x100));
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0x0000_0003));
+
+        // amoadd.w x3, x2, (x1)
+        // funct5=00000, aq=0, rl=0, rs2=2, rs1=1, funct3=010, rd=3, opcode=0101111
+        let instr = (0b00000u32 << 27)
+            | (2u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (3u32 << 7)
+            | 0x2F;
+
+        cpu.execute_amo(instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0x0000_0007);
+        assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x0000_000A);
+    }
+
+    #[test]
+    fn test_lr_sc_w_success() {
+        let mut cpu = create_test_cpu();
+        cpu.write_word(Addr::new(0x100), Word::new(0xABCD_0001))
+            .unwrap();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0x100));
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0x1234_5678));
+
+        // lr.w x3, (x1)
+        let lr_instr = (0b00010u32 << 27)
+            | (0u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (3u32 << 7)
+            | 0x2F;
+        cpu.execute_amo(lr_instr).unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0xABCD_0001);
+
+        // sc.w x4, x2, (x1) => success, rd=0, mem overwritten
+        let sc_instr = (0b00011u32 << 27)
+            | (2u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (4u32 << 7)
+            | 0x2F;
+        cpu.execute_amo(sc_instr).unwrap();
+        assert_eq!(cpu.registers().read(RegIdx::new(4)).raw(), 0);
+        assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x1234_5678);
+    }
+
+    #[test]
+    fn test_sc_w_fail_without_reservation() {
+        let mut cpu = create_test_cpu();
+        cpu.write_word(Addr::new(0x100), Word::new(0x1111_2222))
+            .unwrap();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0x100));
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0x3333_4444));
+
+        // sc.w x4, x2, (x1) without prior lr.w => fail, rd=1, memory unchanged
+        let sc_instr = (0b00011u32 << 27)
+            | (2u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (4u32 << 7)
+            | 0x2F;
+        cpu.execute_amo(sc_instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(4)).raw(), 1);
+        assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x1111_2222);
     }
 }

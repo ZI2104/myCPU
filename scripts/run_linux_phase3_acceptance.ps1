@@ -12,10 +12,8 @@
 #     -StrictUserlandMarker
 
 param(
-    [Parameter(Mandatory = $true)]
     [string]$SbiPath,
 
-    [Parameter(Mandatory = $true)]
     [string]$PayloadPath,
 
     [string]$VirtioDisk,
@@ -33,7 +31,15 @@ param(
     [string]$DtbAddr = "0x87f00000",
 
     [string]$UserlandMarker = "Run /init as init process",
-    [switch]$StrictUserlandMarker
+    [switch]$StrictUserlandMarker,
+
+    [string]$ArtifactsDir = "artifacts\phase3",
+    [switch]$AutoResolveArtifacts,
+    [switch]$DownloadOpenSbiIfMissing,
+    [switch]$SkipBuild,
+    [switch]$AllowElfPayloadRaw,
+    [string]$OpenSbiVersion = "1.8.1",
+    [string]$OpenSbiDownloadUrl = "https://github.com/riscv-software-src/opensbi/releases/download/v1.8.1/opensbi-1.8.1-rv-bin.tar.xz"
 )
 
 Set-StrictMode -Version Latest
@@ -51,8 +57,121 @@ function Resolve-ExistingPath {
     return $resolved.Path
 }
 
+function Resolve-ArtifactByPatterns {
+    param(
+        [string]$BaseDir,
+        [string[]]$Patterns,
+        [string]$Label
+    )
+
+    $resolvedBase = Resolve-Path $BaseDir -ErrorAction SilentlyContinue
+    if ($null -eq $resolvedBase) {
+        return $null
+    }
+
+    foreach ($pattern in $Patterns) {
+        $hit = Get-ChildItem -Path $resolvedBase.Path -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue |
+            Sort-Object FullName |
+            Select-Object -First 1
+        if ($null -ne $hit) {
+            Write-Host "[phase3-linux] Auto-resolved ${Label}: $($hit.FullName)" -ForegroundColor DarkCyan
+            return $hit.FullName
+        }
+    }
+
+    return $null
+}
+
+function Ensure-OpenSbiBinary {
+    param(
+        [string]$DestDir,
+        [string]$Version,
+        [string]$DownloadUrl
+    )
+
+    $resolvedDest = Resolve-Path $DestDir -ErrorAction SilentlyContinue
+    if ($null -eq $resolvedDest) {
+        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+        $resolvedDest = Resolve-Path $DestDir
+    }
+
+    $sbiExisting = Resolve-ArtifactByPatterns -BaseDir $resolvedDest.Path -Patterns @('fw_jump*.elf', 'fw_dynamic*.elf') -Label 'SBI image'
+    if ($null -ne $sbiExisting) {
+        return $sbiExisting
+    }
+
+    $archiveName = "opensbi-$Version-rv-bin.tar.xz"
+    $archivePath = Join-Path $resolvedDest.Path $archiveName
+    Write-Host "[phase3-linux] Downloading OpenSBI $Version from: $DownloadUrl" -ForegroundColor Cyan
+    Invoke-WebRequest -Uri $DownloadUrl -OutFile $archivePath -UseBasicParsing
+
+    Write-Host "[phase3-linux] Extracting OpenSBI archive..." -ForegroundColor Cyan
+    tar -xf $archivePath -C $resolvedDest.Path
+
+    $candidate = Get-ChildItem -Path $resolvedDest.Path -Recurse -File -Filter 'fw_jump*.elf' -ErrorAction SilentlyContinue |
+        Sort-Object `
+            @{ Expression = {
+                    if ($_.FullName -match 'ilp32\\generic') { return 0 }
+                    if ($_.FullName -match 'ilp32\\qemu\\virt|qemu\\virt|generic') { return 1 }
+                    if ($_.FullName -match 'lp64\\generic') { return 2 }
+                    return 10
+                }
+            },
+            @{ Expression = { $_.FullName } } |
+        Select-Object -First 1
+
+    if ($null -eq $candidate) {
+        throw "[phase3-linux] OpenSBI archive extracted but fw_jump.elf not found under $($resolvedDest.Path)"
+    }
+
+    Write-Host "[phase3-linux] OpenSBI ready: $($candidate.FullName)" -ForegroundColor Green
+    return $candidate.FullName
+}
+
+$artifactsAbs = Resolve-Path $ArtifactsDir -ErrorAction SilentlyContinue
+if ($null -eq $artifactsAbs) {
+    New-Item -ItemType Directory -Path $ArtifactsDir -Force | Out-Null
+    $artifactsAbs = Resolve-Path $ArtifactsDir
+}
+
+if ($DownloadOpenSbiIfMissing.IsPresent -and [string]::IsNullOrWhiteSpace($SbiPath)) {
+    $SbiPath = Ensure-OpenSbiBinary -DestDir $artifactsAbs.Path -Version $OpenSbiVersion -DownloadUrl $OpenSbiDownloadUrl
+}
+
+if ($AutoResolveArtifacts.IsPresent) {
+    if ([string]::IsNullOrWhiteSpace($SbiPath)) {
+        $SbiPath = Resolve-ArtifactByPatterns -BaseDir $artifactsAbs.Path -Patterns @('fw_jump*.elf', 'fw_dynamic*.elf') -Label 'SBI image'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PayloadPath)) {
+        $PayloadPath = Resolve-ArtifactByPatterns -BaseDir $artifactsAbs.Path -Patterns @('Image', 'vmlinux', 'zImage', 'bzImage') -Label 'payload image'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($VirtioDisk)) {
+        $VirtioDisk = Resolve-ArtifactByPatterns -BaseDir $artifactsAbs.Path -Patterns @('rootfs.ext4', 'rootfs.ext2', 'rootfs*.img', '*.ext4', '*.ext2') -Label 'VirtIO disk image'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($DtbPath) -and -not $AutoDtb.IsPresent) {
+        $DtbPath = Resolve-ArtifactByPatterns -BaseDir $artifactsAbs.Path -Patterns @('virt*.dtb', 'qemu*.dtb', '*.dtb') -Label 'DTB image'
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($SbiPath)) {
+    throw "[phase3-linux] missing SBI image. Provide -SbiPath, or use -AutoResolveArtifacts, or use -DownloadOpenSbiIfMissing."
+}
+
+if ([string]::IsNullOrWhiteSpace($PayloadPath)) {
+    throw "[phase3-linux] missing payload image. Provide -PayloadPath (Linux Image) or place Image/vmlinux under $($artifactsAbs.Path) and use -AutoResolveArtifacts."
+}
+
 $sbiAbs = Resolve-ExistingPath -PathValue $SbiPath -Label 'SBI image'
 $payloadAbs = Resolve-ExistingPath -PathValue $PayloadPath -Label 'Payload image'
+
+[byte[]]$payloadMagic = Get-Content -Path $payloadAbs -Encoding Byte -TotalCount 4
+$isElfPayload = $payloadMagic.Count -ge 4 -and $payloadMagic[0] -eq 0x7F -and $payloadMagic[1] -eq 0x45 -and $payloadMagic[2] -eq 0x4C -and $payloadMagic[3] -eq 0x46
+if ($isElfPayload -and -not $AllowElfPayloadRaw.IsPresent) {
+    throw "[phase3-linux] payload appears to be ELF: $payloadAbs . This script expects a raw Linux Image for --linux-payload-addr. Provide Linux Image (non-ELF), or pass -AllowElfPayloadRaw only for debugging."
+}
 
 $diskAbs = $null
 if (-not [string]::IsNullOrWhiteSpace($VirtioDisk)) {
@@ -64,8 +183,10 @@ if (-not [string]::IsNullOrWhiteSpace($DtbPath)) {
     $dtbAbs = Resolve-ExistingPath -PathValue $DtbPath -Label 'DTB image'
 }
 
-Write-Host '[phase3-linux] Building release binary...' -ForegroundColor Cyan
-cargo build --release | Out-Null
+if (-not $SkipBuild.IsPresent) {
+    Write-Host '[phase3-linux] Building release binary...' -ForegroundColor Cyan
+    cargo build --release | Out-Null
+}
 
 $simExe = Join-Path $repoRoot 'target\release\mycpu.exe'
 if (-not (Test-Path $simExe)) {

@@ -22,6 +22,10 @@ use std::time::Instant;
 
 const VIRTIO_SECTOR_SIZE: usize = 512;
 const VIRTIO_MIN_SECTORS: usize = 1024;
+const OPENSBI_DYNAMIC_INFO_ADDR: u32 = 0x87EF_0000;
+const OPENSBI_DYNAMIC_INFO_MAGIC: u32 = 0x4942_534F; // 'OSBI'
+const OPENSBI_DYNAMIC_INFO_VERSION_2: u32 = 0x2;
+const OPENSBI_DYNAMIC_INFO_NEXT_MODE_S: u32 = 0x1;
 
 /// myCPU - A RISC-V RV32I Instruction Set Simulator
 #[derive(Parser, Debug)]
@@ -374,6 +378,11 @@ fn run_program(
         linux_bootargs_addr_str,
         memory_mb,
     )?;
+
+    if linux_boot && linux_sbi.is_some() {
+        let payload_addr = parse_hex_address(linux_payload_addr_str)?;
+        inject_opensbi_dynamic_info(&mut cpu, payload_addr, linux_hartid)?;
+    }
 
     println!("\nmyCPU RISC-V Simulator v{}", mycpu::VERSION);
     println!("Starting PC: {}", start_pc);
@@ -767,6 +776,40 @@ fn apply_linux_boot_context(
     println!(
         "Linux boot context: a0(hartid)={}, a1(dtb)=0x{:08x}",
         linux_hartid, dtb_ptr
+    );
+
+    Ok(())
+}
+
+fn inject_opensbi_dynamic_info(
+    cpu: &mut Cpu,
+    payload_addr: Addr,
+    linux_hartid: u32,
+) -> anyhow::Result<()> {
+    let info_addr = Addr::new(OPENSBI_DYNAMIC_INFO_ADDR);
+    let words = [
+        OPENSBI_DYNAMIC_INFO_MAGIC,
+        OPENSBI_DYNAMIC_INFO_VERSION_2,
+        payload_addr.raw(),
+        OPENSBI_DYNAMIC_INFO_NEXT_MODE_S,
+        0,
+        linux_hartid,
+    ];
+
+    for (index, word) in words.iter().enumerate() {
+        cpu.bus_mut()
+            .write_word(info_addr.add((index as u32) * 4), Word::new(*word))?;
+    }
+
+    // a2 points to fw_dynamic_info for OpenSBI firmware handoff.
+    cpu.registers_mut()
+        .write(RegIdx::new(12), Word::new(info_addr.raw()));
+
+    println!(
+        "Linux boot: wrote OpenSBI fw_dynamic_info at {} (next=0x{:08x}, mode=S, boot_hart={})",
+        info_addr,
+        payload_addr.raw(),
+        linux_hartid
     );
 
     Ok(())

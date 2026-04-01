@@ -49,3 +49,8 @@ core.*
 
 # Local third-party sources
 /third_party/xv6-riscv/
+/third_party/xv6-rv32/
+/third_party/buildroot-riscv32-virt/
+
+# Phase 3 local artifacts
+/artifacts/phase3/

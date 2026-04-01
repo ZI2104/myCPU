@@ -29,6 +29,7 @@ pub use user::{Ucause, Uepc, Ustatus, Utvec};
 
 use crate::error::{Result, SimError};
 use crate::types::PrivilegeLevel;
+use std::collections::BTreeMap;
 
 /// CSR address constants for all privilege levels.
 pub mod csr_addr {
@@ -39,6 +40,11 @@ pub mod csr_addr {
     pub const MIDELEG: u16 = 0x303;
     pub const MIE: u16 = 0x304;
     pub const MTVEC: u16 = 0x305;
+    pub const MCOUNTEREN: u16 = 0x306;
+    pub const PMPCFG0: u16 = 0x3A0;
+    pub const PMPCFG15: u16 = 0x3AF;
+    pub const PMPADDR0: u16 = 0x3B0;
+    pub const PMPADDR63: u16 = 0x3EF;
     pub const MSCRATCH: u16 = 0x340;
     pub const MEPC: u16 = 0x341;
     pub const MCAUSE: u16 = 0x342;
@@ -115,18 +121,21 @@ impl CsrOp {
 }
 
 /// CSR file containing all Control and Status Registers.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CsrFile {
     // Machine-mode CSRs
     pub mstatus: Mstatus,
     pub misa: Misa,
     pub mie: Mie,
     pub mtvec: Mtvec,
+    pub mcounteren: u32,
     pub mscratch: Mscratch,
     pub mepc: Mepc,
     pub mcause: Mcause,
     pub mtval: Mtval,
     pub mip: Mip,
+    pub pmpcfg: [u32; 16],
+    pub pmpaddr: [u32; 64],
     pub mideleg: Mideleg,
     pub medeleg: Medeleg,
 
@@ -149,6 +158,15 @@ pub struct CsrFile {
 
     // Performance Monitor CSRs
     pub perf: PerfCounters,
+
+    // Compatibility storage for optional/implementation-defined machine CSRs.
+    pub machine_compat_csrs: BTreeMap<u16, u32>,
+}
+
+impl Default for CsrFile {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CsrFile {
@@ -159,11 +177,14 @@ impl CsrFile {
             misa: Misa::new(),
             mie: Mie::new(),
             mtvec: Mtvec::new(),
+            mcounteren: 0,
             mscratch: Mscratch::new(),
             mepc: Mepc::new(),
             mcause: Mcause::new(),
             mtval: Mtval::new(),
             mip: Mip::new(),
+            pmpcfg: [0; 16],
+            pmpaddr: [0; 64],
             mideleg: Mideleg::new(),
             medeleg: Medeleg::new(),
             sstatus: Sstatus::new(),
@@ -180,6 +201,7 @@ impl CsrFile {
             uepc: Uepc::new(),
             ucause: Ucause::new(),
             perf: PerfCounters::new(),
+            machine_compat_csrs: BTreeMap::new(),
         }
     }
 
@@ -209,7 +231,16 @@ impl CsrFile {
         // Check read-only (address bits [11:10] = 10 or 11)
         if is_write {
             let read_only = matches!((addr >> 10) & 0x3, 2 | 3);
-            if read_only {
+            let writable_machine_counter = addr == perf_csr_addr::MCYCLE
+                || addr == perf_csr_addr::MCYCLEH
+                || addr == perf_csr_addr::MINSTRET
+                || addr == perf_csr_addr::MINSTRETH
+                || (perf_csr_addr::MHPMCOUNTER_BASE..=perf_csr_addr::MHPMCOUNTER_END)
+                    .contains(&addr)
+                || (perf_csr_addr::MHPMCOUNTERH_BASE..=perf_csr_addr::MHPMCOUNTERH_END)
+                    .contains(&addr);
+
+            if read_only && !writable_machine_counter {
                 return Err(SimError::CsrAccessDenied {
                     csr: addr,
                     mode: format!("{:?}", privilege),
@@ -230,11 +261,18 @@ impl CsrFile {
             csr_addr::MISA => Ok(self.misa.read()),
             csr_addr::MIE => Ok(self.mie.read()),
             csr_addr::MTVEC => Ok(self.mtvec.read()),
+            csr_addr::MCOUNTEREN => Ok(self.mcounteren),
             csr_addr::MSCRATCH => Ok(self.mscratch.read()),
             csr_addr::MEPC => Ok(self.mepc.read()),
             csr_addr::MCAUSE => Ok(self.mcause.read()),
             csr_addr::MTVAL => Ok(self.mtval.read()),
             csr_addr::MIP => Ok(self.mip.read()),
+            addr if (csr_addr::PMPCFG0..=csr_addr::PMPCFG15).contains(&addr) => {
+                Ok(self.pmpcfg[(addr - csr_addr::PMPCFG0) as usize])
+            }
+            addr if (csr_addr::PMPADDR0..=csr_addr::PMPADDR63).contains(&addr) => {
+                Ok(self.pmpaddr[(addr - csr_addr::PMPADDR0) as usize])
+            }
             csr_addr::MIDELEG => Ok(self.mideleg.read()),
             csr_addr::MEDELEG => Ok(self.medeleg.read()),
             csr_addr::MVENDORID => Ok(0),
@@ -296,6 +334,11 @@ impl CsrFile {
                 }
             }
 
+            // Optional/implementation-defined machine CSRs are treated as compatibility stubs.
+            _ if privilege == PrivilegeLevel::Machine => {
+                Ok(*self.machine_compat_csrs.get(&addr).unwrap_or(&0))
+            }
+
             // Unimplemented
             _ => Err(SimError::InvalidCsr(addr)),
         }
@@ -323,6 +366,10 @@ impl CsrFile {
                 self.mtvec.write(value);
                 Ok(())
             }
+            csr_addr::MCOUNTEREN => {
+                self.mcounteren = value;
+                Ok(())
+            }
             csr_addr::MSCRATCH => {
                 self.mscratch.write(value);
                 Ok(())
@@ -341,6 +388,14 @@ impl CsrFile {
             }
             csr_addr::MIP => {
                 self.mip.write(value);
+                Ok(())
+            }
+            addr if (csr_addr::PMPCFG0..=csr_addr::PMPCFG15).contains(&addr) => {
+                self.pmpcfg[(addr - csr_addr::PMPCFG0) as usize] = value;
+                Ok(())
+            }
+            addr if (csr_addr::PMPADDR0..=csr_addr::PMPADDR63).contains(&addr) => {
+                self.pmpaddr[(addr - csr_addr::PMPADDR0) as usize] = value;
                 Ok(())
             }
             csr_addr::MIDELEG => {
@@ -467,6 +522,12 @@ impl CsrFile {
                 } else {
                     Err(SimError::InvalidCsr(addr))
                 }
+            }
+
+            // Optional/implementation-defined machine CSRs are treated as compatibility stubs.
+            _ if privilege == PrivilegeLevel::Machine => {
+                self.machine_compat_csrs.insert(addr, value);
+                Ok(())
             }
 
             // Unimplemented
@@ -676,5 +737,81 @@ mod tests {
             .write(csr_addr::SIP, 0, PrivilegeLevel::Supervisor)
             .unwrap();
         assert!(!csr_file.sip.ssip());
+    }
+
+    #[test]
+    fn test_pmp_csr_read_write_stub() {
+        let mut csr_file = CsrFile::new();
+
+        csr_file
+            .write(csr_addr::PMPCFG0, 0xA5A5_5A5A, PrivilegeLevel::Machine)
+            .unwrap();
+        csr_file
+            .write(csr_addr::PMPADDR0, 0x1234_5678, PrivilegeLevel::Machine)
+            .unwrap();
+
+        assert_eq!(
+            csr_file
+                .read(csr_addr::PMPCFG0, PrivilegeLevel::Machine)
+                .unwrap(),
+            0xA5A5_5A5A
+        );
+        assert_eq!(
+            csr_file
+                .read(csr_addr::PMPADDR0, PrivilegeLevel::Machine)
+                .unwrap(),
+            0x1234_5678
+        );
+    }
+
+    #[test]
+    fn test_mhpmcounter_write_allowed_in_machine_mode() {
+        let mut csr_file = CsrFile::new();
+
+        csr_file
+            .write(
+                perf_csr_addr::MHPMCOUNTER_BASE,
+                0xDEAD_BEEF,
+                PrivilegeLevel::Machine,
+            )
+            .unwrap();
+
+        assert_eq!(
+            csr_file
+                .read(perf_csr_addr::MHPMCOUNTER_BASE, PrivilegeLevel::Machine)
+                .unwrap(),
+            0xDEAD_BEEF
+        );
+    }
+
+    #[test]
+    fn test_mcounteren_read_write_stub() {
+        let mut csr_file = CsrFile::new();
+
+        csr_file
+            .write(csr_addr::MCOUNTEREN, 0xFFFF_FFFF, PrivilegeLevel::Machine)
+            .unwrap();
+
+        assert_eq!(
+            csr_file
+                .read(csr_addr::MCOUNTEREN, PrivilegeLevel::Machine)
+                .unwrap(),
+            0xFFFF_FFFF
+        );
+    }
+
+    #[test]
+    fn test_unknown_machine_csr_compat_stub_roundtrip() {
+        let mut csr_file = CsrFile::new();
+        let csr = 0x30A;
+
+        assert_eq!(csr_file.read(csr, PrivilegeLevel::Machine).unwrap(), 0);
+        csr_file
+            .write(csr, 0x1357_9BDF, PrivilegeLevel::Machine)
+            .unwrap();
+        assert_eq!(
+            csr_file.read(csr, PrivilegeLevel::Machine).unwrap(),
+            0x1357_9BDF
+        );
     }
 }

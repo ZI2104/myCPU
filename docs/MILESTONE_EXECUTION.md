@@ -886,3 +886,42 @@
 - 上下文压缩（供下一步直接续做）：
   - Phase 4 已完成并具备自动化验收；
   - 下一阶段可直接转向“真实 NES guest 工件接入 + 三联业务断言（标题画面/输入响应/帧变化）”。
+
+### 2026-04-01 Phase-3-04（工件自动接入脚本 + 终验前置校验）
+
+- 完成内容：
+  - 新增 `scripts/setup_phase3_artifacts.ps1`：
+    - 自动下载 OpenSBI 发布包（默认 `v1.8.1`）；
+    - 自动选择 `ilp32/generic` 的 `fw_jump.elf`；
+    - 标准化 Phase 3 工件目录（`artifacts/phase3`）。
+  - 新增 `scripts/build_phase3_buildroot_artifacts.ps1`：
+    - 自动拉取 Buildroot（默认 `2024.02.1`）并执行 `qemu_riscv32_virt_defconfig`；
+    - 产出并复制 `fw_jump.elf / Image / rootfs.ext2` 到 `artifacts/phase3`。
+  - 增强 `scripts/run_linux_phase3_acceptance.ps1`：
+    - 新增 `-AutoResolveArtifacts` 自动探测工件；
+    - 新增 `-DownloadOpenSbiIfMissing` / `-SkipBuild`；
+    - 新增 payload 前置校验：默认拒绝 ELF 作为 raw Linux payload（可用 `-AllowElfPayloadRaw` 仅做调试）。
+  - 工件阻塞诊断从“运行后崩溃”升级为“运行前明确提示缺失 Linux Image/rootfs”。
+- 变更文件：
+  - `scripts/setup_phase3_artifacts.ps1`
+  - `scripts/build_phase3_buildroot_artifacts.ps1`
+  - `scripts/run_linux_phase3_acceptance.ps1`
+  - `README.md`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\setup_phase3_artifacts.ps1`
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\build_phase3_buildroot_artifacts.ps1 -SkipClone -SkipBuild`（脚本烟测）
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.ps1 -AutoResolveArtifacts -AutoDtb -SkipBuild`
+- 验收结果：
+  - 通过：OpenSBI 自动下载与工件目录初始化成功，且正确选择 `ilp32/generic/fw_jump.elf`。
+  - 通过：Buildroot 构建脚本可执行并输出明确前置条件/路径诊断。
+  - 通过：Phase 3 验收脚本可自动探测工件并输出明确阻塞信息（缺失 Linux payload 时即时报错）。
+  - 说明：当前仓库仍缺少真实 Buildroot Linux `Image/rootfs/dtb`，`StrictUserlandMarker` 终验暂不可达。
+- 风险/未完成项：
+  - Phase 3 最终目标仍依赖外部 Linux 工件（raw `Image` + rootfs + dtb）。
+  - `UseXv6SmokeFallback` 仅用于链路调试，不代表 Linux `init/userland` 终验通过。
+- 上下文压缩（供下一步直接续做）：
+  - 工件准备与验收脚本已具备“自动发现 + 前置校验 + 明确阻塞”能力；
+  - 下一步只需补齐真实 Linux 工件后执行：
+    - `powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.ps1 -AutoResolveArtifacts -AutoDtb -StrictUserlandMarker`。

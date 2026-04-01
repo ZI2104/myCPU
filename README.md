@@ -76,6 +76,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_
 # Windows 执行 guest CPU 行为验收（输入脚本注入）
 powershell -ExecutionPolicy Bypass -File .\scripts\run_mario_cpu_validation.ps1 -GuestBinary .\third_party\xv6-rv32\kernel\kernel -VirtioDisk .\third_party\xv6-rv32\fs.img
 
+# Windows 准备 Phase 3 Linux 工件目录（自动下载 OpenSBI）
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_phase3_artifacts.ps1
+
+# Windows 构建 Phase 3 Buildroot 工件（产出 fw_jump.elf/Image/rootfs.ext2）
+powershell -ExecutionPolicy Bypass -File .\scripts\build_phase3_buildroot_artifacts.ps1
+
+# Windows 执行 Phase 3 Linux 启动链路验收（自动探测工件）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.ps1 -AutoResolveArtifacts -AutoDtb
+
 # Windows 清理临时工作区文件（推荐定期执行）
 powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1
 ```
