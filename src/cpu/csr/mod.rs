@@ -72,6 +72,18 @@ pub mod csr_addr {
     pub const UTVAL: u16 = 0x043;
     pub const UIP: u16 = 0x044;
 
+    // User-level counter/timer CSRs (read-only aliases)
+    pub const CYCLE: u16 = 0xC00;
+    pub const TIME: u16 = 0xC01;
+    pub const INSTRET: u16 = 0xC02;
+    pub const HPMCOUNTER3: u16 = 0xC03;
+    pub const HPMCOUNTER31: u16 = 0xC1F;
+    pub const CYCLEH: u16 = 0xC80;
+    pub const TIMEH: u16 = 0xC81;
+    pub const INSTRETH: u16 = 0xC82;
+    pub const HPMCOUNTER3H: u16 = 0xC83;
+    pub const HPMCOUNTER31H: u16 = 0xC9F;
+
     // Read-only CSRs
     pub const MVENDORID: u16 = 0xF11;
     pub const MARCHID: u16 = 0xF12;
@@ -296,6 +308,28 @@ impl CsrFile {
             csr_addr::UTVEC => Ok(self.utvec.read()),
             csr_addr::UEPC => Ok(self.uepc.read()),
             csr_addr::UCAUSE => Ok(self.ucause.read()),
+            csr_addr::CYCLE => Ok(self.perf.mcycle.read_low()),
+            csr_addr::TIME => Ok(self.perf.mcycle.read_low()),
+            csr_addr::INSTRET => Ok(self.perf.minstret.read_low()),
+            csr_addr::CYCLEH => Ok(self.perf.mcycleh.read()),
+            csr_addr::TIMEH => Ok(self.perf.mcycleh.read()),
+            csr_addr::INSTRETH => Ok(self.perf.minstreth.read()),
+            addr if (csr_addr::HPMCOUNTER3..=csr_addr::HPMCOUNTER31).contains(&addr) => {
+                let index = (addr - csr_addr::HPMCOUNTER3) as usize + 3;
+                if index <= 31 {
+                    Ok(self.perf.mhpmcounters[index - 3].read_low())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
+            addr if (csr_addr::HPMCOUNTER3H..=csr_addr::HPMCOUNTER31H).contains(&addr) => {
+                let index = (addr - csr_addr::HPMCOUNTER3H) as usize + 3;
+                if index <= 31 {
+                    Ok(self.perf.mhpmcounters[index - 3].read_high())
+                } else {
+                    Err(SimError::InvalidCsr(addr))
+                }
+            }
 
             // Performance Monitor CSRs
             perf_csr_addr::MCYCLE => Ok(self.perf.mcycle.read_low()),
@@ -442,8 +476,10 @@ impl CsrFile {
             }
             csr_addr::SIP => {
                 if privilege == PrivilegeLevel::Machine {
-                    // Machine mode may set/clear SSIP (used by xv6 timervec forwarding).
+                    // Machine mode may inject supervisor pending interrupts.
                     self.sip.set_ssip((value & ip_bits::SSIP) != 0);
+                    self.sip.set_stip((value & ip_bits::STIP) != 0);
+                    self.sip.set_seip((value & ip_bits::SEIP) != 0);
                 } else {
                     // Supervisor mode can clear SSIP via CSR write semantics.
                     self.sip.write(value);
@@ -729,14 +765,29 @@ mod tests {
         let mut csr_file = CsrFile::new();
 
         csr_file
-            .write(csr_addr::SIP, ip_bits::SSIP, PrivilegeLevel::Machine)
+            .write(
+                csr_addr::SIP,
+                ip_bits::SSIP | ip_bits::STIP | ip_bits::SEIP,
+                PrivilegeLevel::Machine,
+            )
             .unwrap();
         assert!(csr_file.sip.ssip());
+        assert!(csr_file.sip.stip());
+        assert!(csr_file.sip.seip());
 
         csr_file
             .write(csr_addr::SIP, 0, PrivilegeLevel::Supervisor)
             .unwrap();
         assert!(!csr_file.sip.ssip());
+        assert!(csr_file.sip.stip());
+        assert!(csr_file.sip.seip());
+
+        csr_file
+            .write(csr_addr::SIP, 0, PrivilegeLevel::Machine)
+            .unwrap();
+        assert!(!csr_file.sip.ssip());
+        assert!(!csr_file.sip.stip());
+        assert!(!csr_file.sip.seip());
     }
 
     #[test]
@@ -812,6 +863,52 @@ mod tests {
         assert_eq!(
             csr_file.read(csr, PrivilegeLevel::Machine).unwrap(),
             0x1357_9BDF
+        );
+    }
+
+    #[test]
+    fn test_user_counter_aliases_readable_from_supervisor() {
+        let mut csr_file = CsrFile::new();
+        csr_file.perf.mcycle.write_low(0x1122_3344);
+        csr_file.perf.mcycleh.write(0x5566_7788);
+        csr_file.perf.minstret.write_low(0x99AA_BBCC);
+        csr_file.perf.minstreth.write(0xDDEE_FF00);
+
+        assert_eq!(
+            csr_file
+                .read(csr_addr::CYCLE, PrivilegeLevel::Supervisor)
+                .unwrap(),
+            0x1122_3344
+        );
+        assert_eq!(
+            csr_file
+                .read(csr_addr::TIME, PrivilegeLevel::Supervisor)
+                .unwrap(),
+            0x1122_3344
+        );
+        assert_eq!(
+            csr_file
+                .read(csr_addr::INSTRET, PrivilegeLevel::Supervisor)
+                .unwrap(),
+            0x99AA_BBCC
+        );
+        assert_eq!(
+            csr_file
+                .read(csr_addr::CYCLEH, PrivilegeLevel::Supervisor)
+                .unwrap(),
+            0x5566_7788
+        );
+        assert_eq!(
+            csr_file
+                .read(csr_addr::TIMEH, PrivilegeLevel::Supervisor)
+                .unwrap(),
+            0x5566_7788
+        );
+        assert_eq!(
+            csr_file
+                .read(csr_addr::INSTRETH, PrivilegeLevel::Supervisor)
+                .unwrap(),
+            0xDDEE_FF00
         );
     }
 }

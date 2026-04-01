@@ -89,7 +89,8 @@ mod mstatus_bits {
     pub const SIE: u32 = 1 << 1;
 
     // Writeable mask (bits that can be written)
-    pub const WRITABLE: u32 = TSR | TW | TVM | MPRV | MXR | MPP_MASK | VS_MASK | SPP | MPIE | UBE | SPIE | MIE | SIE;
+    pub const WRITABLE: u32 =
+        TSR | TW | TVM | MPRV | MXR | MPP_MASK | VS_MASK | SPP | MPIE | UBE | SPIE | MIE | SIE;
 }
 
 impl Mstatus {
@@ -139,7 +140,8 @@ impl Mstatus {
     /// Set MPP field.
     pub fn set_mpp(&mut self, level: PrivilegeLevel) {
         let level_bits = level.bits() as u32;
-        self.value = (self.value & !mstatus_bits::MPP_MASK) | (level_bits << mstatus_bits::MPP_SHIFT);
+        self.value =
+            (self.value & !mstatus_bits::MPP_MASK) | (level_bits << mstatus_bits::MPP_SHIFT);
     }
 
     /// Get SIE (Supervisor Interrupt Enable) bit.
@@ -545,14 +547,14 @@ pub struct Mie {
 
 /// Interrupt enable bit positions.
 pub mod ie_bits {
-    pub const USIE: u32 = 1 << 0;  // User Software Interrupt Enable
-    pub const SSIE: u32 = 1 << 1;  // Supervisor Software Interrupt Enable
-    pub const MSIE: u32 = 1 << 3;  // Machine Software Interrupt Enable
-    pub const UTIE: u32 = 1 << 4;  // User Timer Interrupt Enable
-    pub const STIE: u32 = 1 << 5;  // Supervisor Timer Interrupt Enable
-    pub const MTIE: u32 = 1 << 7;  // Machine Timer Interrupt Enable
-    pub const UEIE: u32 = 1 << 8;  // User External Interrupt Enable
-    pub const SEIE: u32 = 1 << 9;  // Supervisor External Interrupt Enable
+    pub const USIE: u32 = 1 << 0; // User Software Interrupt Enable
+    pub const SSIE: u32 = 1 << 1; // Supervisor Software Interrupt Enable
+    pub const MSIE: u32 = 1 << 3; // Machine Software Interrupt Enable
+    pub const UTIE: u32 = 1 << 4; // User Timer Interrupt Enable
+    pub const STIE: u32 = 1 << 5; // Supervisor Timer Interrupt Enable
+    pub const MTIE: u32 = 1 << 7; // Machine Timer Interrupt Enable
+    pub const UEIE: u32 = 1 << 8; // User External Interrupt Enable
+    pub const SEIE: u32 = 1 << 9; // Supervisor External Interrupt Enable
     pub const MEIE: u32 = 1 << 11; // Machine External Interrupt Enable
 }
 
@@ -608,9 +610,15 @@ impl CsrRegister for Mie {
 
     fn write(&mut self, value: u32) {
         // Only bits for implemented interrupts are writable
-        let writable_mask = ie_bits::MSIE | ie_bits::MTIE | ie_bits::MEIE
-            | ie_bits::SSIE | ie_bits::STIE | ie_bits::SEIE
-            | ie_bits::USIE | ie_bits::UTIE | ie_bits::UEIE;
+        let writable_mask = ie_bits::MSIE
+            | ie_bits::MTIE
+            | ie_bits::MEIE
+            | ie_bits::SSIE
+            | ie_bits::STIE
+            | ie_bits::SEIE
+            | ie_bits::USIE
+            | ie_bits::UTIE
+            | ie_bits::UEIE;
         self.value = value & writable_mask;
     }
 
@@ -633,14 +641,14 @@ pub struct Mip {
 
 /// Interrupt pending bit positions (same layout as mie).
 pub mod ip_bits {
-    pub const USIP: u32 = 1 << 0;  // User Software Interrupt Pending
-    pub const SSIP: u32 = 1 << 1;  // Supervisor Software Interrupt Pending
-    pub const MSIP: u32 = 1 << 3;  // Machine Software Interrupt Pending
-    pub const UTIP: u32 = 1 << 4;  // User Timer Interrupt Pending
-    pub const STIP: u32 = 1 << 5;  // Supervisor Timer Interrupt Pending
-    pub const MTIP: u32 = 1 << 7;  // Machine Timer Interrupt Pending
-    pub const UEIP: u32 = 1 << 8;  // User External Interrupt Pending
-    pub const SEIP: u32 = 1 << 9;  // Supervisor External Interrupt Pending
+    pub const USIP: u32 = 1 << 0; // User Software Interrupt Pending
+    pub const SSIP: u32 = 1 << 1; // Supervisor Software Interrupt Pending
+    pub const MSIP: u32 = 1 << 3; // Machine Software Interrupt Pending
+    pub const UTIP: u32 = 1 << 4; // User Timer Interrupt Pending
+    pub const STIP: u32 = 1 << 5; // Supervisor Timer Interrupt Pending
+    pub const MTIP: u32 = 1 << 7; // Machine Timer Interrupt Pending
+    pub const UEIP: u32 = 1 << 8; // User External Interrupt Pending
+    pub const SEIP: u32 = 1 << 9; // Supervisor External Interrupt Pending
     pub const MEIP: u32 = 1 << 11; // Machine External Interrupt Pending
 }
 
@@ -707,11 +715,36 @@ impl Mip {
         }
     }
 
+    /// Set supervisor software interrupt pending.
+    pub fn set_ssip(&mut self, pending: bool) {
+        if pending {
+            self.value |= ip_bits::SSIP;
+        } else {
+            self.value &= !ip_bits::SSIP;
+        }
+    }
+
+    /// Set supervisor timer interrupt pending.
+    pub fn set_stip(&mut self, pending: bool) {
+        if pending {
+            self.value |= ip_bits::STIP;
+        } else {
+            self.value &= !ip_bits::STIP;
+        }
+    }
+
+    /// Set supervisor external interrupt pending.
+    pub fn set_seip(&mut self, pending: bool) {
+        if pending {
+            self.value |= ip_bits::SEIP;
+        } else {
+            self.value &= !ip_bits::SEIP;
+        }
+    }
+
     /// Check if any machine interrupt is pending and enabled.
     pub fn has_pending_interrupt(&self, mie: &Mie) -> bool {
-        (self.mtip() && mie.mtie())
-            || (self.msip() && mie.msie())
-            || (self.meip() && mie.meie())
+        (self.mtip() && mie.mtie()) || (self.msip() && mie.msie()) || (self.meip() && mie.meie())
     }
 
     /// Get the highest priority pending interrupt.
@@ -745,11 +778,10 @@ impl CsrRegister for Mip {
     }
 
     fn write(&mut self, value: u32) {
-        // Only SSIP is writable in mip (can clear software interrupt pending)
-        // MTIP, MEIP are read-only (controlled by CLINT/PLIC)
-        if value & ip_bits::SSIP == 0 {
-            self.value &= !ip_bits::SSIP;
-        }
+        // Software-writable pending bits in M-mode: SSIP/STIP/SEIP.
+        // MTIP/MSIP/MEIP are sourced from CLINT/PLIC and kept read-only here.
+        let writable = ip_bits::SSIP | ip_bits::STIP | ip_bits::SEIP;
+        self.value = (self.value & !writable) | (value & writable);
     }
 
     fn min_privilege(&self) -> PrivilegeLevel {
@@ -902,7 +934,8 @@ pub mod medeleg_bits {
     /// Store Page Fault
     pub const SPFS: u32 = 1 << 15;
     /// All valid delegation bits
-    pub const ALL: u32 = IAM | IAF | ILGL | BKPT | LAM | LAF | SAM | SAF | UECL | SECL | IPFI | LPFL | SPFS;
+    pub const ALL: u32 =
+        IAM | IAF | ILGL | BKPT | LAM | LAF | SAM | SAF | UECL | SECL | IPFI | LPFL | SPFS;
 }
 
 impl Medeleg {
@@ -1010,16 +1043,16 @@ pub struct Misa {
 
 /// MISA extension bits.
 pub mod misa_ext {
-    pub const A: u32 = 1 << 0;  // Atomic
-    pub const B: u32 = 1 << 1;  // Bit manipulation
-    pub const C: u32 = 1 << 2;  // Compressed
-    pub const D: u32 = 1 << 3;  // Double-precision float
-    pub const E: u32 = 1 << 4;  // RV32E base ISA
-    pub const F: u32 = 1 << 5;  // Single-precision float
-    pub const G: u32 = 1 << 6;  // Additional standard extensions
-    pub const H: u32 = 1 << 7;  // Hypervisor
-    pub const I: u32 = 1 << 8;  // RV32I/64I/128I base ISA
-    pub const J: u32 = 1 << 9;  // Dynamically translated language
+    pub const A: u32 = 1 << 0; // Atomic
+    pub const B: u32 = 1 << 1; // Bit manipulation
+    pub const C: u32 = 1 << 2; // Compressed
+    pub const D: u32 = 1 << 3; // Double-precision float
+    pub const E: u32 = 1 << 4; // RV32E base ISA
+    pub const F: u32 = 1 << 5; // Single-precision float
+    pub const G: u32 = 1 << 6; // Additional standard extensions
+    pub const H: u32 = 1 << 7; // Hypervisor
+    pub const I: u32 = 1 << 8; // RV32I/64I/128I base ISA
+    pub const J: u32 = 1 << 9; // Dynamically translated language
     pub const M: u32 = 1 << 12; // Integer multiply/divide
     pub const N: u32 = 1 << 13; // User-level interrupts
     pub const P: u32 = 1 << 15; // Packed SIMD
@@ -1036,7 +1069,9 @@ impl Misa {
         // MXL = 1 for RV32, extensions = I, M, S, U
         let mxl = 1u32 << 30; // MXL = 1 (RV32)
         let extensions = misa_ext::I | misa_ext::M | misa_ext::S | misa_ext::U;
-        Self { value: mxl | extensions }
+        Self {
+            value: mxl | extensions,
+        }
     }
 }
 
@@ -1150,5 +1185,24 @@ mod tests {
         let (is_int, code) = result.unwrap();
         assert!(is_int);
         assert_eq!(code, interrupt_code::MACHINE_TIMER);
+    }
+
+    #[test]
+    fn test_mip_write_updates_supervisor_pending_bits_only() {
+        let mut mip = Mip::new();
+        mip.set_mtip(true);
+
+        mip.write(ip_bits::SSIP | ip_bits::STIP | ip_bits::SEIP);
+
+        assert!(mip.ssip());
+        assert!(mip.stip());
+        assert!(mip.seip());
+        assert!(mip.mtip());
+
+        mip.write(0);
+        assert!(!mip.ssip());
+        assert!(!mip.stip());
+        assert!(!mip.seip());
+        assert!(mip.mtip());
     }
 }

@@ -27,8 +27,8 @@ param(
     [string]$BootParams = "console=ttyS0 root=/dev/vda rw",
 
     [string]$SbiAddr = "0x80000000",
-    [string]$PayloadAddr = "0x80200000",
-    [string]$DtbAddr = "0x87f00000",
+    [string]$PayloadAddr = "0x80400000",
+    [string]$DtbAddr = "0x82200000",
 
     [string]$UserlandMarker = "Run /init as init process",
     [switch]$StrictUserlandMarker,
@@ -71,8 +71,8 @@ function Resolve-ArtifactByPatterns {
 
     foreach ($pattern in $Patterns) {
         $hit = Get-ChildItem -Path $resolvedBase.Path -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue |
-            Sort-Object FullName |
-            Select-Object -First 1
+        Sort-Object FullName |
+        Select-Object -First 1
         if ($null -ne $hit) {
             Write-Host "[phase3-linux] Auto-resolved ${Label}: $($hit.FullName)" -ForegroundColor DarkCyan
             return $hit.FullName
@@ -109,16 +109,16 @@ function Ensure-OpenSbiBinary {
     tar -xf $archivePath -C $resolvedDest.Path
 
     $candidate = Get-ChildItem -Path $resolvedDest.Path -Recurse -File -Filter 'fw_jump*.elf' -ErrorAction SilentlyContinue |
-        Sort-Object `
-            @{ Expression = {
-                    if ($_.FullName -match 'ilp32\\generic') { return 0 }
-                    if ($_.FullName -match 'ilp32\\qemu\\virt|qemu\\virt|generic') { return 1 }
-                    if ($_.FullName -match 'lp64\\generic') { return 2 }
-                    return 10
-                }
-            },
-            @{ Expression = { $_.FullName } } |
-        Select-Object -First 1
+    Sort-Object `
+    @{ Expression = {
+            if ($_.FullName -match 'ilp32\\generic') { return 0 }
+            if ($_.FullName -match 'ilp32\\qemu\\virt|qemu\\virt|generic') { return 1 }
+            if ($_.FullName -match 'lp64\\generic') { return 2 }
+            return 10
+        }
+    },
+    @{ Expression = { $_.FullName } } |
+    Select-Object -First 1
 
     if ($null -eq $candidate) {
         throw "[phase3-linux] OpenSBI archive extracted but fw_jump.elf not found under $($resolvedDest.Path)"

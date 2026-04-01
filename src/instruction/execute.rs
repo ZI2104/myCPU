@@ -515,6 +515,91 @@ impl Cpu {
                 self.increment_pc();
                 Ok(())
             }
+            // AMOXOR.W
+            0b00100 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_value = Word::new(old.raw() ^ src);
+                self.write_word(addr, new_value)?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOAND.W
+            0b01100 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_value = Word::new(old.raw() & src);
+                self.write_word(addr, new_value)?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOOR.W
+            0b01000 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_value = Word::new(old.raw() | src);
+                self.write_word(addr, new_value)?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOMIN.W (signed)
+            0b10000 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_raw = if old.as_signed() < (src as i32) {
+                    old.raw()
+                } else {
+                    src
+                };
+                self.write_word(addr, Word::new(new_raw))?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOMAX.W (signed)
+            0b10100 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_raw = if old.as_signed() > (src as i32) {
+                    old.raw()
+                } else {
+                    src
+                };
+                self.write_word(addr, Word::new(new_raw))?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOMINU.W (unsigned)
+            0b11000 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_raw = if old.raw() < src { old.raw() } else { src };
+                self.write_word(addr, Word::new(new_raw))?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
+            // AMOMAXU.W (unsigned)
+            0b11100 => {
+                let addr = Addr::new(self.registers().read(rs1).raw());
+                let src = self.registers().read(rs2).raw();
+                let old = self.read_word(addr)?;
+                let new_raw = if old.raw() > src { old.raw() } else { src };
+                self.write_word(addr, Word::new(new_raw))?;
+                self.registers_mut().write(rd, old);
+                self.increment_pc();
+                Ok(())
+            }
             _ => Err(SimError::UnsupportedInstruction {
                 pc: self.pc(),
                 message: format!("Unsupported AMO funct5={:05b}", funct5),
@@ -1191,5 +1276,51 @@ mod tests {
 
         assert_eq!(cpu.registers().read(RegIdx::new(4)).raw(), 1);
         assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x1111_2222);
+    }
+
+    #[test]
+    fn test_amoor_w_basic() {
+        let mut cpu = create_test_cpu();
+        cpu.write_word(Addr::new(0x100), Word::new(0x0F00_00F0))
+            .unwrap();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0x100));
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0x00F0_0F00));
+
+        // amoor.w x3, x2, (x1)
+        let instr = (0b01000u32 << 27)
+            | (2u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (3u32 << 7)
+            | 0x2F;
+
+        cpu.execute_amo(instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0x0F00_00F0);
+        assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0x0FF0_0FF0);
+    }
+
+    #[test]
+    fn test_amomaxu_w_basic() {
+        let mut cpu = create_test_cpu();
+        cpu.write_word(Addr::new(0x100), Word::new(0x0000_00FF))
+            .unwrap();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0x100));
+        cpu.registers_mut()
+            .write(RegIdx::new(2), Word::new(0xFFFF_0000));
+
+        // amomaxu.w x3, x2, (x1)
+        let instr = (0b11100u32 << 27)
+            | (2u32 << 20)
+            | (1u32 << 15)
+            | (0b010u32 << 12)
+            | (3u32 << 7)
+            | 0x2F;
+
+        cpu.execute_amo(instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0x0000_00FF);
+        assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0xFFFF_0000);
     }
 }

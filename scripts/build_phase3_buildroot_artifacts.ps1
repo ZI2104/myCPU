@@ -287,4 +287,4 @@ foreach ($item in $required) {
 }
 
 Write-Host "[phase3-buildroot] DONE. artifacts ready in $artifactsAbs" -ForegroundColor Green
-Write-Host "[phase3-buildroot] Next: powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.ps1 -AutoResolveArtifacts -AutoDtb -StrictUserlandMarker" -ForegroundColor Green
+Write-Host "[phase3-buildroot] Next: powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.ps1 -AutoResolveArtifacts -StrictUserlandMarker" -ForegroundColor Green

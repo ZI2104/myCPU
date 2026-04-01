@@ -1089,7 +1089,37 @@ fn run_with_heartbeat(
             let sie = csr.sie.read();
             let scause = csr.scause.read();
             let sepc = csr.sepc.read();
+            let stval = csr.stval.read();
+            let satp = csr.satp.read();
             let global_sie = csr.sstatus.sie();
+            let sepc_raw = sepc;
+            let (sv32_root, sv32_pte1, sv32_pte0) = if (satp & 0x8000_0000) != 0 {
+                let root = (satp & 0x003F_FFFF) << 12;
+                let vpn1 = (sepc_raw >> 22) & 0x3FF;
+                let vpn0 = (sepc_raw >> 12) & 0x3FF;
+                let pte1_addr = root.wrapping_add(vpn1 * 4);
+                let pte1 = cpu
+                    .bus()
+                    .read_word(Addr::new(pte1_addr))
+                    .ok()
+                    .map(|w| w.raw())
+                    .unwrap_or(0);
+                let is_leaf1 = (pte1 & ((1 << 1) | (1 << 3))) != 0;
+                let pte0 = if pte1 != 0 && !is_leaf1 {
+                    let next = ((pte1 >> 10) & 0x003F_FFFF) << 12;
+                    let pte0_addr = next.wrapping_add(vpn0 * 4);
+                    cpu.bus()
+                        .read_word(Addr::new(pte0_addr))
+                        .ok()
+                        .map(|w| w.raw())
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                (root, pte1, pte0)
+            } else {
+                (0, 0, 0)
+            };
             let (mtip, msip) = cpu.bus().get_clint_interrupt_status();
             let (meip, seip) = cpu.bus().get_plic_interrupt_status();
             let virtio_irq = cpu.bus().has_peripheral_interrupt("VirtIO-Block");
@@ -1111,7 +1141,7 @@ fn run_with_heartbeat(
 
             if matches!(heartbeat_mode, HeartbeatMode::Compact) {
                 println!(
-                    "[hb-lite] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} scause=0x{:08x} sepc=0x{:08x} mtip={} msip={} meip={} seip={} virtio_irq={} uart_irq={} v_notify={} v_desc_ok={} pc_streak={}",
+                    "[hb-lite] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} satp=0x{:08x} scause=0x{:08x} sepc=0x{:08x} stval=0x{:08x} sv32.root=0x{:08x} sv32.pte1=0x{:08x} sv32.pte0=0x{:08x} mtip={} msip={} meip={} seip={} virtio_irq={} uart_irq={} v_notify={} v_desc_ok={} pc_streak={}",
                     count,
                     pc,
                     cpu.privilege(),
@@ -1122,8 +1152,13 @@ fn run_with_heartbeat(
                     mie,
                     sip,
                     sie,
+                    satp,
                     scause,
                     sepc,
+                    stval,
+                    sv32_root,
+                    sv32_pte1,
+                    sv32_pte0,
                     if mtip { 1 } else { 0 },
                     if msip { 1 } else { 0 },
                     if meip { 1 } else { 0 },
@@ -1281,7 +1316,7 @@ fn run_with_heartbeat(
                 }
             }
             println!(
-                "[hb] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} scause=0x{:08x} sepc=0x{:08x} mtip={} msip={} meip={} virtio_irq={} uart_irq={} v_cmd={} v_notify={} v_desc={} v_irq_raise={} v_irq_ack={} v_desc_not_ready={} v_desc_no_avail={} v_desc_ok={} v_desc_err={} plic_pending0=0x{:08x} plic_senable0=0x{:08x} plic_sth=0x{:08x} plic_sclaim={} cpu0_proc=0x{:08x} cpu0_noff={} cpu0_intena={} ticks={} mtime={} mtimecmp={} mscratch=0x{:08x} scratch5={} tickslock_locked={} tickslock_cpu=0x{:08x} p0_state={} p0_state_cpu={} p0_pid={} p0_ctx_ra=0x{:08x} p_run={} p_run_locked={} p_run0_idx={} p_run0_lock_cpu=0x{:08x} p_running={} p_sleep={} pc_streak={}",
+                "[hb] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} satp=0x{:08x} scause=0x{:08x} sepc=0x{:08x} stval=0x{:08x} sv32.root=0x{:08x} sv32.pte1=0x{:08x} sv32.pte0=0x{:08x} mtip={} msip={} meip={} virtio_irq={} uart_irq={} v_cmd={} v_notify={} v_desc={} v_irq_raise={} v_irq_ack={} v_desc_not_ready={} v_desc_no_avail={} v_desc_ok={} v_desc_err={} plic_pending0=0x{:08x} plic_senable0=0x{:08x} plic_sth=0x{:08x} plic_sclaim={} cpu0_proc=0x{:08x} cpu0_noff={} cpu0_intena={} ticks={} mtime={} mtimecmp={} mscratch=0x{:08x} scratch5={} tickslock_locked={} tickslock_cpu=0x{:08x} p0_state={} p0_state_cpu={} p0_pid={} p0_ctx_ra=0x{:08x} p_run={} p_run_locked={} p_run0_idx={} p_run0_lock_cpu=0x{:08x} p_running={} p_sleep={} pc_streak={}",
                 count,
                 pc,
                 cpu.privilege(),
@@ -1292,8 +1327,13 @@ fn run_with_heartbeat(
                 mie,
                 sip,
                 sie,
+                satp,
                 scause,
                 sepc,
+                stval,
+                sv32_root,
+                sv32_pte1,
+                sv32_pte0,
                 if mtip { 1 } else { 0 },
                 if msip { 1 } else { 0 },
                 if meip { 1 } else { 0 },
