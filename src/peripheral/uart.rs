@@ -17,6 +17,7 @@
 use crate::error::{Result, SimError};
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 // ============================================================================
@@ -52,7 +53,8 @@ mod ier {
     pub const LS_ENABLE: u8 = 0x04; // Enable line status interrupt
     #[allow(dead_code)]
     pub const MS_ENABLE: u8 = 0x08; // Enable modem status interrupt
-}/// IIR bits
+}
+/// IIR bits
 mod iir {
     pub const NO_INTERRUPT: u8 = 0x01; // No interrupt pending (bit 0)
     #[allow(dead_code)]
@@ -169,31 +171,31 @@ pub struct Uart {
     /// Base address
     base: Addr,
     /// Divisor Latch Low (when DLAB=1)
-    dll: u8,
+    dll: Cell<u8>,
     /// Divisor Latch High (when DLAB=1)
-    dlm: u8,
+    dlm: Cell<u8>,
     /// Interrupt Enable Register
-    ier: u8,
+    ier: Cell<u8>,
     /// Interrupt Identification Register
-    iir: u8,
+    iir: Cell<u8>,
     /// FIFO Control Register
-    fcr: u8,
+    fcr: Cell<u8>,
     /// Line Control Register
-    lcr: u8,
+    lcr: Cell<u8>,
     /// Modem Control Register
-    mcr: u8,
+    mcr: Cell<u8>,
     /// Line Status Register
-    lsr: u8,
+    lsr: Cell<u8>,
     /// Modem Status Register
-    msr: u8,
+    msr: Cell<u8>,
     /// Scratch Register
-    scr: u8,
+    scr: Cell<u8>,
     /// Receive FIFO
-    rx_fifo: VecDeque<u8>,
+    rx_fifo: RefCell<VecDeque<u8>>,
     /// Transmit FIFO
-    tx_fifo: VecDeque<u8>,
+    tx_fifo: RefCell<VecDeque<u8>>,
     /// Output callback for transmitted bytes
-    output_cb: Option<OutputCallback>,
+    output_cb: RefCell<Option<OutputCallback>>,
 }
 
 impl Default for Uart {
@@ -207,19 +209,19 @@ impl Uart {
     pub fn new() -> Self {
         Self {
             base: Addr::new(UART_BASE),
-            dll: 0x00,
-            dlm: 0x00,
-            ier: 0x00,
-            iir: iir::NO_INTERRUPT, // No interrupt pending
-            fcr: 0x00,
-            lcr: 0x00,
-            mcr: 0x00,
-            lsr: lsr::TX_EMPTY | lsr::TX_IDLE, // Transmitter ready
-            msr: msr::CTS | msr::DSR | msr::DCD, // Modem signals ready
-            scr: 0x00,
-            rx_fifo: VecDeque::with_capacity(FIFO_SIZE),
-            tx_fifo: VecDeque::with_capacity(FIFO_SIZE),
-            output_cb: None,
+            dll: Cell::new(0x00),
+            dlm: Cell::new(0x00),
+            ier: Cell::new(0x00),
+            iir: Cell::new(iir::NO_INTERRUPT), // No interrupt pending
+            fcr: Cell::new(0x00),
+            lcr: Cell::new(0x00),
+            mcr: Cell::new(0x00),
+            lsr: Cell::new(lsr::TX_EMPTY | lsr::TX_IDLE), // Transmitter ready
+            msr: Cell::new(msr::CTS | msr::DSR | msr::DCD), // Modem signals ready
+            scr: Cell::new(0x00),
+            rx_fifo: RefCell::new(VecDeque::with_capacity(FIFO_SIZE)),
+            tx_fifo: RefCell::new(VecDeque::with_capacity(FIFO_SIZE)),
+            output_cb: RefCell::new(None),
         }
     }
 
@@ -232,48 +234,59 @@ impl Uart {
 
     /// Set output callback for transmitted bytes
     pub fn set_output_callback(&mut self, cb: OutputCallback) {
-        self.output_cb = Some(cb);
+        self.output_cb.replace(Some(cb));
     }
 
     /// Push a byte into the receive FIFO (for external input)
     pub fn receive_byte(&mut self, byte: u8) {
-        if self.rx_fifo.len() < FIFO_SIZE {
-            self.rx_fifo.push_back(byte);
-            self.lsr |= lsr::DATA_READY;
+        let can_push = {
+            let mut rx_fifo = self.rx_fifo.borrow_mut();
+            if rx_fifo.len() < FIFO_SIZE {
+                rx_fifo.push_back(byte);
+                true
+            } else {
+                false
+            }
+        };
+
+        if can_push {
+            self.lsr.set(self.lsr.get() | lsr::DATA_READY);
             self.update_iir();
         } else {
             // FIFO overflow - set overrun error
-            self.lsr |= lsr::OVERRUN_ERROR;
+            self.lsr.set(self.lsr.get() | lsr::OVERRUN_ERROR);
         }
     }
 
     /// Check if DLAB (Divisor Latch Access Bit) is set
     fn dlab(&self) -> bool {
-        (self.lcr & lcr::DLAB) != 0
+        (self.lcr.get() & lcr::DLAB) != 0
     }
 
     /// Update IIR based on current state
-    fn update_iir(&mut self) {
-        let rx_pending = !self.rx_fifo.is_empty() && (self.ier & ier::RX_ENABLE) != 0;
-        let tx_pending = self.tx_fifo.len() < FIFO_SIZE && (self.ier & ier::TX_ENABLE) != 0;
+    fn update_iir(&self) {
+        let rx_pending =
+            !self.rx_fifo.borrow().is_empty() && (self.ier.get() & ier::RX_ENABLE) != 0;
+        let tx_pending =
+            self.tx_fifo.borrow().len() < FIFO_SIZE && (self.ier.get() & ier::TX_ENABLE) != 0;
 
         if rx_pending {
-            self.iir = iir::ID_RX_READY; // Receive data available
+            self.iir.set(iir::ID_RX_READY); // Receive data available
         } else if tx_pending {
-            self.iir = iir::ID_TX_EMPTY; // Transmitter empty
+            self.iir.set(iir::ID_TX_EMPTY); // Transmitter empty
         } else {
-            self.iir = iir::NO_INTERRUPT; // No interrupt pending
+            self.iir.set(iir::NO_INTERRUPT); // No interrupt pending
         }
 
         // Set FIFO enabled flag if FIFO is enabled
-        if (self.fcr & fcr::FIFO_ENABLE) != 0 {
-            self.iir |= iir::FIFO_ENABLE;
+        if (self.fcr.get() & fcr::FIFO_ENABLE) != 0 {
+            self.iir.set(self.iir.get() | iir::FIFO_ENABLE);
         }
     }
 
     /// Check if there's a pending interrupt
     pub fn has_interrupt(&self) -> bool {
-        (self.iir & iir::NO_INTERRUPT) == 0
+        (self.iir.get() & iir::NO_INTERRUPT) == 0
     }
 
     /// Get the IRQ number
@@ -282,15 +295,16 @@ impl Uart {
     }
 
     /// Read from a register
-    fn read_register(&mut self, offset: u32) -> u8 {
+    fn read_register(&self, offset: u32) -> u8 {
         match offset {
-            RBR_THR if self.dlab() => self.dll,
-            IER if self.dlab() => self.dlm,
+            RBR_THR if self.dlab() => self.dll.get(),
+            IER if self.dlab() => self.dlm.get(),
             RBR_THR => {
                 // Read from RBR (receive FIFO)
-                if let Some(byte) = self.rx_fifo.pop_front() {
-                    if self.rx_fifo.is_empty() {
-                        self.lsr &= !lsr::DATA_READY;
+                let popped = { self.rx_fifo.borrow_mut().pop_front() };
+                if let Some(byte) = popped {
+                    if self.rx_fifo.borrow().is_empty() {
+                        self.lsr.set(self.lsr.get() & !lsr::DATA_READY);
                     }
                     self.update_iir();
                     byte
@@ -298,75 +312,85 @@ impl Uart {
                     0
                 }
             }
-            IER => self.ier,
+            IER => self.ier.get(),
             IIR_FCR => {
                 // IIR is read-only
-                let iir = self.iir;
+                let iir = self.iir.get();
                 // Reading IIR doesn't clear it, but acknowledges the interrupt
                 iir
             }
-            LCR => self.lcr,
-            MCR => self.mcr,
+            LCR => self.lcr.get(),
+            MCR => self.mcr.get(),
             LSR => {
                 // Reading LSR clears some error bits
-                let lsr = self.lsr;
-                self.lsr &= !(lsr::OVERRUN_ERROR | lsr::PARITY_ERROR | lsr::FRAMING_ERROR | lsr::BREAK_INDICATOR | lsr::FIFO_ERROR);
+                let lsr = self.lsr.get();
+                self.lsr.set(
+                    self.lsr.get()
+                        & !(lsr::OVERRUN_ERROR
+                            | lsr::PARITY_ERROR
+                            | lsr::FRAMING_ERROR
+                            | lsr::BREAK_INDICATOR
+                            | lsr::FIFO_ERROR),
+                );
                 lsr
             }
             MSR => {
                 // Reading MSR clears delta bits
-                let msr = self.msr;
-                self.msr &= !(msr::DELTA_CTS | msr::DELTA_DSR | msr::RING_INDICATOR | msr::DELTA_DCD);
+                let msr = self.msr.get();
+                self.msr.set(
+                    self.msr.get()
+                        & !(msr::DELTA_CTS | msr::DELTA_DSR | msr::RING_INDICATOR | msr::DELTA_DCD),
+                );
                 msr
             }
-            SCR => self.scr,
+            SCR => self.scr.get(),
             _ => 0,
         }
     }
 
     /// Write to a register
-    fn write_register(&mut self, offset: u32, value: u8) {
+    fn write_register(&self, offset: u32, value: u8) {
         match offset {
             RBR_THR if self.dlab() => {
-                self.dll = value;
+                self.dll.set(value);
             }
             IER if self.dlab() => {
-                self.dlm = value;
+                self.dlm.set(value);
             }
             RBR_THR => {
                 // Write to THR (transmit)
-                if self.tx_fifo.len() < FIFO_SIZE {
-                    self.tx_fifo.push_back(value);
+                if self.tx_fifo.borrow().len() < FIFO_SIZE {
+                    self.tx_fifo.borrow_mut().push_back(value);
                 }
                 // Immediately output the byte
-                if let Some(ref mut cb) = self.output_cb {
+                if let Some(ref mut cb) = *self.output_cb.borrow_mut() {
                     cb(value);
                 }
                 // Update LSR - THR is empty after write (simplified)
-                self.lsr |= lsr::TX_EMPTY | lsr::TX_IDLE;
+                self.lsr.set(self.lsr.get() | lsr::TX_EMPTY | lsr::TX_IDLE);
                 self.update_iir();
             }
             IER => {
-                self.ier = value & 0x0F; // Only lower 4 bits are valid
+                self.ier.set(value & 0x0F); // Only lower 4 bits are valid
                 self.update_iir();
             }
             IIR_FCR => {
                 // Write to FCR
-                self.fcr = value;
+                self.fcr.set(value);
                 // Clear FIFOs if requested
                 if (value & fcr::RX_FIFO_RESET) != 0 {
-                    self.rx_fifo.clear();
-                    self.lsr &= !lsr::DATA_READY;
+                    self.rx_fifo.borrow_mut().clear();
+                    self.lsr.set(self.lsr.get() & !lsr::DATA_READY);
                 }
                 if (value & fcr::TX_FIFO_RESET) != 0 {
-                    self.tx_fifo.clear();
+                    self.tx_fifo.borrow_mut().clear();
                 }
             }
             LCR => {
-                self.lcr = value;
+                self.lcr.set(value);
             }
             MCR => {
-                self.mcr = value & 0x1F; // Only lower 5 bits are valid
+                self.mcr.set(value & 0x1F); // Only lower 5 bits are valid
             }
             LSR => {
                 // LSR is read-only
@@ -375,7 +399,7 @@ impl Uart {
                 // MSR is read-only
             }
             SCR => {
-                self.scr = value;
+                self.scr.set(value);
             }
             _ => {}
         }
@@ -388,24 +412,7 @@ impl Memory for Uart {
         if offset >= UART_SIZE as u32 {
             return Err(SimError::InvalidAddress(addr));
         }
-        // Need mutable access for side effects
-        let mut uart = Self {
-            base: self.base,
-            dll: self.dll,
-            dlm: self.dlm,
-            ier: self.ier,
-            iir: self.iir,
-            fcr: self.fcr,
-            lcr: self.lcr,
-            mcr: self.mcr,
-            lsr: self.lsr,
-            msr: self.msr,
-            scr: self.scr,
-            rx_fifo: self.rx_fifo.clone(),
-            tx_fifo: self.tx_fifo.clone(),
-            output_cb: None,
-        };
-        Ok(Byte::new(uart.read_register(offset)))
+        Ok(Byte::new(self.read_register(offset)))
     }
 
     fn read_half(&self, addr: Addr) -> Result<Half> {
@@ -544,7 +551,10 @@ mod tests {
         assert_eq!(uart.base, Addr::new(UART_BASE));
         // Use Memory trait's contains
         assert!(Memory::contains(&uart, Addr::new(UART_BASE)));
-        assert!(!Memory::contains(&uart, Addr::new(UART_BASE + UART_SIZE as u32)));
+        assert!(!Memory::contains(
+            &uart,
+            Addr::new(UART_BASE + UART_SIZE as u32)
+        ));
     }
 
     #[test]
@@ -556,7 +566,8 @@ mod tests {
         }));
 
         // Write a byte to THR
-        uart.write_byte(Addr::new(UART_BASE), Byte::new(b'H')).unwrap();
+        uart.write_byte(Addr::new(UART_BASE), Byte::new(b'H'))
+            .unwrap();
 
         // Check LSR indicates transmitter empty
         let lsr = uart.read_byte(Addr::new(UART_BASE + LSR)).unwrap();
@@ -588,13 +599,16 @@ mod tests {
         let mut uart = Uart::new();
 
         // Set DLAB bit
-        uart.write_byte(Addr::new(UART_BASE + LCR), Byte::new(lcr::DLAB)).unwrap();
+        uart.write_byte(Addr::new(UART_BASE + LCR), Byte::new(lcr::DLAB))
+            .unwrap();
 
         // Write to DLL (divisor latch low)
-        uart.write_byte(Addr::new(UART_BASE), Byte::new(0x0C)).unwrap();
+        uart.write_byte(Addr::new(UART_BASE), Byte::new(0x0C))
+            .unwrap();
 
         // Clear DLAB
-        uart.write_byte(Addr::new(UART_BASE + LCR), Byte::new(0x00)).unwrap();
+        uart.write_byte(Addr::new(UART_BASE + LCR), Byte::new(0x00))
+            .unwrap();
 
         // Read back LCR
         let lcr = uart.read_byte(Addr::new(UART_BASE + LCR)).unwrap();
@@ -609,7 +623,8 @@ mod tests {
         assert!(!uart.has_interrupt());
 
         // Enable RX interrupt
-        uart.write_byte(Addr::new(UART_BASE + IER), Byte::new(ier::RX_ENABLE)).unwrap();
+        uart.write_byte(Addr::new(UART_BASE + IER), Byte::new(ier::RX_ENABLE))
+            .unwrap();
 
         // Still no interrupt (no data)
         assert!(!uart.has_interrupt());
@@ -638,7 +653,11 @@ mod tests {
         assert!(lsr.raw() & lsr::DATA_READY != 0);
 
         // Reset RX FIFO
-        uart.write_byte(Addr::new(UART_BASE + IIR_FCR), Byte::new(fcr::RX_FIFO_RESET)).unwrap();
+        uart.write_byte(
+            Addr::new(UART_BASE + IIR_FCR),
+            Byte::new(fcr::RX_FIFO_RESET),
+        )
+        .unwrap();
 
         // Data should be cleared
         let lsr = uart.read_byte(Addr::new(UART_BASE + LSR)).unwrap();
@@ -650,7 +669,8 @@ mod tests {
         let mut uart = Uart::new();
 
         // Write to scratch register
-        uart.write_byte(Addr::new(UART_BASE + SCR), Byte::new(0x42)).unwrap();
+        uart.write_byte(Addr::new(UART_BASE + SCR), Byte::new(0x42))
+            .unwrap();
 
         // Read back
         let scr = uart.read_byte(Addr::new(UART_BASE + SCR)).unwrap();

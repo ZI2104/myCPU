@@ -4,7 +4,7 @@
 //! and routes memory accesses to the appropriate components.
 
 use crate::error::{check_alignment, Result, SimError};
-use crate::peripheral::VirtioBlock;
+use crate::peripheral::{Uart, VirtioBlock};
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
 use std::fmt;
@@ -255,6 +255,24 @@ impl Bus {
         self.peripheral_regions
             .iter()
             .any(|(_, _, p)| p.name() == name && p.has_interrupt())
+    }
+
+    /// Inject one byte into UART receive FIFO.
+    ///
+    /// Returns `true` if a UART peripheral exists and byte is injected.
+    pub fn inject_uart_byte(&mut self, byte: u8) -> bool {
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() != "UART" {
+                continue;
+            }
+
+            if let Some(uart) = peripheral.as_any_mut().downcast_mut::<Uart>() {
+                uart.receive_byte(byte);
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Get timer and software interrupt status from CLINT.

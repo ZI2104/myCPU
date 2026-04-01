@@ -345,3 +345,67 @@
 - 上下文压缩（供下一步直接续做）：
   - 性能瓶颈已显著缓解，长窗口探索成本下降；
   - 下一步应重点增加 `PLIC_SCLAIM` 读值与 VirtIO queue notify 完成路径的轻量日志，定位“为何外设 IRQ 线始终为 0”。
+
+### 2026-04-01 Phase-2-11（RV32C + VirtIO 兼容修复，xv6 达到 shell）
+
+- 完成内容：
+  - 修复压缩指令回归与语义一致性：
+    - `C.EBREAK` 从“未实现报错”改为“进入 breakpoint trap”语义；
+    - `0x0000` 压缩保留编码按非法指令 trap 处理；
+    - 修正 `C.LW/C.SW` 立即数位拼接（`imm[6] <- bit5`）。
+  - 修复 VirtIO 描述符数据搬运长度：不再固定截断到 512B，改为按 `data_desc.len` 传输，并增加越界保护。
+  - 新增回归用例：
+    - `cpu::core::tests::test_compressed_ebreak_enters_breakpoint_trap`
+    - `cpu::core::tests::test_decode_c_lw_sw_immediate_bit_mapping`
+    - `peripheral::virtio_block::tests::test_virtio_block_descriptor_chain_read_two_sectors`
+- 变更文件：
+  - `src/cpu/core.rs`
+  - `src/peripheral/virtio_block.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo run --release -- run --count 120000000 --heartbeat-every 20000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+  - `cargo run --release -- run --count 200000000 --heartbeat-every 40000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+- 验收结果：
+  - 通过：库回归 `241/241`。
+  - 120M 与 200M 窗口均稳定复现：`init: starting sh` 与 shell 提示符 `$`。
+  - 200M 窗口稳定完成，最终 PC `0x80000dc8`，无 panic。
+- 风险/未完成项：
+  - 当前“可交互”已达到提示符级别，尚未将“执行 shell 命令并验收输出”固化为自动化 e2e 用例。
+  - heartbeat 诊断字段较重，建议后续抽成可选 verbose 模式。
+- 上下文压缩（供下一步直接续做）：
+  - xv6 shell 里程碑已达成，Phase 2 可从“启动推进”转入“交互稳定性 + 自动化验收”。
+  - 下一步优先：补一条 shell 命令级 smoke（如 `echo`）并收敛 heartbeat 日志开销。
+
+### 2026-04-01 Phase-2-12（UART 主机脚本注入 + shell 命令级 smoke）
+
+- 完成内容：
+  - 为 `run` 子命令新增 UART 输入脚本注入参数：
+    - `--uart-script`：待注入字符串（支持 `\\n/\\r/\\t` 转义）
+    - `--uart-inject-at`：从第 N 条指令开始注入
+    - `--uart-inject-every`：每 N 条指令注入 1 字节
+  - 在 `Bus` 增加 `inject_uart_byte()`，将主机字节直接送入 UART RX FIFO。
+  - 修复 UART 读取副作用一致性问题：
+    - 采用内部可变性，确保 `RBR` 读取会真实弹出 RX FIFO；
+    - 修复因 `RefCell` 重入导致的借用冲突。
+  - 新增解析单测：`parse_escaped_uart_script` 的常见转义与未知转义保留语义。
+- 变更文件：
+  - `src/main.rs`
+  - `src/memory/bus.rs`
+  - `src/peripheral/uart.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `cargo run --release -- run --count 200000000 --heartbeat-every 40000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img --uart-script "echo HI\\n" --uart-inject-at 130000000 --uart-inject-every 5000`
+- 验收结果：
+  - 通过：库回归 `241/241`。
+  - 命令级 smoke 通过：运行日志出现 `echo HI`、`HI` 与后续 `$` 提示符，且统计显示 `UART script injected: 8/8 bytes`。
+- 风险/未完成项：
+  - 当前注入基于“指令步数”定时，尚非“根据 shell 提示符事件触发”的自适应注入。
+  - heartbeat 输出较重，建议后续拆分精简模式与诊断模式。
+- 上下文压缩（供下一步直接续做）：
+  - 已具备非交互环境下的 shell 命令自动注入能力，可据此沉淀真正的 e2e 自动验收。
+  - 下一步优先：新增独立 smoke 流程（脚本/测试）验证 `echo/ls` 并断言关键输出。

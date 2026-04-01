@@ -67,6 +67,18 @@ enum Commands {
         /// Optional VirtIO block disk image (raw)
         #[arg(long)]
         virtio_disk: Option<PathBuf>,
+
+        /// Inject host string into UART RX FIFO (supports escapes like \\n, \\r, \\t)
+        #[arg(long)]
+        uart_script: Option<String>,
+
+        /// Start injecting UART script at this instruction count
+        #[arg(long, default_value = "0")]
+        uart_inject_at: u64,
+
+        /// Inject one UART byte every N instructions
+        #[arg(long, default_value = "20000")]
+        uart_inject_every: u64,
     },
 
     /// Start GDB debug server
@@ -137,6 +149,9 @@ fn main() -> anyhow::Result<()> {
             perf_report,
             file,
             virtio_disk,
+            uart_script,
+            uart_inject_at,
+            uart_inject_every,
         } => run_program(
             memory,
             &pc,
@@ -146,6 +161,9 @@ fn main() -> anyhow::Result<()> {
             perf_report,
             file,
             virtio_disk,
+            uart_script,
+            uart_inject_at,
+            uart_inject_every,
         ),
         Commands::Debug {
             port,
@@ -176,6 +194,9 @@ fn run_program(
     show_perf_report: bool,
     file: PathBuf,
     virtio_disk: Option<PathBuf>,
+    uart_script: Option<String>,
+    uart_inject_at: u64,
+    uart_inject_every: u64,
 ) -> anyhow::Result<()> {
     init_logger(verbose);
 
@@ -214,11 +235,30 @@ fn run_program(
         println!("Heartbeat enabled: every {} instructions", heartbeat_every);
     }
 
+    let mut uart_injector = uart_script
+        .map(|script| {
+            UartInjector::new(
+                parse_escaped_uart_script(&script),
+                uart_inject_at,
+                uart_inject_every.max(1),
+            )
+        })
+        .filter(|injector| !injector.is_empty());
+
+    if let Some(injector) = uart_injector.as_ref() {
+        println!(
+            "UART script injection enabled: {} bytes, start_at={}, every={} steps",
+            injector.total_len(),
+            injector.inject_at,
+            injector.inject_every
+        );
+    }
+
     let start_time = Instant::now();
-    let instructions_executed = if heartbeat_every == 0 {
+    let instructions_executed = if heartbeat_every == 0 && uart_injector.is_none() {
         cpu.run(max_count)?
     } else {
-        run_with_heartbeat(&mut cpu, max_count, heartbeat_every)?
+        run_with_heartbeat(&mut cpu, max_count, heartbeat_every, uart_injector.as_mut())?
     };
     let elapsed = start_time.elapsed();
 
@@ -235,6 +275,14 @@ fn run_program(
         }
     );
 
+    if let Some(injector) = uart_injector.as_ref() {
+        println!(
+            "UART script injected: {}/{} bytes",
+            injector.injected_len(),
+            injector.total_len()
+        );
+    }
+
     if verbose {
         println!("\nFinal register state:");
         println!("{}", cpu.registers());
@@ -249,7 +297,87 @@ fn run_program(
     Ok(())
 }
 
-fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> anyhow::Result<u64> {
+#[derive(Debug, Clone)]
+struct UartInjector {
+    bytes: Vec<u8>,
+    next_index: usize,
+    inject_at: u64,
+    inject_every: u64,
+}
+
+impl UartInjector {
+    fn new(bytes: Vec<u8>, inject_at: u64, inject_every: u64) -> Self {
+        Self {
+            bytes,
+            next_index: 0,
+            inject_at,
+            inject_every,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn injected_len(&self) -> usize {
+        self.next_index
+    }
+
+    fn total_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn maybe_inject(&mut self, step: u64, cpu: &mut Cpu) {
+        if self.next_index >= self.bytes.len() || step < self.inject_at {
+            return;
+        }
+
+        if (step - self.inject_at) % self.inject_every != 0 {
+            return;
+        }
+
+        let byte = self.bytes[self.next_index];
+        if cpu.bus_mut().inject_uart_byte(byte) {
+            self.next_index += 1;
+        }
+    }
+}
+
+fn parse_escaped_uart_script(script: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(script.len());
+    let mut chars = script.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+
+        match chars.next() {
+            Some('n') => out.push(b'\n'),
+            Some('r') => out.push(b'\r'),
+            Some('t') => out.push(b'\t'),
+            Some('0') => out.push(0),
+            Some('\\') => out.push(b'\\'),
+            Some(other) => {
+                out.push(b'\\');
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+            None => out.push(b'\\'),
+        }
+    }
+
+    out
+}
+
+fn run_with_heartbeat(
+    cpu: &mut Cpu,
+    max_count: u64,
+    heartbeat_every: u64,
+    mut uart_injector: Option<&mut UartInjector>,
+) -> anyhow::Result<u64> {
     const XV6_CPU0_ADDR: u32 = 0x8001_34C4;
     const XV6_PROC_BASE: u32 = 0x8001_36E4;
     const XV6_TICKS_ADDR: u32 = 0x8002_4010;
@@ -274,7 +402,11 @@ fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> an
         cpu.step()?;
         count += 1;
 
-        if count % heartbeat_every == 0 {
+        if let Some(injector) = uart_injector.as_deref_mut() {
+            injector.maybe_inject(count, cpu);
+        }
+
+        if heartbeat_every > 0 && count % heartbeat_every == 0 {
             let csr = cpu.csr();
             let mip = csr.mip.read();
             let mie = csr.mie.read();
@@ -513,6 +645,23 @@ fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> an
     }
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_escaped_uart_script;
+
+    #[test]
+    fn test_parse_escaped_uart_script_common_sequences() {
+        let parsed = parse_escaped_uart_script("echo hi\\nnext\\tcol\\r");
+        assert_eq!(parsed, b"echo hi\nnext\tcol\r");
+    }
+
+    #[test]
+    fn test_parse_escaped_uart_script_preserves_unknown_escape() {
+        let parsed = parse_escaped_uart_script("a\\xb");
+        assert_eq!(parsed, b"a\\xb");
+    }
 }
 
 /// Start GDB debug server
