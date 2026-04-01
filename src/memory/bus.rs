@@ -313,10 +313,9 @@ impl Bus {
             if peripheral.name() == "PLIC" {
                 let any = peripheral.as_any();
                 if let Some(plic) = any.downcast_ref::<Plic>() {
-                    // For now, we only support one hart
-                    let meip = plic.has_pending_interrupt(0);
-                    // SEIP would require S-mode support in PLIC
-                    let seip = false;
+                    // For now, we only support one hart.
+                    let meip = plic.has_pending_interrupt_machine(0);
+                    let seip = plic.has_pending_interrupt_supervisor(0);
                     return (meip, seip);
                 }
             }
@@ -358,7 +357,19 @@ impl Bus {
                         plic.set_pending(Self::UART_IRQ_SOURCE);
                     }
                 }
-                return;
+                break;
+            }
+        }
+
+        // xv6-rv32 compatibility: treat VirtIO IRQ line as edge-latched into PLIC.
+        // After latching source 1 pending in PLIC, auto-lower the device line so
+        // unacked level state does not continuously reassert pending every cycle.
+        if virtio_pending {
+            for (_, _, peripheral) in &mut self.peripheral_regions {
+                if peripheral.name() == "VirtIO-Block" {
+                    peripheral.acknowledge_interrupt();
+                    break;
+                }
             }
         }
     }
@@ -395,6 +406,36 @@ impl Bus {
                 }
             }
         }
+    }
+
+    /// Get VirtIO activity counters if VirtIO-Block is attached.
+    ///
+    /// Returns `(command_exec_count, queue_notify_count, descriptor_notify_count, irq_raised_count, irq_ack_count, descriptor_not_ready_count, descriptor_no_avail_count, descriptor_success_count, descriptor_error_count)`.
+    pub fn get_virtio_activity_counters(
+        &self,
+    ) -> Option<(u64, u64, u64, u64, u64, u64, u64, u64, u64)> {
+        use crate::peripheral::VirtioBlock;
+
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() == "VirtIO-Block" {
+                let any = peripheral.as_any();
+                if let Some(virtio) = any.downcast_ref::<VirtioBlock>() {
+                    return Some((
+                        virtio.command_exec_count(),
+                        virtio.queue_notify_count(),
+                        virtio.descriptor_notify_count(),
+                        virtio.irq_raised_count(),
+                        virtio.irq_ack_count(),
+                        virtio.descriptor_not_ready_count(),
+                        virtio.descriptor_no_avail_count(),
+                        virtio.descriptor_success_count(),
+                        virtio.descriptor_error_count(),
+                    ));
+                }
+            }
+        }
+
+        None
     }
 
     /// Acknowledge interrupts from all peripherals.

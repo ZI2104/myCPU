@@ -160,8 +160,9 @@ impl PipelineCpu {
         self.bus.sync_plic_pending_from_peripherals();
 
         // Sync PLIC interrupts (External)
-        let (meip, _seip) = self.bus.get_plic_interrupt_status();
+        let (meip, seip) = self.bus.get_plic_interrupt_status();
         self.csr.mip.set_meip(meip);
+        self.csr.sip.set_seip(seip);
     }
 
     /// Check for pending interrupts and handle them if enabled.
@@ -169,18 +170,37 @@ impl PipelineCpu {
     /// # Returns
     /// `true` if an interrupt was taken, `false` otherwise.
     fn check_and_handle_interrupt(&mut self) -> bool {
-        // Check if interrupts are globally enabled (MIE bit in mstatus)
-        let mie_enabled = self.csr.mstatus.mie();
+        // For this pipeline model's current interrupt path (M-level pending sources in MIP),
+        // machine interrupts are globally enabled when running below M-mode.
+        // Only while currently in M-mode does mstatus.MIE gate delivery.
+        let machine_interrupts_enabled =
+            self.privilege != PrivilegeLevel::Machine || self.csr.mstatus.mie();
 
-        // Check if there's a pending interrupt that's also enabled
-        let pending = self.csr.mip.has_pending_interrupt(&self.csr.mie);
-
-        if mie_enabled && pending {
-            // Get the highest priority pending interrupt
+        if !machine_interrupts_enabled {
+            // Continue checking supervisor interrupts below.
+        } else {
             if let Some((is_interrupt, cause)) =
                 self.csr.mip.highest_priority_interrupt(&self.csr.mie)
             {
                 // Take the trap - flush pipeline and jump to handler
+                let trap = if is_interrupt {
+                    Trap::interrupt(InterruptCause::from_code(cause), self.pc.get())
+                } else {
+                    Trap::exception(ExceptionCause::from_code(cause), self.pc.get(), 0)
+                };
+                self.take_trap(trap);
+                return true;
+            }
+        }
+
+        // Then check supervisor-level pending interrupt when currently in S-mode.
+        let supervisor_interrupts_enabled =
+            self.privilege == PrivilegeLevel::Supervisor && self.csr.sstatus.sie();
+
+        if supervisor_interrupts_enabled {
+            if let Some((is_interrupt, cause)) =
+                self.csr.get_pending_interrupt(PrivilegeLevel::Supervisor)
+            {
                 let trap = if is_interrupt {
                     Trap::interrupt(InterruptCause::from_code(cause), self.pc.get())
                 } else {
@@ -709,6 +729,7 @@ impl ExecutionModel for PipelineCpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::csr::{csr_addr, ie_bits, interrupt_code};
     use crate::memory::Ram;
     use crate::Memory;
 
@@ -845,5 +866,30 @@ mod tests {
         cpu.cycles = 20;
 
         assert!((cpu.ipc() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pipeline_machine_timer_interrupt_taken_in_supervisor_mode_when_mie_clear() {
+        let bus = create_test_bus_with_program(&[]);
+        let mut cpu = PipelineCpu::with_pc(bus, Addr::new(0));
+
+        cpu.set_privilege(PrivilegeLevel::Supervisor);
+        cpu.csr_mut().mstatus.set_mie(false);
+        cpu.csr_mut()
+            .write(csr_addr::MIE, ie_bits::MTIE, PrivilegeLevel::Machine)
+            .unwrap();
+        cpu.csr_mut().mip.set_mtip(true);
+        cpu.csr_mut().mtvec.set_base(Addr::new(0x1000));
+
+        assert!(cpu.check_and_handle_interrupt());
+        assert_eq!(cpu.privilege(), PrivilegeLevel::Machine);
+        assert_eq!(cpu.pc(), Addr::new(0x1000));
+        assert_eq!(cpu.csr().mcause.code(), interrupt_code::MACHINE_TIMER);
+
+        // Pipeline should be flushed when taking trap.
+        assert!(!cpu.if_id.valid);
+        assert!(!cpu.id_ex.valid);
+        assert!(!cpu.ex_mem.valid);
+        assert!(!cpu.mem_wb.valid);
     }
 }

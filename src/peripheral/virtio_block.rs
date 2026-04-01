@@ -168,6 +168,16 @@ pub struct VirtioBlock {
     req_type: u32,
     req_status: u8,
 
+    command_exec_count: u64,
+    queue_notify_count: u64,
+    descriptor_notify_count: u64,
+    irq_raised_count: u64,
+    irq_ack_count: u64,
+    descriptor_not_ready_count: u64,
+    descriptor_no_avail_count: u64,
+    descriptor_success_count: u64,
+    descriptor_error_count: u64,
+
     irq_pending: bool,
     data_window: [u8; SECTOR_SIZE],
     disk: Vec<u8>,
@@ -216,6 +226,16 @@ impl VirtioBlock {
             req_type: request_type::IN,
             req_status: 0,
 
+            command_exec_count: 0,
+            queue_notify_count: 0,
+            descriptor_notify_count: 0,
+            irq_raised_count: 0,
+            irq_ack_count: 0,
+            descriptor_not_ready_count: 0,
+            descriptor_no_avail_count: 0,
+            descriptor_success_count: 0,
+            descriptor_error_count: 0,
+
             irq_pending: false,
             data_window: [0; SECTOR_SIZE],
             disk: vec![0; disk_size],
@@ -224,6 +244,42 @@ impl VirtioBlock {
 
     pub fn disk_size_bytes(&self) -> usize {
         self.disk.len()
+    }
+
+    pub fn command_exec_count(&self) -> u64 {
+        self.command_exec_count
+    }
+
+    pub fn queue_notify_count(&self) -> u64 {
+        self.queue_notify_count
+    }
+
+    pub fn descriptor_notify_count(&self) -> u64 {
+        self.descriptor_notify_count
+    }
+
+    pub fn irq_raised_count(&self) -> u64 {
+        self.irq_raised_count
+    }
+
+    pub fn irq_ack_count(&self) -> u64 {
+        self.irq_ack_count
+    }
+
+    pub fn descriptor_not_ready_count(&self) -> u64 {
+        self.descriptor_not_ready_count
+    }
+
+    pub fn descriptor_no_avail_count(&self) -> u64 {
+        self.descriptor_no_avail_count
+    }
+
+    pub fn descriptor_success_count(&self) -> u64 {
+        self.descriptor_success_count
+    }
+
+    pub fn descriptor_error_count(&self) -> u64 {
+        self.descriptor_error_count
     }
 
     pub fn load_disk_image(&mut self, image: &[u8]) -> Result<()> {
@@ -265,6 +321,7 @@ impl VirtioBlock {
     }
 
     fn execute_command(&mut self, command_value: u32) {
+        self.command_exec_count = self.command_exec_count.saturating_add(1);
         self.command = command_value;
 
         match command_value {
@@ -299,15 +356,18 @@ impl VirtioBlock {
 
         // Legacy xv6 virtio path relies on completion interrupts.
         self.irq_pending = true;
+        self.irq_raised_count = self.irq_raised_count.saturating_add(1);
     }
 
     fn execute_queue_notify(&mut self, _queue_selector: u32) {
+        self.queue_notify_count = self.queue_notify_count.saturating_add(1);
+
         if self.descriptor_mode_enabled() {
             self.pending_queue_notify = Some(_queue_selector);
             return;
         }
 
-        if !self.queue_ready || self.queue_num == 0 {
+        if !self.queue_is_ready() || self.queue_num == 0 {
             self.result = RESULT_IO_ERR;
             self.status = 0;
             self.req_status = 1;
@@ -346,6 +406,7 @@ impl VirtioBlock {
         }
 
         self.irq_pending = true;
+        self.irq_raised_count = self.irq_raised_count.saturating_add(1);
     }
 
     fn descriptor_mode_enabled(&self) -> bool {
@@ -364,6 +425,8 @@ impl VirtioBlock {
             return Ok(());
         };
 
+        self.descriptor_notify_count = self.descriptor_notify_count.saturating_add(1);
+
         self.execute_descriptor_queue(queue_selector, guest_memory)
     }
 
@@ -372,7 +435,8 @@ impl VirtioBlock {
         _queue_selector: u32,
         guest_memory: &mut dyn VirtioGuestMemory,
     ) -> Result<()> {
-        if !self.queue_ready || self.queue_num == 0 {
+        if !self.queue_is_ready() || self.queue_num == 0 {
+            self.descriptor_not_ready_count = self.descriptor_not_ready_count.saturating_add(1);
             self.result = RESULT_IO_ERR;
             self.status = 0;
             self.req_status = VIRTIO_BLK_S_IOERR;
@@ -391,6 +455,7 @@ impl VirtioBlock {
         self.queue_avail_idx = avail_idx;
 
         if avail_idx == self.queue_used_idx {
+            self.descriptor_no_avail_count = self.descriptor_no_avail_count.saturating_add(1);
             self.result = RESULT_IO_ERR;
             self.status = 0;
             self.req_status = VIRTIO_BLK_S_IOERR;
@@ -414,12 +479,14 @@ impl VirtioBlock {
         let processed = self.process_descriptor_chain(head, guest_memory);
         let (status_byte, used_len) = match processed {
             Ok(len) => {
+                self.descriptor_success_count = self.descriptor_success_count.saturating_add(1);
                 self.result = RESULT_OK;
                 self.status = 1;
                 self.req_status = VIRTIO_BLK_S_OK;
                 (VIRTIO_BLK_S_OK, len)
             }
             Err(_) => {
+                self.descriptor_error_count = self.descriptor_error_count.saturating_add(1);
                 self.result = RESULT_IO_ERR;
                 self.status = 0;
                 self.req_status = VIRTIO_BLK_S_IOERR;
@@ -440,6 +507,7 @@ impl VirtioBlock {
         let _ = self.write_guest_u16(guest_memory, self.queue_used_addr + 2, self.queue_used_idx);
 
         self.irq_pending = true;
+        self.irq_raised_count = self.irq_raised_count.saturating_add(1);
 
         Ok(())
     }
@@ -476,28 +544,35 @@ impl VirtioBlock {
         self.req_type = req_type;
         self.sector = sector;
 
-        let transfer_len = (data_desc.len as usize).min(SECTOR_SIZE);
+        let transfer_len = data_desc.len as usize;
+        let offset = self
+            .sector_offset(sector)
+            .ok_or_else(|| SimError::Peripheral("sector out of range".to_string()))?;
+        let end = offset.checked_add(transfer_len).ok_or_else(|| {
+            SimError::Peripheral("virtio-blk transfer length overflow".to_string())
+        })?;
+        if end > self.disk.len() {
+            return Err(SimError::Peripheral(
+                "virtio-blk transfer exceeds disk bounds".to_string(),
+            ));
+        }
 
         match req_type {
             request_type::IN => {
-                let offset = self
-                    .sector_offset(sector)
-                    .ok_or_else(|| SimError::Peripheral("read sector out of range".to_string()))?;
-
                 for i in 0..transfer_len {
                     let byte = self.disk[offset + i];
-                    self.data_window[i] = byte;
+                    if i < SECTOR_SIZE {
+                        self.data_window[i] = byte;
+                    }
                     self.write_guest_u8(guest_memory, data_desc.addr + i as u64, byte)?;
                 }
             }
             request_type::OUT => {
-                let offset = self
-                    .sector_offset(sector)
-                    .ok_or_else(|| SimError::Peripheral("write sector out of range".to_string()))?;
-
                 for i in 0..transfer_len {
                     let byte = self.read_guest_u8(guest_memory, data_desc.addr + i as u64)?;
-                    self.data_window[i] = byte;
+                    if i < SECTOR_SIZE {
+                        self.data_window[i] = byte;
+                    }
                     self.disk[offset + i] = byte;
                 }
             }
@@ -556,6 +631,10 @@ impl VirtioBlock {
 
     fn descriptor_offset(index: u16) -> u64 {
         (index as u64) * 16
+    }
+
+    fn queue_is_ready(&self) -> bool {
+        self.queue_ready || self.queue_pfn != 0
     }
 
     fn validate_descriptor_index(&self, index: u16) -> Result<()> {
@@ -779,6 +858,9 @@ impl VirtioBlock {
             }
             REG_INTERRUPT_ACK => {
                 if (value & 0x1) != 0 {
+                    if self.irq_pending {
+                        self.irq_ack_count = self.irq_ack_count.saturating_add(1);
+                    }
                     self.irq_pending = false;
                 }
             }
@@ -912,6 +994,9 @@ impl Peripheral for VirtioBlock {
     }
 
     fn acknowledge_interrupt(&mut self) {
+        if self.irq_pending {
+            self.irq_ack_count = self.irq_ack_count.saturating_add(1);
+        }
         self.irq_pending = false;
     }
 
@@ -1204,6 +1289,126 @@ mod tests {
         assert_eq!(read_u32(&dev, REG_LAST_USED_HEAD), 0);
         assert_eq!(read_u32(&dev, REG_REQ_STATUS), VIRTIO_BLK_S_OK as u32);
         assert!(dev.has_interrupt());
+    }
+
+    #[test]
+    fn test_virtio_block_descriptor_chain_read_two_sectors() {
+        let mut dev = VirtioBlock::with_disk_sectors(16);
+        dev.preload_sector(4, &[0x11, 0x12, 0x13, 0x14]).unwrap();
+        dev.preload_sector(5, &[0x21, 0x22, 0x23, 0x24]).unwrap();
+
+        let guest_base = 0x8000_0000u32;
+        let mut guest = MockGuestMemory::new(guest_base, 0x9000);
+
+        let desc_addr = 0x8000_1000u64;
+        let avail_addr = 0x8000_2000u64;
+        let used_addr = 0x8000_3000u64;
+        let req_addr = 0x8000_4000u64;
+        let data_addr = 0x8000_5000u64;
+        let status_addr = 0x8000_7000u64;
+
+        guest.write_u64_abs(desc_addr, req_addr);
+        guest.write_u32_abs(desc_addr + 8, 16);
+        guest.write_u16_abs(desc_addr + 12, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc_addr + 14, 1);
+
+        guest.write_u64_abs(desc_addr + 16, data_addr);
+        guest.write_u32_abs(desc_addr + 24, (SECTOR_SIZE * 2) as u32);
+        guest.write_u16_abs(desc_addr + 28, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc_addr + 30, 2);
+
+        guest.write_u64_abs(desc_addr + 32, status_addr);
+        guest.write_u32_abs(desc_addr + 40, 1);
+        guest.write_u16_abs(desc_addr + 44, 0);
+        guest.write_u16_abs(desc_addr + 46, 0);
+
+        guest.write_u32_abs(req_addr, request_type::IN);
+        guest.write_u64_abs(req_addr + 8, 4);
+
+        guest.write_u16_abs(avail_addr + 2, 1);
+        guest.write_u16_abs(avail_addr + 4, 0);
+
+        write_u32(&mut dev, REG_QUEUE_NUM, 8);
+        write_u32(&mut dev, REG_QUEUE_READY, 1);
+        write_u32(&mut dev, REG_QUEUE_DESC_LOW, desc_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
+        write_u32(&mut dev, REG_QUEUE_AVAIL_LOW, avail_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
+        write_u32(&mut dev, REG_QUEUE_USED_LOW, used_addr as u32);
+        write_u32(&mut dev, REG_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+
+        write_u32(&mut dev, REG_QUEUE_NOTIFY, 0);
+        dev.process_pending_descriptor_notify(&mut guest).unwrap();
+
+        assert_eq!(guest.read_u8_abs(data_addr), 0x11);
+        assert_eq!(guest.read_u8_abs(data_addr + 1), 0x12);
+        assert_eq!(guest.read_u8_abs(data_addr + (SECTOR_SIZE as u64)), 0x21);
+        assert_eq!(
+            guest.read_u8_abs(data_addr + (SECTOR_SIZE as u64) + 1),
+            0x22
+        );
+        assert_eq!(guest.read_u8_abs(status_addr), VIRTIO_BLK_S_OK);
+        assert_eq!(guest.read_u32_abs(used_addr + 8), (SECTOR_SIZE * 2) as u32);
+    }
+
+    #[test]
+    fn test_virtio_block_descriptor_chain_legacy_pfn_ready_flow() {
+        let mut dev = VirtioBlock::with_disk_sectors(16);
+        dev.preload_sector(3, &[0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
+
+        let guest_base = 0x8000_0000u32;
+        let mut guest = MockGuestMemory::new(guest_base, 0x10000);
+
+        let queue_base = 0x8000_1000u64;
+        let desc_addr = queue_base;
+        let avail_addr = queue_base + (QUEUE_RING_MAX as u64) * 16;
+        let req_addr = 0x8000_3000u64;
+        let data_addr = 0x8000_4000u64;
+        let status_addr = 0x8000_5000u64;
+
+        let desc0 = desc_addr;
+        guest.write_u64_abs(desc0, req_addr);
+        guest.write_u32_abs(desc0 + 8, 16);
+        guest.write_u16_abs(desc0 + 12, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc0 + 14, 1);
+
+        let desc1 = desc_addr + 16;
+        guest.write_u64_abs(desc1, data_addr);
+        guest.write_u32_abs(desc1 + 8, SECTOR_SIZE as u32);
+        guest.write_u16_abs(desc1 + 12, VIRTQ_DESC_F_NEXT);
+        guest.write_u16_abs(desc1 + 14, 2);
+
+        let desc2 = desc_addr + 32;
+        guest.write_u64_abs(desc2, status_addr);
+        guest.write_u32_abs(desc2 + 8, 1);
+        guest.write_u16_abs(desc2 + 12, 0);
+        guest.write_u16_abs(desc2 + 14, 0);
+
+        guest.write_u32_abs(req_addr, request_type::IN);
+        guest.write_u64_abs(req_addr + 8, 3);
+
+        guest.write_u16_abs(avail_addr + 2, 1);
+        guest.write_u16_abs(avail_addr + 4, 0);
+
+        // Legacy PFN path: queue_ready remains false, but PFN must still make queue usable.
+        write_u32(&mut dev, REG_QUEUE_SEL, 0);
+        write_u32(&mut dev, REG_QUEUE_NUM_LEGACY, QUEUE_RING_MAX as u32);
+        write_u32(&mut dev, REG_QUEUE_PFN, (queue_base >> 12) as u32);
+
+        write_u32(&mut dev, REG_QUEUE_NOTIFY_LEGACY, 0);
+        assert!(dev.has_pending_descriptor_notify());
+
+        dev.process_pending_descriptor_notify(&mut guest).unwrap();
+
+        assert_eq!(guest.read_u8_abs(data_addr), 0xDE);
+        assert_eq!(guest.read_u8_abs(data_addr + 1), 0xAD);
+        assert_eq!(guest.read_u8_abs(data_addr + 2), 0xBE);
+        assert_eq!(guest.read_u8_abs(data_addr + 3), 0xEF);
+        assert_eq!(guest.read_u8_abs(status_addr), VIRTIO_BLK_S_OK);
+
+        assert_eq!(read_u32(&dev, REG_QUEUE_USED_IDX), 1);
+        assert_eq!(dev.descriptor_not_ready_count(), 0);
+        assert_eq!(dev.descriptor_success_count(), 1);
     }
 
     #[test]

@@ -52,12 +52,18 @@ pub struct Plic {
     priority: [u32; MAX_SOURCES],
     /// Pending interrupt bits.
     pending: [u32; 32], // 1024 bits = 32 words
-    /// Enable bits for each hart.
-    enable: [[u32; 32]; MAX_HARTS],
-    /// Priority threshold for each hart.
-    threshold: [u32; MAX_HARTS],
-    /// Claimed interrupt ID for each hart (during claim process).
-    claimed: [u32; MAX_HARTS],
+    /// Machine-mode enable bits for each hart.
+    enable_m: [[u32; 32]; MAX_HARTS],
+    /// Supervisor-mode enable bits for each hart.
+    enable_s: [[u32; 32]; MAX_HARTS],
+    /// Machine-mode priority threshold for each hart.
+    threshold_m: [u32; MAX_HARTS],
+    /// Supervisor-mode priority threshold for each hart.
+    threshold_s: [u32; MAX_HARTS],
+    /// Claimed interrupt ID for each hart in machine context.
+    claimed_m: [u32; MAX_HARTS],
+    /// Claimed interrupt ID for each hart in supervisor context.
+    claimed_s: [u32; MAX_HARTS],
     /// Base address.
     base: Addr,
 }
@@ -74,9 +80,12 @@ impl Plic {
         Self {
             priority: [0; MAX_SOURCES],
             pending: [0; 32],
-            enable: [[0; 32]; MAX_HARTS],
-            threshold: [0; MAX_HARTS],
-            claimed: [0; MAX_HARTS],
+            enable_m: [[0; 32]; MAX_HARTS],
+            enable_s: [[0; 32]; MAX_HARTS],
+            threshold_m: [0; MAX_HARTS],
+            threshold_s: [0; MAX_HARTS],
+            claimed_m: [0; MAX_HARTS],
+            claimed_s: [0; MAX_HARTS],
             base: Addr::new(PLIC_BASE),
         }
     }
@@ -142,23 +151,57 @@ impl Plic {
 
     /// Enable/disable an interrupt source for a hart.
     pub fn set_enable(&mut self, hart: usize, source: usize, enabled: bool) {
+        self.set_enable_machine(hart, source, enabled);
+    }
+
+    /// Enable/disable an interrupt source for a hart in machine context.
+    pub fn set_enable_machine(&mut self, hart: usize, source: usize, enabled: bool) {
         if hart < MAX_HARTS && source > 0 && source < MAX_SOURCES {
             let word = source / 32;
             let bit = source % 32;
             if enabled {
-                self.enable[hart][word] |= 1 << bit;
+                self.enable_m[hart][word] |= 1 << bit;
             } else {
-                self.enable[hart][word] &= !(1 << bit);
+                self.enable_m[hart][word] &= !(1 << bit);
+            }
+        }
+    }
+
+    /// Enable/disable an interrupt source for a hart in supervisor context.
+    pub fn set_enable_supervisor(&mut self, hart: usize, source: usize, enabled: bool) {
+        if hart < MAX_HARTS && source > 0 && source < MAX_SOURCES {
+            let word = source / 32;
+            let bit = source % 32;
+            if enabled {
+                self.enable_s[hart][word] |= 1 << bit;
+            } else {
+                self.enable_s[hart][word] &= !(1 << bit);
             }
         }
     }
 
     /// Check if an interrupt source is enabled for a hart.
     pub fn is_enabled(&self, hart: usize, source: usize) -> bool {
+        self.is_enabled_machine(hart, source)
+    }
+
+    /// Check if an interrupt source is enabled for a hart in machine context.
+    pub fn is_enabled_machine(&self, hart: usize, source: usize) -> bool {
         if hart < MAX_HARTS && source > 0 && source < MAX_SOURCES {
             let word = source / 32;
             let bit = source % 32;
-            (self.enable[hart][word] & (1 << bit)) != 0
+            (self.enable_m[hart][word] & (1 << bit)) != 0
+        } else {
+            false
+        }
+    }
+
+    /// Check if an interrupt source is enabled for a hart in supervisor context.
+    pub fn is_enabled_supervisor(&self, hart: usize, source: usize) -> bool {
+        if hart < MAX_HARTS && source > 0 && source < MAX_SOURCES {
+            let word = source / 32;
+            let bit = source % 32;
+            (self.enable_s[hart][word] & (1 << bit)) != 0
         } else {
             false
         }
@@ -166,15 +209,41 @@ impl Plic {
 
     /// Set priority threshold for a hart.
     pub fn set_threshold(&mut self, hart: usize, threshold: u32) {
+        self.set_threshold_machine(hart, threshold);
+    }
+
+    /// Set priority threshold for a hart in machine context.
+    pub fn set_threshold_machine(&mut self, hart: usize, threshold: u32) {
         if hart < MAX_HARTS {
-            self.threshold[hart] = threshold & 0x7;
+            self.threshold_m[hart] = threshold & 0x7;
+        }
+    }
+
+    /// Set priority threshold for a hart in supervisor context.
+    pub fn set_threshold_supervisor(&mut self, hart: usize, threshold: u32) {
+        if hart < MAX_HARTS {
+            self.threshold_s[hart] = threshold & 0x7;
         }
     }
 
     /// Get priority threshold for a hart.
     pub fn get_threshold(&self, hart: usize) -> u32 {
+        self.get_threshold_machine(hart)
+    }
+
+    /// Get priority threshold for a hart in machine context.
+    pub fn get_threshold_machine(&self, hart: usize) -> u32 {
         if hart < MAX_HARTS {
-            self.threshold[hart]
+            self.threshold_m[hart]
+        } else {
+            0
+        }
+    }
+
+    /// Get priority threshold for a hart in supervisor context.
+    pub fn get_threshold_supervisor(&self, hart: usize) -> u32 {
+        if hart < MAX_HARTS {
+            self.threshold_s[hart]
         } else {
             0
         }
@@ -184,46 +253,90 @@ impl Plic {
     ///
     /// Returns true if MEIP should be asserted.
     pub fn has_pending_interrupt(&self, hart: usize) -> bool {
-        if hart >= MAX_HARTS {
-            return false;
-        }
-
-        for source in 1..MAX_SOURCES {
-            if self.is_pending(source) && self.is_enabled(hart, source) {
-                let priority = self.get_priority(source);
-                if priority > self.threshold[hart] {
-                    return true;
-                }
-            }
-        }
-        false
+        self.has_pending_interrupt_machine(hart)
     }
 
-    /// Claim the highest priority pending interrupt.
-    ///
-    /// Returns the interrupt source ID, or 0 if none.
-    pub fn claim(&mut self, hart: usize) -> u32 {
+    /// Check if there's a pending enabled interrupt above machine threshold.
+    pub fn has_pending_interrupt_machine(&self, hart: usize) -> bool {
+        self.best_pending_source(hart, false) != 0
+    }
+
+    /// Check if there's a pending enabled interrupt above supervisor threshold.
+    pub fn has_pending_interrupt_supervisor(&self, hart: usize) -> bool {
+        self.best_pending_source(hart, true) != 0
+    }
+
+    fn best_pending_source(&self, hart: usize, supervisor: bool) -> usize {
         if hart >= MAX_HARTS {
             return 0;
         }
 
-        let mut best_source = 0;
-        let mut best_priority = 0;
+        let threshold = if supervisor {
+            self.threshold_s[hart]
+        } else {
+            self.threshold_m[hart]
+        };
 
-        for source in 1..MAX_SOURCES {
-            if self.is_pending(source) && self.is_enabled(hart, source) {
+        let mut best_source = 0usize;
+        let mut best_priority = 0u32;
+
+        for (word_idx, &pending_word) in self.pending.iter().enumerate() {
+            if pending_word == 0 {
+                continue;
+            }
+
+            let mut bits = pending_word;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+
+                let source = word_idx * 32 + bit;
+                if source == 0 || source >= MAX_SOURCES {
+                    continue;
+                }
+
+                let enabled = if supervisor {
+                    self.is_enabled_supervisor(hart, source)
+                } else {
+                    self.is_enabled_machine(hart, source)
+                };
+
+                if !enabled {
+                    continue;
+                }
+
                 let priority = self.get_priority(source);
-                if priority > self.threshold[hart] && priority > best_priority {
+                if priority > threshold && (priority > best_priority || best_source == 0) {
                     best_priority = priority;
                     best_source = source;
                 }
             }
         }
 
-        if best_source > 0 {
-            // Clear pending bit when claimed
+        best_source
+    }
+
+    /// Claim the highest priority pending interrupt.
+    ///
+    /// Returns the interrupt source ID, or 0 if none.
+    pub fn claim(&mut self, hart: usize) -> u32 {
+        let best_source = self.best_pending_source(hart, false);
+
+        if best_source > 0 && hart < MAX_HARTS {
             self.clear_pending(best_source);
-            self.claimed[hart] = best_source as u32;
+            self.claimed_m[hart] = best_source as u32;
+        }
+
+        best_source as u32
+    }
+
+    /// Claim in supervisor context.
+    pub fn claim_supervisor(&mut self, hart: usize) -> u32 {
+        let best_source = self.best_pending_source(hart, true);
+
+        if best_source > 0 && hart < MAX_HARTS {
+            self.clear_pending(best_source);
+            self.claimed_s[hart] = best_source as u32;
         }
 
         best_source as u32
@@ -234,10 +347,20 @@ impl Plic {
     /// This should be called after handling the interrupt.
     pub fn complete(&mut self, hart: usize, source: u32) {
         if hart < MAX_HARTS && source > 0 && (source as usize) < MAX_SOURCES {
-            // Signal completion - in real PLIC this allows the same interrupt to be re-raised
-            if self.claimed[hart] == source {
-                self.claimed[hart] = 0;
+            if self.claimed_m[hart] == source {
+                self.claimed_m[hart] = 0;
             }
+            self.clear_pending(source as usize);
+        }
+    }
+
+    /// Complete an interrupt in supervisor context.
+    pub fn complete_supervisor(&mut self, hart: usize, source: u32) {
+        if hart < MAX_HARTS && source > 0 && (source as usize) < MAX_SOURCES {
+            if self.claimed_s[hart] == source {
+                self.claimed_s[hart] = 0;
+            }
+            self.clear_pending(source as usize);
         }
     }
 
@@ -261,24 +384,54 @@ impl Plic {
             }
         }
 
-        // Enable registers for hart 0
-        if (ENABLE_BASE..ENABLE_BASE + 0x80).contains(&offset) {
-            let word = ((offset - ENABLE_BASE) / 4) as usize;
-            if word < 32 {
-                return Ok(self.enable[0][word]);
+        // Enable registers for each hart (machine + supervisor windows)
+        for hart in 0..MAX_HARTS {
+            let hart_base = ENABLE_BASE + (hart as u32) * 0x100;
+            let m_enable_base = hart_base;
+            let s_enable_base = hart_base + 0x80;
+
+            if (m_enable_base..m_enable_base + 0x80).contains(&offset) {
+                let word = ((offset - m_enable_base) / 4) as usize;
+                if word < 32 {
+                    return Ok(self.enable_m[hart][word]);
+                }
+            }
+
+            if (s_enable_base..s_enable_base + 0x80).contains(&offset) {
+                let word = ((offset - s_enable_base) / 4) as usize;
+                if word < 32 {
+                    return Ok(self.enable_s[hart][word]);
+                }
             }
         }
 
-        // Context registers for hart 0
-        if (CONTEXT_BASE..CONTEXT_BASE + 0x1000).contains(&offset) {
-            let ctx_offset = offset - CONTEXT_BASE;
-            match ctx_offset {
-                THRESHOLD_OFFSET => return Ok(self.threshold[0]),
-                CLAIM_OFFSET => {
-                    // Reading claim returns the claimed interrupt
-                    return Ok(self.claimed[0]);
+        // Context registers for each hart (machine + supervisor contexts)
+        for hart in 0..MAX_HARTS {
+            let m_context_base = CONTEXT_BASE + (hart as u32) * 0x2000;
+            let s_context_base = m_context_base + 0x1000;
+
+            if (m_context_base..m_context_base + 0x1000).contains(&offset) {
+                let ctx_offset = offset - m_context_base;
+                match ctx_offset {
+                    THRESHOLD_OFFSET => return Ok(self.threshold_m[hart]),
+                    CLAIM_OFFSET => {
+                        // Claim register read in immutable path: peek current best pending source.
+                        return Ok(self.best_pending_source(hart, false) as u32);
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+
+            if (s_context_base..s_context_base + 0x1000).contains(&offset) {
+                let ctx_offset = offset - s_context_base;
+                match ctx_offset {
+                    THRESHOLD_OFFSET => return Ok(self.threshold_s[hart]),
+                    CLAIM_OFFSET => {
+                        // Claim register read in immutable path: peek current best pending source.
+                        return Ok(self.best_pending_source(hart, true) as u32);
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -300,29 +453,62 @@ impl Plic {
 
         // Pending registers - read-only, ignore writes
 
-        // Enable registers for hart 0
-        if (ENABLE_BASE..ENABLE_BASE + 0x80).contains(&offset) {
-            let word = ((offset - ENABLE_BASE) / 4) as usize;
-            if word < 32 {
-                self.enable[0][word] = value;
-                return Ok(());
+        // Enable registers for each hart (machine + supervisor windows)
+        for hart in 0..MAX_HARTS {
+            let hart_base = ENABLE_BASE + (hart as u32) * 0x100;
+            let m_enable_base = hart_base;
+            let s_enable_base = hart_base + 0x80;
+
+            if (m_enable_base..m_enable_base + 0x80).contains(&offset) {
+                let word = ((offset - m_enable_base) / 4) as usize;
+                if word < 32 {
+                    self.enable_m[hart][word] = value;
+                    return Ok(());
+                }
+            }
+
+            if (s_enable_base..s_enable_base + 0x80).contains(&offset) {
+                let word = ((offset - s_enable_base) / 4) as usize;
+                if word < 32 {
+                    self.enable_s[hart][word] = value;
+                    return Ok(());
+                }
             }
         }
 
-        // Context registers for hart 0
-        if (CONTEXT_BASE..CONTEXT_BASE + 0x1000).contains(&offset) {
-            let ctx_offset = offset - CONTEXT_BASE;
-            match ctx_offset {
-                THRESHOLD_OFFSET => {
-                    self.threshold[0] = value & 0x7;
-                    return Ok(());
+        // Context registers for each hart (machine + supervisor contexts)
+        for hart in 0..MAX_HARTS {
+            let m_context_base = CONTEXT_BASE + (hart as u32) * 0x2000;
+            let s_context_base = m_context_base + 0x1000;
+
+            if (m_context_base..m_context_base + 0x1000).contains(&offset) {
+                let ctx_offset = offset - m_context_base;
+                match ctx_offset {
+                    THRESHOLD_OFFSET => {
+                        self.threshold_m[hart] = value & 0x7;
+                        return Ok(());
+                    }
+                    CLAIM_OFFSET => {
+                        self.complete(hart, value);
+                        return Ok(());
+                    }
+                    _ => {}
                 }
-                CLAIM_OFFSET => {
-                    // Writing to claim performs complete
-                    self.complete(0, value);
-                    return Ok(());
+            }
+
+            if (s_context_base..s_context_base + 0x1000).contains(&offset) {
+                let ctx_offset = offset - s_context_base;
+                match ctx_offset {
+                    THRESHOLD_OFFSET => {
+                        self.threshold_s[hart] = value & 0x7;
+                        return Ok(());
+                    }
+                    CLAIM_OFFSET => {
+                        self.complete_supervisor(hart, value);
+                        return Ok(());
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -347,7 +533,8 @@ impl Memory for Plic {
 
     fn read_word(&self, addr: Addr) -> Result<Word> {
         let offset = addr.raw() - PLIC_BASE;
-        self.read_register(Addr::new(PLIC_BASE + offset)).map(Word::new)
+        self.read_register(Addr::new(PLIC_BASE + offset))
+            .map(Word::new)
     }
 
     fn write_byte(&mut self, addr: Addr, value: Byte) -> Result<()> {
@@ -412,7 +599,7 @@ impl Peripheral for Plic {
     }
 
     fn has_interrupt(&self) -> bool {
-        self.has_pending_interrupt(0)
+        self.has_pending_interrupt_machine(0) || self.has_pending_interrupt_supervisor(0)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -536,7 +723,36 @@ mod tests {
         plic.complete(0, claimed);
 
         // Claimed should be reset
-        assert_eq!(plic.claimed[0], 0);
+        assert_eq!(plic.claimed_m[0], 0);
+    }
+
+    #[test]
+    fn test_plic_supervisor_context_windows() {
+        let mut plic = Plic::new();
+
+        // Configure source 1 with priority and pending state.
+        plic.set_priority(1, 1);
+        plic.set_pending(1);
+
+        // S-mode enable window (PLIC_SENABLE for hart0 is 0x2080).
+        plic.write_word(Addr::new(PLIC_BASE + 0x2080), Word::new(1 << 1))
+            .unwrap();
+
+        // S-mode threshold window (PLIC_SPRIORITY for hart0 is 0x201000).
+        plic.write_word(Addr::new(PLIC_BASE + 0x201000), Word::new(0))
+            .unwrap();
+
+        // S-mode claim window (PLIC_SCLAIM for hart0 is 0x201004).
+        let claim = plic
+            .read_word(Addr::new(PLIC_BASE + 0x201004))
+            .unwrap()
+            .raw();
+        assert_eq!(claim, 1);
+
+        // Complete should clear pending in this model.
+        plic.write_word(Addr::new(PLIC_BASE + 0x201004), Word::new(claim))
+            .unwrap();
+        assert!(!plic.is_pending(1));
     }
 
     #[test]
@@ -549,7 +765,9 @@ mod tests {
         assert_eq!(plic.get_priority(1), 5);
 
         // Read back
-        let val = plic.read_word(Addr::new(PLIC_BASE + PRIORITY_BASE + 4)).unwrap();
+        let val = plic
+            .read_word(Addr::new(PLIC_BASE + PRIORITY_BASE + 4))
+            .unwrap();
         assert_eq!(val.raw(), 5);
     }
 }

@@ -386,7 +386,13 @@ impl CsrFile {
                 Ok(())
             }
             csr_addr::SIP => {
-                self.sip.write(value);
+                if privilege == PrivilegeLevel::Machine {
+                    // Machine mode may set/clear SSIP (used by xv6 timervec forwarding).
+                    self.sip.set_ssip((value & ip_bits::SSIP) != 0);
+                } else {
+                    // Supervisor mode can clear SSIP via CSR write semantics.
+                    self.sip.write(value);
+                }
                 Ok(())
             }
 
@@ -655,5 +661,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(old, 0);
+    }
+
+    #[test]
+    fn test_sip_machine_write_can_set_ssip() {
+        let mut csr_file = CsrFile::new();
+
+        csr_file
+            .write(csr_addr::SIP, ip_bits::SSIP, PrivilegeLevel::Machine)
+            .unwrap();
+        assert!(csr_file.sip.ssip());
+
+        csr_file
+            .write(csr_addr::SIP, 0, PrivilegeLevel::Supervisor)
+            .unwrap();
+        assert!(!csr_file.sip.ssip());
     }
 }

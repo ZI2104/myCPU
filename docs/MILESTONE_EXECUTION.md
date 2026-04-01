@@ -244,3 +244,104 @@
     1) 增加轻量级运行期进度可观测（每 N 指令输出 PC/模式/中断状态）；
     2) 继续以 release 模式扩大窗口，确认进入 `init`/shell 的拐点；
     3) 如仍缓慢，优先优化热点（内存批量写/zero-fill 路径）而非盲目扩步。
+
+### 2026-04-01 Phase-2-08（机器级中断门控语义修复）
+
+- 完成内容：
+  - 修复单周期与流水线 CPU 的中断门控逻辑：
+    - 旧行为：无论当前特权级都要求 `mstatus.mie=1` 才接收 MIP 中断；
+    - 新行为：仅在当前处于 M 态时才由 `mstatus.mie` 门控；处于 S/U 态时机器级中断可被接收（与当前实现模型一致）。
+  - 新增回归测试覆盖该语义：
+    - `cpu::core::tests::test_machine_timer_interrupt_taken_in_supervisor_mode_when_mie_clear`
+    - `cpu::pipeline::tests::test_pipeline_machine_timer_interrupt_taken_in_supervisor_mode_when_mie_clear`
+  - 通过长窗口运行验证修复后无回归，启动链路继续向前推进。
+- 变更文件：
+  - `src/cpu/core.rs`
+  - `src/cpu/pipeline/mod.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `cargo run --release -- run --count 40000000 --heartbeat-every 10000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+  - `cargo run --release -- run --count 120000000 --heartbeat-every 20000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+  - `cargo run --release -- run --count 200000000 --heartbeat-every 40000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+- 验收结果：
+  - 通过：库回归 236/236。
+  - 长窗口运行稳定完成，无新增 panic；PC 从早期 `memset` 热点推进至 `push_off/mycpu` 路径（`0x80000cd4` 附近）。
+  - 200M 指令窗口稳定完成，最终 PC 推进至 `0x80002168`（`mycpu` 路径），无新增 panic。
+- 风险/未完成项：
+  - 当前心跳窗口仍未直接观察到稳定外设中断服务闭环（`meip` 常为 0，需结合磁盘 I/O场景持续验证）。
+  - 尚未达到 xv6 shell 可交互里程碑。
+- 上下文压缩（供下一步直接续做）：
+  - 中断门控语义已修复且有双执行模型单测兜底；
+  - 下一步优先在磁盘 I/O 场景验证 PLIC claim/complete 的端到端触发，并继续扩大窗口追踪 `init`/shell 拐点。
+
+### 2026-04-01 Phase-2-09（PLIC S态窗口 + SIP 转发语义补齐）
+
+- 完成内容：
+  - 补齐 PLIC 的 Supervisor 上下文寄存器窗口，兼容 xv6-rv32 访问路径：
+    - `PLIC_SENABLE(hart)` (`0x0c00_2080 + hart*0x100`)
+    - `PLIC_SPRIORITY(hart)` (`0x0c20_1000 + hart*0x2000`)
+    - `PLIC_SCLAIM(hart)` (`0x0c20_1004 + hart*0x2000`)
+  - 新增 PLIC 双上下文状态能力：Machine/Supervisor enable 与 threshold 独立维护，`Bus::get_plic_interrupt_status()` 同时返回 `(meip, seip)`。
+  - CPU（单周期/流水线）中断判定路径升级为：
+    1. 先判定 Machine pending（保持机器中断优先）；
+    2. 再在 S 态且 `sstatus.sie=1` 时判定 Supervisor pending。
+  - 修正 `SIP` 写入语义：M 态可置/清 `SSIP`（满足 xv6 `timervec` 通过 `csrw sip, ...` 转发软中断），S 态保持“清除 SSIP”语义。
+  - 新增回归测试：
+    - `interrupt::plic::tests::test_plic_supervisor_context_windows`
+    - `cpu::csr::tests::test_sip_machine_write_can_set_ssip`
+- 变更文件：
+  - `src/interrupt/plic.rs`
+  - `src/memory/bus.rs`
+  - `src/cpu/core.rs`
+  - `src/cpu/pipeline/mod.rs`
+  - `src/cpu/csr/mod.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `cargo test --test bringup_smoke`
+  - `cargo run --release -- run --count 120000000 --heartbeat-every 20000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+- 验收结果：
+  - 通过：库回归 238/238；bringup_smoke 3/3。
+  - 长窗口运行稳定完成（120M），无新增 panic。
+  - 心跳观测到 `sip=0x2` 在大窗口内持续出现，证明 `SSIP` 转发链路已生效；后段 `sie` 进入 `0x222`。
+- 风险/未完成项：
+  - 目前心跳中 `meip` 仍多为 0，尚未形成“可稳定复现的外设中断服务闭环”证据。
+  - 当前运行吞吐下降明显（约 0.37 MIPS 量级），需后续做中断扫描路径性能优化。
+  - 尚未达到 xv6 shell 可交互里程碑。
+- 上下文压缩（供下一步直接续做）：
+  - PLIC S 态窗口和 SIP 机器态置位语义已补齐，xv6 中断路径更接近真实行为；
+  - 下一步优先：在磁盘 I/O 场景抓取 `SCLAIM` 非 0 的证据，并按需增加轻量级 claim/complete 观测日志，继续推进到 shell。
+
+### 2026-04-01 Phase-2-10（PLIC 扫描性能优化 + 超长窗口验收）
+
+- 完成内容：
+  - 优化 `PLIC` pending 源扫描算法：从“每次全量遍历 1..1023 source”改为“仅遍历 pending 位图中置位 bit”（`trailing_zeros` + 位清零迭代）。
+  - 增强 heartbeat 可观测性：新增 `virtio_irq` / `uart_irq` 字段，直接显示外设 IRQ 线状态。
+  - 在优化后执行更长窗口验证（200M、600M、1.2B），用于判断是否进入磁盘 I/O 阶段。
+- 变更文件：
+  - `src/interrupt/plic.rs`
+  - `src/main.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `cargo run --release -- run --count 40000000 --heartbeat-every 10000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+  - `cargo run --release -- run --count 200000000 --heartbeat-every 40000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+  - `cargo run --release -- run --count 600000000 --heartbeat-every 100000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+  - `cargo run --release -- run --count 1200000000 --heartbeat-every 200000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
+- 验收结果：
+  - 通过：库回归 238/238。
+  - 吞吐显著回升：40M 窗口约 `6.30 MIPS`（此前同类窗口最低约 `0.37 MIPS`）。
+  - 1.2B 超长窗口稳定完成，无新增 panic；心跳显示 `sstatus.sie` 在部分窗口可置 1，但 `virtio_irq/uart_irq/meip` 均长期为 0。
+- 风险/未完成项：
+  - 目前尚无“外设 IRQ 线拉高 -> PLIC pending -> claim/complete”的运行时证据，说明仍未进入可观测的设备中断阶段或相关触发条件未满足。
+  - 尚未达到 xv6 shell 可交互里程碑。
+- 上下文压缩（供下一步直接续做）：
+  - 性能瓶颈已显著缓解，长窗口探索成本下降；
+  - 下一步应重点增加 `PLIC_SCLAIM` 读值与 VirtIO queue notify 完成路径的轻量日志，定位“为何外设 IRQ 线始终为 0”。

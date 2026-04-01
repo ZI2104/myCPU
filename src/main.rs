@@ -11,7 +11,7 @@ use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf_report::PerfReport;
 use mycpu::peripheral::{Lpu, Npu, Uart, VirtioBlock};
-use mycpu::types::Addr;
+use mycpu::types::{Addr, RegIdx};
 use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server;
 use std::io::Write;
@@ -250,6 +250,18 @@ fn run_program(
 }
 
 fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> anyhow::Result<u64> {
+    const XV6_CPU0_ADDR: u32 = 0x8001_34C4;
+    const XV6_PROC_BASE: u32 = 0x8001_36E4;
+    const XV6_TICKS_ADDR: u32 = 0x8002_4010;
+    const XV6_MSCRATCH0_ADDR: u32 = 0x8000_B000;
+    const XV6_TICKSLOCK_ADDR: u32 = 0x8001_66E4;
+    const XV6_NPROC: u32 = 64;
+    const XV6_PROC_STRIDE: u32 = 192;
+    const PROC_STATE_OFFSET: u32 = 12;
+    const CPU_PROC_OFFSET: u32 = 0;
+    const CPU_NOFF_OFFSET: u32 = 60;
+    const CPU_INTENA_OFFSET: u32 = 64;
+
     let mut count = 0u64;
     let mut last_hb_pc: Option<Addr> = None;
     let mut same_pc_streak = 0u64;
@@ -269,9 +281,170 @@ fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> an
             let global_mie = csr.mstatus.mie();
             let sip = csr.sip.read();
             let sie = csr.sie.read();
+            let scause = csr.scause.read();
+            let sepc = csr.sepc.read();
             let global_sie = csr.sstatus.sie();
             let (mtip, msip) = cpu.bus().get_clint_interrupt_status();
             let (meip, _seip) = cpu.bus().get_plic_interrupt_status();
+            let virtio_irq = cpu.bus().has_peripheral_interrupt("VirtIO-Block");
+            let uart_irq = cpu.bus().has_peripheral_interrupt("UART");
+            let (
+                virtio_cmds,
+                virtio_notifies,
+                virtio_desc,
+                virtio_irq_raised,
+                virtio_irq_ack,
+                virtio_desc_not_ready,
+                virtio_desc_no_avail,
+                virtio_desc_success,
+                virtio_desc_error,
+            ) = cpu
+                .bus()
+                .get_virtio_activity_counters()
+                .unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0));
+            let cpu0_proc = cpu
+                .bus()
+                .read_word(Addr::new(XV6_CPU0_ADDR + CPU_PROC_OFFSET))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let cpu0_noff = cpu
+                .bus()
+                .read_word(Addr::new(XV6_CPU0_ADDR + CPU_NOFF_OFFSET))
+                .ok()
+                .map(|w| w.raw() as i32)
+                .unwrap_or(-1);
+            let cpu0_intena = cpu
+                .bus()
+                .read_word(Addr::new(XV6_CPU0_ADDR + CPU_INTENA_OFFSET))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let ticks = cpu
+                .bus()
+                .read_word(Addr::new(XV6_TICKS_ADDR))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let clint_mtime = cpu
+                .bus()
+                .read_word(Addr::new(0x0200_BFF8))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let clint_mtimecmp = cpu
+                .bus()
+                .read_word(Addr::new(0x0200_4000))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let mscratch = cpu.csr().mscratch.get();
+            let scratch_interval = cpu
+                .bus()
+                .read_word(Addr::new(XV6_MSCRATCH0_ADDR + 20))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let tickslock_locked = cpu
+                .bus()
+                .read_word(Addr::new(XV6_TICKSLOCK_ADDR))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let tickslock_cpu = cpu
+                .bus()
+                .read_word(Addr::new(XV6_TICKSLOCK_ADDR + 8))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let proc0_state = cpu
+                .bus()
+                .read_word(Addr::new(XV6_PROC_BASE + PROC_STATE_OFFSET))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let proc0_pid = cpu
+                .bus()
+                .read_word(Addr::new(XV6_PROC_BASE + 32))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let proc0_ctx_ra = cpu
+                .bus()
+                .read_word(Addr::new(XV6_PROC_BASE + 52))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let proc0_state_cpu_view = cpu
+                .read_word(Addr::new(XV6_PROC_BASE + PROC_STATE_OFFSET))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(u32::MAX);
+            let plic_pending0 = cpu
+                .bus()
+                .read_word(Addr::new(0x0C00_1000))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let plic_senable0 = cpu
+                .bus()
+                .read_word(Addr::new(0x0C00_2080))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let plic_sthreshold0 = cpu
+                .bus()
+                .read_word(Addr::new(0x0C20_1000))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let plic_sclaim_peek = cpu
+                .bus()
+                .read_word(Addr::new(0x0C20_1004))
+                .ok()
+                .map(|w| w.raw())
+                .unwrap_or(0);
+            let mut proc_runnable = 0u32;
+            let mut proc_running = 0u32;
+            let mut proc_sleeping = 0u32;
+            let mut proc_runnable_locked = 0u32;
+            let mut first_runnable_idx: i32 = -1;
+            let mut first_runnable_lock_cpu = 0u32;
+            for i in 0..XV6_NPROC {
+                let proc_base = XV6_PROC_BASE + i * XV6_PROC_STRIDE;
+                let state_addr = XV6_PROC_BASE + i * XV6_PROC_STRIDE + PROC_STATE_OFFSET;
+                if let Ok(state) = cpu.bus().read_word(Addr::new(state_addr)) {
+                    match state.raw() {
+                        1 => proc_sleeping += 1,
+                        2 => {
+                            proc_runnable += 1;
+                            if first_runnable_idx < 0 {
+                                first_runnable_idx = i as i32;
+                            }
+                            let lock_word = cpu
+                                .bus()
+                                .read_word(Addr::new(proc_base))
+                                .ok()
+                                .map(|w| w.raw())
+                                .unwrap_or(0);
+                            if lock_word != 0 {
+                                proc_runnable_locked += 1;
+                            }
+                            if first_runnable_idx == i as i32 {
+                                first_runnable_lock_cpu = cpu
+                                    .bus()
+                                    .read_word(Addr::new(proc_base + 8))
+                                    .ok()
+                                    .map(|w| w.raw())
+                                    .unwrap_or(0);
+                            }
+                        }
+                        3 => proc_running += 1,
+                        _ => {}
+                    }
+                }
+            }
+            let tp = cpu.registers().read(RegIdx::new(4)).raw();
             let pc = cpu.pc();
 
             if Some(pc) == last_hb_pc {
@@ -282,19 +455,57 @@ fn run_with_heartbeat(cpu: &mut Cpu, max_count: u64, heartbeat_every: u64) -> an
             }
 
             println!(
-                "[hb] step={} pc={} priv={} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} mtip={} msip={} meip={} pc_streak={}",
+                "[hb] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} scause=0x{:08x} sepc=0x{:08x} mtip={} msip={} meip={} virtio_irq={} uart_irq={} v_cmd={} v_notify={} v_desc={} v_irq_raise={} v_irq_ack={} v_desc_not_ready={} v_desc_no_avail={} v_desc_ok={} v_desc_err={} plic_pending0=0x{:08x} plic_senable0=0x{:08x} plic_sth=0x{:08x} plic_sclaim={} cpu0_proc=0x{:08x} cpu0_noff={} cpu0_intena={} ticks={} mtime={} mtimecmp={} mscratch=0x{:08x} scratch5={} tickslock_locked={} tickslock_cpu=0x{:08x} p0_state={} p0_state_cpu={} p0_pid={} p0_ctx_ra=0x{:08x} p_run={} p_run_locked={} p_run0_idx={} p_run0_lock_cpu=0x{:08x} p_running={} p_sleep={} pc_streak={}",
                 count,
                 pc,
                 cpu.privilege(),
+                tp,
                 if global_mie { 1 } else { 0 },
                 if global_sie { 1 } else { 0 },
                 mip,
                 mie,
                 sip,
                 sie,
+                scause,
+                sepc,
                 if mtip { 1 } else { 0 },
                 if msip { 1 } else { 0 },
                 if meip { 1 } else { 0 },
+                if virtio_irq { 1 } else { 0 },
+                if uart_irq { 1 } else { 0 },
+                virtio_cmds,
+                virtio_notifies,
+                virtio_desc,
+                virtio_irq_raised,
+                virtio_irq_ack,
+                virtio_desc_not_ready,
+                virtio_desc_no_avail,
+                virtio_desc_success,
+                virtio_desc_error,
+                plic_pending0,
+                plic_senable0,
+                plic_sthreshold0,
+                plic_sclaim_peek,
+                cpu0_proc,
+                cpu0_noff,
+                cpu0_intena,
+                ticks,
+                clint_mtime,
+                clint_mtimecmp,
+                mscratch,
+                scratch_interval,
+                tickslock_locked,
+                tickslock_cpu,
+                proc0_state,
+                proc0_state_cpu_view,
+                proc0_pid,
+                proc0_ctx_ra,
+                proc_runnable,
+                proc_runnable_locked,
+                first_runnable_idx,
+                first_runnable_lock_cpu,
+                proc_running,
+                proc_sleeping,
                 same_pc_streak
             );
             std::io::stdout().flush().ok();
