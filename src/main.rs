@@ -2,7 +2,7 @@
 //!
 //! Command-line interface for the myCPU RISC-V simulator.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use mycpu::cpu::csr::CsrRegister;
 use mycpu::cpu::{Cpu, ExecutionModel};
 use mycpu::debug::GdbServer;
@@ -11,11 +11,13 @@ use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf_report::PerfReport;
 use mycpu::peripheral::{Lpu, Npu, Uart, VirtioBlock};
-use mycpu::types::{Addr, RegIdx};
+use mycpu::types::{Addr, RegIdx, Word};
 use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const VIRTIO_SECTOR_SIZE: usize = 512;
@@ -52,6 +54,10 @@ enum Commands {
         #[arg(long, default_value = "0")]
         heartbeat_every: u64,
 
+        /// Heartbeat output mode: compact (default) or diagnostic (verbose)
+        #[arg(long, value_enum, default_value = "compact")]
+        heartbeat_mode: HeartbeatMode,
+
         /// Enable verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -79,6 +85,34 @@ enum Commands {
         /// Inject one UART byte every N instructions
         #[arg(long, default_value = "20000")]
         uart_inject_every: u64,
+
+        /// UART injection trigger mode: by instruction step or shell prompt output
+        #[arg(long, value_enum, default_value = "step")]
+        uart_inject_trigger: UartInjectTrigger,
+
+        /// Enable Linux boot context injection (hartid/dtb/bootargs)
+        #[arg(long, default_value_t = false)]
+        linux_boot: bool,
+
+        /// Linux boot hartid (written to a0)
+        #[arg(long, default_value = "0")]
+        linux_hartid: u32,
+
+        /// Optional Linux DTB blob path (loaded to guest memory; address written to a1)
+        #[arg(long)]
+        linux_dtb: Option<PathBuf>,
+
+        /// Guest memory address to place Linux DTB blob
+        #[arg(long, default_value = "0x87f00000")]
+        linux_dtb_addr: String,
+
+        /// Optional Linux kernel bootargs string (NUL-terminated, written to guest memory)
+        #[arg(long)]
+        linux_bootargs: Option<String>,
+
+        /// Guest memory address to place Linux bootargs string
+        #[arg(long, default_value = "0x87ff0000")]
+        linux_bootargs_addr: String,
     },
 
     /// Start GDB debug server
@@ -136,6 +170,18 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum HeartbeatMode {
+    Compact,
+    Diagnostic,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum UartInjectTrigger {
+    Step,
+    Prompt,
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -145,6 +191,7 @@ fn main() -> anyhow::Result<()> {
             pc,
             count,
             heartbeat_every,
+            heartbeat_mode,
             verbose,
             perf_report,
             file,
@@ -152,11 +199,19 @@ fn main() -> anyhow::Result<()> {
             uart_script,
             uart_inject_at,
             uart_inject_every,
+            uart_inject_trigger,
+            linux_boot,
+            linux_hartid,
+            linux_dtb,
+            linux_dtb_addr,
+            linux_bootargs,
+            linux_bootargs_addr,
         } => run_program(
             memory,
             &pc,
             count,
             heartbeat_every,
+            heartbeat_mode,
             verbose,
             perf_report,
             file,
@@ -164,6 +219,13 @@ fn main() -> anyhow::Result<()> {
             uart_script,
             uart_inject_at,
             uart_inject_every,
+            uart_inject_trigger,
+            linux_boot,
+            linux_hartid,
+            linux_dtb,
+            &linux_dtb_addr,
+            linux_bootargs,
+            &linux_bootargs_addr,
         ),
         Commands::Debug {
             port,
@@ -190,6 +252,7 @@ fn run_program(
     pc_str: &str,
     max_count: u64,
     heartbeat_every: u64,
+    heartbeat_mode: HeartbeatMode,
     verbose: bool,
     show_perf_report: bool,
     file: PathBuf,
@@ -197,20 +260,38 @@ fn run_program(
     uart_script: Option<String>,
     uart_inject_at: u64,
     uart_inject_every: u64,
+    uart_inject_trigger: UartInjectTrigger,
+    linux_boot: bool,
+    linux_hartid: u32,
+    linux_dtb: Option<PathBuf>,
+    linux_dtb_addr_str: &str,
+    linux_bootargs: Option<String>,
+    linux_bootargs_addr_str: &str,
 ) -> anyhow::Result<()> {
     init_logger(verbose);
 
     let requested_pc = parse_hex_address(pc_str)?;
     let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
+    let uart_prompt_ready = Arc::new(AtomicBool::new(false));
 
     // Attach UART for output
-    attach_stdout_uart(&mut bus);
+    attach_stdout_uart(&mut bus, Some(Arc::clone(&uart_prompt_ready)));
 
     let file_entry = load_file(&mut bus, &file, requested_pc)?;
     let start_pc = file_entry.unwrap_or(requested_pc);
     bus.print_memory_map();
 
     let mut cpu = Cpu::with_pc(bus, start_pc);
+
+    apply_linux_boot_context(
+        &mut cpu,
+        linux_boot,
+        linux_hartid,
+        linux_dtb,
+        linux_dtb_addr_str,
+        linux_bootargs,
+        linux_bootargs_addr_str,
+    )?;
 
     println!("\nmyCPU RISC-V Simulator v{}", mycpu::VERSION);
     println!("Starting PC: {}", start_pc);
@@ -232,7 +313,10 @@ fn run_program(
     println!("\n--- Starting execution ---\n");
 
     if heartbeat_every > 0 {
-        println!("Heartbeat enabled: every {} instructions", heartbeat_every);
+        println!(
+            "Heartbeat enabled: every {} instructions (mode={:?})",
+            heartbeat_every, heartbeat_mode
+        );
     }
 
     let mut uart_injector = uart_script
@@ -241,14 +325,17 @@ fn run_program(
                 parse_escaped_uart_script(&script),
                 uart_inject_at,
                 uart_inject_every.max(1),
+                uart_inject_trigger,
+                Arc::clone(&uart_prompt_ready),
             )
         })
         .filter(|injector| !injector.is_empty());
 
     if let Some(injector) = uart_injector.as_ref() {
         println!(
-            "UART script injection enabled: {} bytes, start_at={}, every={} steps",
+            "UART script injection enabled: {} bytes, trigger={:?}, start_at={}, every={} steps",
             injector.total_len(),
+            injector.trigger,
             injector.inject_at,
             injector.inject_every
         );
@@ -258,7 +345,13 @@ fn run_program(
     let instructions_executed = if heartbeat_every == 0 && uart_injector.is_none() {
         cpu.run(max_count)?
     } else {
-        run_with_heartbeat(&mut cpu, max_count, heartbeat_every, uart_injector.as_mut())?
+        run_with_heartbeat(
+            &mut cpu,
+            max_count,
+            heartbeat_every,
+            heartbeat_mode,
+            uart_injector.as_mut(),
+        )?
     };
     let elapsed = start_time.elapsed();
 
@@ -301,17 +394,51 @@ fn run_program(
 struct UartInjector {
     bytes: Vec<u8>,
     next_index: usize,
+    injected_total: usize,
     inject_at: u64,
     inject_every: u64,
+    trigger: UartInjectTrigger,
+    prompt_ready: Arc<AtomicBool>,
+    prompt_chunks: Vec<Vec<u8>>,
+    prompt_chunk_index: usize,
+    prompt_chunk_offset: usize,
+    prompt_wait_for_prompt: bool,
+}
+
+#[derive(Debug, Default)]
+struct PromptDetectorState {
+    last_was_dollar: bool,
+}
+
+impl PromptDetectorState {
+    fn observe_byte(&mut self, byte: u8) -> bool {
+        let detected = self.last_was_dollar && byte == b' ';
+        self.last_was_dollar = byte == b'$';
+        detected
+    }
 }
 
 impl UartInjector {
-    fn new(bytes: Vec<u8>, inject_at: u64, inject_every: u64) -> Self {
+    fn new(
+        bytes: Vec<u8>,
+        inject_at: u64,
+        inject_every: u64,
+        trigger: UartInjectTrigger,
+        prompt_ready: Arc<AtomicBool>,
+    ) -> Self {
+        let prompt_chunks = split_prompt_chunks(&bytes);
         Self {
             bytes,
             next_index: 0,
+            injected_total: 0,
             inject_at,
             inject_every,
+            trigger,
+            prompt_ready,
+            prompt_chunks,
+            prompt_chunk_index: 0,
+            prompt_chunk_offset: 0,
+            prompt_wait_for_prompt: true,
         }
     }
 
@@ -320,7 +447,7 @@ impl UartInjector {
     }
 
     fn injected_len(&self) -> usize {
-        self.next_index
+        self.injected_total
     }
 
     fn total_len(&self) -> usize {
@@ -328,19 +455,135 @@ impl UartInjector {
     }
 
     fn maybe_inject(&mut self, step: u64, cpu: &mut Cpu) {
-        if self.next_index >= self.bytes.len() || step < self.inject_at {
-            return;
-        }
+        match self.trigger {
+            UartInjectTrigger::Step => {
+                if self.next_index >= self.bytes.len() {
+                    return;
+                }
+                if step < self.inject_at {
+                    return;
+                }
+                if (step - self.inject_at) % self.inject_every != 0 {
+                    return;
+                }
 
-        if (step - self.inject_at) % self.inject_every != 0 {
-            return;
-        }
+                let byte = self.bytes[self.next_index];
+                if cpu.bus_mut().inject_uart_byte(byte) {
+                    self.next_index += 1;
+                    self.injected_total += 1;
+                }
+            }
+            UartInjectTrigger::Prompt => {
+                if self.prompt_chunk_index >= self.prompt_chunks.len() {
+                    return;
+                }
 
-        let byte = self.bytes[self.next_index];
-        if cpu.bus_mut().inject_uart_byte(byte) {
-            self.next_index += 1;
+                if self.prompt_wait_for_prompt {
+                    if !self.prompt_ready.swap(false, Ordering::AcqRel) {
+                        return;
+                    }
+                    self.prompt_wait_for_prompt = false;
+                }
+
+                if self.inject_every > 1 && step % self.inject_every != 0 {
+                    return;
+                }
+
+                let byte = self.prompt_chunks[self.prompt_chunk_index][self.prompt_chunk_offset];
+                if cpu.bus_mut().inject_uart_byte(byte) {
+                    self.prompt_chunk_offset += 1;
+                    self.injected_total += 1;
+                    if self.prompt_chunk_offset >= self.prompt_chunks[self.prompt_chunk_index].len()
+                    {
+                        self.prompt_chunk_index += 1;
+                        self.prompt_chunk_offset = 0;
+                        self.prompt_wait_for_prompt = true;
+                    }
+                }
+            }
         }
     }
+}
+
+fn split_prompt_chunks(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+
+    for (idx, byte) in bytes.iter().enumerate() {
+        if *byte == b'\n' {
+            chunks.push(bytes[start..=idx].to_vec());
+            start = idx + 1;
+        }
+    }
+
+    if start < bytes.len() {
+        chunks.push(bytes[start..].to_vec());
+    }
+
+    chunks
+        .into_iter()
+        .filter(|chunk| !chunk.is_empty())
+        .collect()
+}
+
+fn apply_linux_boot_context(
+    cpu: &mut Cpu,
+    linux_boot: bool,
+    linux_hartid: u32,
+    linux_dtb: Option<PathBuf>,
+    linux_dtb_addr_str: &str,
+    linux_bootargs: Option<String>,
+    linux_bootargs_addr_str: &str,
+) -> anyhow::Result<()> {
+    if !linux_boot {
+        return Ok(());
+    }
+
+    let dtb_addr = parse_hex_address(linux_dtb_addr_str)?;
+    let bootargs_addr = parse_hex_address(linux_bootargs_addr_str)?;
+
+    let dtb_ptr = if let Some(path) = linux_dtb {
+        let dtb = std::fs::read(&path)?;
+        if dtb.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Linux DTB file is empty: {}",
+                path.display()
+            ));
+        }
+        cpu.bus_mut().write_bytes(dtb_addr, &dtb)?;
+        println!(
+            "Linux boot: loaded DTB {} ({} bytes) at {}",
+            path.display(),
+            dtb.len(),
+            dtb_addr
+        );
+        dtb_addr.raw()
+    } else {
+        0
+    };
+
+    if let Some(bootargs) = linux_bootargs {
+        let mut bootargs_bytes = bootargs.into_bytes();
+        bootargs_bytes.push(0);
+        cpu.bus_mut().write_bytes(bootargs_addr, &bootargs_bytes)?;
+        println!(
+            "Linux boot: wrote bootargs ({} bytes incl. NUL) at {}",
+            bootargs_bytes.len(),
+            bootargs_addr
+        );
+    }
+
+    cpu.registers_mut()
+        .write(RegIdx::new(10), Word::new(linux_hartid));
+    cpu.registers_mut()
+        .write(RegIdx::new(11), Word::new(dtb_ptr));
+
+    println!(
+        "Linux boot context: a0(hartid)={}, a1(dtb)=0x{:08x}",
+        linux_hartid, dtb_ptr
+    );
+
+    Ok(())
 }
 
 fn parse_escaped_uart_script(script: &str) -> Vec<u8> {
@@ -376,6 +619,7 @@ fn run_with_heartbeat(
     cpu: &mut Cpu,
     max_count: u64,
     heartbeat_every: u64,
+    heartbeat_mode: HeartbeatMode,
     mut uart_injector: Option<&mut UartInjector>,
 ) -> anyhow::Result<u64> {
     const XV6_CPU0_ADDR: u32 = 0x8001_34C4;
@@ -407,6 +651,15 @@ fn run_with_heartbeat(
         }
 
         if heartbeat_every > 0 && count % heartbeat_every == 0 {
+            let pc = cpu.pc();
+            if Some(pc) == last_hb_pc {
+                same_pc_streak += 1;
+            } else {
+                same_pc_streak = 0;
+                last_hb_pc = Some(pc);
+            }
+
+            let tp = cpu.registers().read(RegIdx::new(4)).raw();
             let csr = cpu.csr();
             let mip = csr.mip.read();
             let mie = csr.mie.read();
@@ -417,7 +670,7 @@ fn run_with_heartbeat(
             let sepc = csr.sepc.read();
             let global_sie = csr.sstatus.sie();
             let (mtip, msip) = cpu.bus().get_clint_interrupt_status();
-            let (meip, _seip) = cpu.bus().get_plic_interrupt_status();
+            let (meip, seip) = cpu.bus().get_plic_interrupt_status();
             let virtio_irq = cpu.bus().has_peripheral_interrupt("VirtIO-Block");
             let uart_irq = cpu.bus().has_peripheral_interrupt("UART");
             let (
@@ -434,6 +687,36 @@ fn run_with_heartbeat(
                 .bus()
                 .get_virtio_activity_counters()
                 .unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0));
+
+            if matches!(heartbeat_mode, HeartbeatMode::Compact) {
+                println!(
+                    "[hb-lite] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} scause=0x{:08x} sepc=0x{:08x} mtip={} msip={} meip={} seip={} virtio_irq={} uart_irq={} v_notify={} v_desc_ok={} pc_streak={}",
+                    count,
+                    pc,
+                    cpu.privilege(),
+                    tp,
+                    if global_mie { 1 } else { 0 },
+                    if global_sie { 1 } else { 0 },
+                    mip,
+                    mie,
+                    sip,
+                    sie,
+                    scause,
+                    sepc,
+                    if mtip { 1 } else { 0 },
+                    if msip { 1 } else { 0 },
+                    if meip { 1 } else { 0 },
+                    if seip { 1 } else { 0 },
+                    if virtio_irq { 1 } else { 0 },
+                    if uart_irq { 1 } else { 0 },
+                    virtio_notifies,
+                    virtio_desc_success,
+                    same_pc_streak
+                );
+                std::io::stdout().flush().ok();
+                continue;
+            }
+
             let cpu0_proc = cpu
                 .bus()
                 .read_word(Addr::new(XV6_CPU0_ADDR + CPU_PROC_OFFSET))
@@ -576,16 +859,6 @@ fn run_with_heartbeat(
                     }
                 }
             }
-            let tp = cpu.registers().read(RegIdx::new(4)).raw();
-            let pc = cpu.pc();
-
-            if Some(pc) == last_hb_pc {
-                same_pc_streak += 1;
-            } else {
-                same_pc_streak = 0;
-                last_hb_pc = Some(pc);
-            }
-
             println!(
                 "[hb] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} scause=0x{:08x} sepc=0x{:08x} mtip={} msip={} meip={} virtio_irq={} uart_irq={} v_cmd={} v_notify={} v_desc={} v_irq_raise={} v_irq_ack={} v_desc_not_ready={} v_desc_no_avail={} v_desc_ok={} v_desc_err={} plic_pending0=0x{:08x} plic_senable0=0x{:08x} plic_sth=0x{:08x} plic_sclaim={} cpu0_proc=0x{:08x} cpu0_noff={} cpu0_intena={} ticks={} mtime={} mtimecmp={} mscratch=0x{:08x} scratch5={} tickslock_locked={} tickslock_cpu=0x{:08x} p0_state={} p0_state_cpu={} p0_pid={} p0_ctx_ra=0x{:08x} p_run={} p_run_locked={} p_run0_idx={} p_run0_lock_cpu=0x{:08x} p_running={} p_sleep={} pc_streak={}",
                 count,
@@ -649,7 +922,7 @@ fn run_with_heartbeat(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_escaped_uart_script;
+    use super::{parse_escaped_uart_script, split_prompt_chunks, PromptDetectorState};
 
     #[test]
     fn test_parse_escaped_uart_script_common_sequences() {
@@ -661,6 +934,34 @@ mod tests {
     fn test_parse_escaped_uart_script_preserves_unknown_escape() {
         let parsed = parse_escaped_uart_script("a\\xb");
         assert_eq!(parsed, b"a\\xb");
+    }
+
+    #[test]
+    fn test_prompt_detector_state_detects_shell_prompt_sequence() {
+        let mut detector = PromptDetectorState::default();
+        assert!(!detector.observe_byte(b'x'));
+        assert!(!detector.observe_byte(b'$'));
+        assert!(detector.observe_byte(b' '));
+    }
+
+    #[test]
+    fn test_prompt_detector_state_ignores_non_prompt_sequence() {
+        let mut detector = PromptDetectorState::default();
+        assert!(!detector.observe_byte(b'$'));
+        assert!(!detector.observe_byte(b'\n'));
+        assert!(!detector.observe_byte(b' '));
+    }
+
+    #[test]
+    fn test_split_prompt_chunks_by_newline() {
+        let chunks = split_prompt_chunks(b"ls\necho OK\n");
+        assert_eq!(chunks, vec![b"ls\n".to_vec(), b"echo OK\n".to_vec()]);
+    }
+
+    #[test]
+    fn test_split_prompt_chunks_keeps_tail_without_newline() {
+        let chunks = split_prompt_chunks(b"echo tail");
+        assert_eq!(chunks, vec![b"echo tail".to_vec()]);
     }
 }
 
@@ -678,7 +979,7 @@ fn start_debug_server(
     let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
 
     // Attach UART for output
-    attach_stdout_uart(&mut bus);
+    attach_stdout_uart(&mut bus, None);
 
     let file_entry = load_file(&mut bus, &file, requested_pc)?;
     let start_pc = file_entry.unwrap_or(requested_pc);
@@ -761,10 +1062,22 @@ fn create_bus(memory_mb: usize, virtio_disk: Option<&PathBuf>) -> anyhow::Result
 }
 
 /// Attach UART that outputs to stdout
-fn attach_stdout_uart(bus: &mut Bus) {
+fn attach_stdout_uart(bus: &mut Bus, prompt_ready: Option<Arc<AtomicBool>>) {
     let mut uart = Uart::with_base(Addr::new(0x1000_0000));
-    uart.set_output_callback(Box::new(|byte| {
+    let prompt_state = Arc::new(Mutex::new(PromptDetectorState::default()));
+    let prompt_state_for_cb = Arc::clone(&prompt_state);
+    uart.set_output_callback(Box::new(move |byte| {
         print!("{}", byte as char);
+        if let Some(flag) = prompt_ready.as_ref() {
+            let detected = if let Ok(mut state) = prompt_state_for_cb.lock() {
+                state.observe_byte(byte)
+            } else {
+                false
+            };
+            if detected {
+                flag.store(true, Ordering::Release);
+            }
+        }
         std::io::stdout().flush().ok();
     }));
     bus.attach_peripheral(uart);
@@ -812,7 +1125,7 @@ fn start_visualize(
     let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
 
     // Attach UART for output
-    attach_stdout_uart(&mut bus);
+    attach_stdout_uart(&mut bus, None);
 
     if linux_fb_demo {
         if file.is_none() {

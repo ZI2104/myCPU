@@ -409,3 +409,200 @@
 - 上下文压缩（供下一步直接续做）：
   - 已具备非交互环境下的 shell 命令自动注入能力，可据此沉淀真正的 e2e 自动验收。
   - 下一步优先：新增独立 smoke 流程（脚本/测试）验证 `echo/ls` 并断言关键输出。
+
+### 2026-04-01 Phase-2-13（xv6 shell smoke 自动化脚本落地）
+
+- 完成内容：
+  - 新增独立脚本 `scripts/run_xv6_shell_smoke.ps1`，将“xv6 启动 + UART 命令注入 + 输出断言”固化为一键自动化流程。
+  - 脚本支持关键参数配置：`Count`、`HeartbeatEvery`、`MemoryMB`、`KernelPath`、`DiskPath`、`UartScript`、`UartInjectAt`、`UartInjectEvery`。
+  - 脚本执行后自动聚合 stdout/stderr 到日志文件，并对关键输出做正则断言：`init: starting sh`、`echo HI`、`HI`、`$`、`UART script injected:`。
+- 变更文件：
+  - `scripts/run_xv6_shell_smoke.ps1`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1`
+- 验收结果：
+  - 通过：脚本输出 `PASS`。
+  - 200M 指令窗口实跑关键日志包含：`init: starting sh`、`echo HI`、`HI`、`$`。
+  - 统计显示：`UART script injected: 8/8 bytes`。
+- 风险/未完成项：
+  - 当前为“基于指令步数”的注入策略，仍非“基于 shell 提示符事件”的自适应注入。
+  - 目前默认断言脚本命令为 `echo HI`，后续可扩展为 `ls`/`cat` 等更丰富交互回归矩阵。
+- 上下文压缩（供下一步直接续做）：
+  - xv6 命令级 smoke 已形成可复用自动化入口，后续可直接复用该脚本做回归前置。
+  - 下一步优先：将 heartbeat 重日志拆为轻量模式与诊断模式，降低常规回归日志噪声与 IO 开销。
+
+### 2026-04-01 Phase-2-14（Heartbeat 轻量/诊断模式拆分）
+
+- 完成内容：
+  - `run` 子命令新增 `--heartbeat-mode <compact|diagnostic>` 参数。
+  - 默认模式调整为 `compact`：仅输出关键字段（步数、PC、特权级、CSR 中断位、外设 IRQ 状态、VirtIO 关键计数、PC 连续停留计数）。
+  - `diagnostic` 模式保留原有全量重字段 heartbeat 输出，兼容深度排障。
+- 变更文件：
+  - `src/main.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1`
+- 验收结果：
+  - 通过：构建成功。
+  - shell smoke 通过，日志显示 `Heartbeat enabled: every 40000000 instructions (mode=Compact)` 且输出 `hb-lite` 行。
+  - 关键交互输出仍稳定出现：`init: starting sh`、`echo HI`、`HI`、`$`。
+- 风险/未完成项：
+  - 当前仍是“按指令步数”触发注入，未实现“按 shell prompt 事件”自适应注入。
+  - `diagnostic` 模式输出仍较重，后续可按模块开关进一步分层。
+- 上下文压缩（供下一步直接续做）：
+  - 常规回归可默认使用 `compact`，性能与可读性更均衡；定位复杂中断/调度问题时再切换到 `diagnostic`。
+  - 下一步优先：扩展 shell smoke 为命令矩阵（`echo/ls/cat`）并自动汇总断言结果。
+
+### 2026-04-01 Phase-2-15（xv6 shell 命令矩阵 smoke）
+
+- 完成内容：
+  - 升级 `scripts/run_xv6_shell_smoke.ps1`，新增 `-Mode single|matrix` 与 `-MatrixScenarios`（`echo/ls/cat`）参数。
+  - 新增矩阵执行汇总：每个场景分别输出日志尾部、断言结果与总览 PASS/FAIL。
+  - 修复脚本在 `Set-StrictMode` 下的集合计数问题（`MissingPatterns` 与失败场景集合统一数组化）。
+- 变更文件：
+  - `scripts/run_xv6_shell_smoke.ps1`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
+- 验收结果：
+  - 通过：矩阵汇总 `echo/ls/cat` 全部 PASS。
+  - `ls` 场景成功输出目录项（`README`、`init`、`sh` 等）。
+  - `cat` 场景成功输出 `README` 正文，并执行后续 `echo CAT_DONE`。
+- 风险/未完成项：
+  - 当前注入仍为“按指令步数”调度，未实现“按 shell prompt 事件”自适应输入。
+  - 断言仍以正则文本匹配为主，尚未做结构化会话状态机校验。
+- 上下文压缩（供下一步直接续做）：
+  - 命令矩阵 smoke 已成为可复用回归入口，后续可直接扩展更多场景（如 `grep/wc/usertests`）。
+  - 下一步优先：实现基于 prompt 事件的自适应注入，降低对固定注入步数的依赖。
+
+### 2026-04-01 Phase-2-16（prompt 触发注入 + 矩阵验收）
+
+- 完成内容：
+  - `run` 子命令新增 `--uart-inject-trigger <step|prompt>`，支持按 shell prompt 输出事件启动注入。
+  - 在 UART 输出回调中新增 prompt 检测（`$ ` 序列），并通过共享信号与注入器解耦。
+  - `scripts/run_xv6_shell_smoke.ps1` 新增 `-UartInjectTrigger` 参数并默认使用 `prompt`。
+  - 为 prompt 检测补充单元测试：`PromptDetectorState` 序列识别/误报防护。
+- 变更文件：
+  - `src/main.rs`
+  - `scripts/run_xv6_shell_smoke.ps1`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
+- 验收结果：
+  - 通过：构建成功，库测试 `241/241`。
+  - `echo/ls/cat` 三场景矩阵 smoke 全部 PASS。
+  - 运行日志确认注入模式为 `trigger=Prompt` 且 `UART script injected` 计数完整。
+- 风险/未完成项：
+  - prompt 检测当前基于 `$ ` 文本序列，后续可扩展对不同 shell/提示符风格的可配置匹配。
+  - 当前断言仍基于正则文本，尚未升级为结构化会话状态机。
+- 上下文压缩（供下一步直接续做）：
+  - 注入链路已具备 step/prompt 双模式，常规回归建议使用 `prompt` 降低固定步数参数调优成本。
+  - 下一步优先：引入结构化会话断言（命令回显/输出/提示符三段状态机）并扩展场景到 `grep/wc/usertests`。
+
+### 2026-04-01 Phase-2-17（有序会话断言 + 二次矩阵验收）
+
+- 完成内容：
+  - 为 `scripts/run_xv6_shell_smoke.ps1` 增加有序标记断言：在正则匹配之外，验证关键交互片段的出现顺序。
+  - `echo/ls/cat` 场景分别引入 `OrderedMarkers`，覆盖“命令回显 → 结果标记/输出”的顺序检查。
+- 变更文件：
+  - `scripts/run_xv6_shell_smoke.ps1`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
+- 验收结果：
+  - 通过：在开启 `prompt` 触发注入与有序断言后，矩阵 `echo/ls/cat` 全部 PASS。
+  - 每场景均输出完整日志尾部与总结，且退出码为 0。
+- 风险/未完成项：
+  - 当前“有序断言”仍是轻量状态验证，尚未上升为完整会话自动机（含异常分支与重试）。
+  - 提示符检测仍基于 `$ `，需为其他 shell 风格预留可配置项。
+- 上下文压缩（供下一步直接续做）：
+  - 当前 smoke 已具备：step/prompt 双触发 + 正则匹配 + 有序断言三层保障。
+  - 下一步优先：扩展矩阵场景（`grep/wc/usertests`）并沉淀失败分类（启动失败/注入失败/断言失败）。
+
+### 2026-04-01 Phase-2-18（矩阵扩展到 grep/wc + 失败分类）
+
+- 完成内容：
+  - 升级 `scripts/run_xv6_shell_smoke.ps1` 的矩阵能力：在默认矩阵中加入 `grep` 与 `wc` 场景（`echo/ls/cat/grep/wc`）。
+  - 增加场景模板 `usertests`（可选触发，默认不纳入矩阵）。
+  - 增加失败分类机制：`startup` / `injection` / `assertion`，并在失败摘要中输出分类与缺失项。
+- 变更文件：
+  - `scripts/run_xv6_shell_smoke.ps1`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
+- 验收结果：
+  - 通过：矩阵 `echo/ls/cat/grep/wc` 全部 PASS（5/5）。
+  - `grep` 场景确认命令输出与 DONE 标记顺序正确（`grep xv6 README` → `GREP_DONE`）。
+  - `wc` 场景确认统计输出与 DONE 标记顺序正确（`wc README` → `WC_DONE`）。
+  - 所有场景均在 200M 指令窗口完成，退出码为 0。
+- 风险/未完成项：
+  - `usertests` 场景目前仅提供模板，默认矩阵未启用（避免显著拉长回归时长）。
+  - 失败分类当前基于输出模式匹配，后续可升级为更结构化的事件分类。
+- 上下文压缩（供下一步直接续做）：
+  - shell smoke 现已覆盖 5 条常用命令路径并具备失败分类，可直接用于 PR 前回归。
+  - 下一步优先：为 `usertests` 增加长窗口预设（如独立模式/单场景高步数）与分类细化统计。
+
+### 2026-04-01 Phase-2-19（prompt 逐命令自适应注入 + 会话状态机断言）
+
+- 完成内容：
+  - 将 `UartInjector` 的 prompt 模式从“整段脚本连续注入”升级为“按 prompt 事件逐命令分片注入”（按 `\n` 切片）。
+  - 保留 step 模式语义不变；prompt 模式下每次检测到 shell 提示符后仅发送一条命令片段，避免“下一条命令与当前输出互相串扰”。
+  - `scripts/run_xv6_shell_smoke.ps1` 断言升级为会话状态机验证：支持“同一行多状态前进”（处理 `$ cmd` 同行场景），并对命令回显加入可选提示符前缀匹配。
+  - smoke 脚本执行链路从 `cargo run` 切换为“单次 `cargo build --release` + 直接执行 `target\\release\\mycpu.exe`”，移除包装层导致的非确定性退出噪声。
+- 变更文件：
+  - `src/main.rs`
+  - `scripts/run_xv6_shell_smoke.ps1`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
+- 验收结果：
+  - 通过：库回归 `241/241`。
+  - 通过：矩阵 `echo/ls/cat/grep/wc` 在 prompt 自适应注入 + 状态机断言下全部 PASS（5/5）。
+  - 关键行为验证：`ls/cat/grep/wc` 场景中“命令执行完成后再注入下一条命令”的顺序稳定复现。
+- 风险/未完成项：
+  - `usertests` 仍未默认纳入矩阵（时长成本较高）。
+  - 当前状态机仍为日志驱动验证，尚未抽象为独立可复用状态机模块。
+- 上下文压缩（供下一步直接续做）：
+  - 交互回归链路已具备：prompt 逐命令注入 + 状态机断言 + 失败分类，可直接承接更重场景。
+  - 下一步优先：为 `usertests` 增加长窗口 profile，并细化失败分类到“命令执行超时/输出不匹配/提示符未回归”。
+
+### 2026-04-01 Phase-3-01（Linux 启动上下文注入骨架：FDT/bootargs/hartid）
+
+- 完成内容：
+  - `run` 子命令新增 Linux 启动上下文参数：
+    - `--linux-boot`
+    - `--linux-hartid`
+    - `--linux-dtb` / `--linux-dtb-addr`
+    - `--linux-bootargs` / `--linux-bootargs-addr`
+  - 启动前注入逻辑：
+    - 可选加载 DTB 到指定 guest 地址（并将 `a1` 指向 DTB 地址）；
+    - 可选写入 NUL 结尾 bootargs 字符串到指定 guest 地址；
+    - 将 `a0` 设置为 hartid。
+- 变更文件：
+  - `src/main.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `target\\release\\mycpu.exe run --count 1000000 --memory 128 third_party\\xv6-rv32\\kernel\\kernel --virtio-disk third_party\\xv6-rv32\\fs.img --linux-boot --linux-hartid 0 --linux-bootargs "console=ttyS0 root=/dev/vda rw"`
+- 验收结果：
+  - 通过：运行日志出现 `Linux boot: wrote bootargs ...` 与 `Linux boot context: a0(hartid)=0, a1(dtb)=0x00000000`。
+  - 通过：1,000,000 指令窗口稳定完成，无新增 panic。
+- 风险/未完成项：
+  - 当前为“引导参数注入骨架”，尚未完成 SBI firmware 链接与完整 FDT 自动构建。
+  - 尚未完成 Buildroot Linux 到 `init/userland` 的端到端启动验收。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 3 已具备最小运行时上下文注入能力（hartid/bootargs/可选DTB），可作为 Linux bring-up 基础。
+  - 下一步优先：补齐 SBI 引导入口（firmware + payload）并接入 Buildroot Linux 镜像验证。

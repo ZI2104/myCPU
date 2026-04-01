@@ -19,21 +19,23 @@
 > 更新日期：2026-04-01
 >
 > 说明：本节用于对齐“xv6 → Linux → 游戏 → NPU/LPU”路线，状态分为：
+>
+>
 > - ✅ 已完成
 > - 🟡 部分完成
 > - ⏳ 未完成
 
-| 阶段    | 目标（用户要求）                                           | 当前状态 | 验收标准                           | 当前证据                                                                                                          |
-| ------- | ---------------------------------------------------------- | -------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Phase 0 | 冻结可用基线 + OS bring-up 专项测试入口                    | ✅ 已完成 | xv6 到 shell prompt 作为首个里程碑 | 基线与 bring-up smoke 测试入口已落地，且已在长窗口运行中稳定看到 xv6 shell 提示符 `$`                             |
-| Phase 1 | xv6 启动关键能力补齐（RV32M、Trap闭环、Sv32、MMU统一路径） | ✅ 已完成 | xv6 内核入口与串口输出稳定         | RV32M/Trap/Sv32/MMU 路径均已实现并有测试，详见本文件 P1/P3 验收段                                                 |
-| Phase 2 | xv6 可交互运行（CLINT/PLIC 稳定 + 最小块设备）             | ✅ 已完成 | xv6 文件系统镜像进入 shell 可交互  | 已完成 PLIC/SIP 兼容修复与 VirtIO 描述符传输修复（含 1KiB 场景），120M/200M 窗口均复现 `init: starting sh` 与 `$` |
+| 阶段    | 目标（用户要求）                                           | 当前状态 | 验收标准                           | 当前证据                                                                                                                                                                  |
+| ------- | ---------------------------------------------------------- | -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0 | 冻结可用基线 + OS bring-up 专项测试入口                    | ✅ 已完成 | xv6 到 shell prompt 作为首个里程碑 | 基线与 bring-up smoke 测试入口已落地，且已在长窗口运行中稳定看到 xv6 shell 提示符 `$`                                                                                     |
+| Phase 1 | xv6 启动关键能力补齐（RV32M、Trap闭环、Sv32、MMU统一路径） | ✅ 已完成 | xv6 内核入口与串口输出稳定         | RV32M/Trap/Sv32/MMU 路径均已实现并有测试，详见本文件 P1/P3 验收段                                                                                                         |
+| Phase 2 | xv6 可交互运行（CLINT/PLIC 稳定 + 最小块设备）             | ✅ 已完成 | xv6 文件系统镜像进入 shell 可交互  | 已完成 PLIC/SIP 兼容修复与 VirtIO 描述符传输修复（含 1KiB 场景），并新增 `scripts/run_xv6_shell_smoke.ps1` 自动验收流程；200M 窗口稳定通过 `echo/ls/cat/grep/wc` 命令矩阵 |
 
-> 最新进展（2026-04-01）：在补齐 PLIC S 态窗口与 `SIP` 机器态 `SSIP` 语义后，进一步完成 RV32C 兼容修复与 VirtIO 描述符传输长度修复（避免 512B 截断导致用户程序加载不完整）。同时新增 `--uart-script/--uart-inject-at/--uart-inject-every`，打通“主机脚本注入 UART RX”路径，并在 200M 长窗口中成功完成 `echo HI` 命令级 smoke（日志出现 `echo HI`、`HI`、`$`）。当前 `cargo test --lib` 为 `241/241`。 
-| Phase 3 | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | ⏳ 未完成   | Buildroot Linux 进入 init/userland                    | SBI/FDT 注入链路未落地                                                                                                             |
+> 最新进展（2026-04-01）：在补齐 PLIC S 态窗口与 `SIP` 机器态 `SSIP` 语义后，进一步完成 RV32C 兼容修复与 VirtIO 描述符传输长度修复（避免 512B 截断导致用户程序加载不完整）。UART 注入升级为 prompt 逐命令自适应分片注入，并与会话状态机断言结合，`scripts/run_xv6_shell_smoke.ps1` 在 200M 长窗口下 `echo/ls/cat/grep/wc` 命令矩阵稳定通过（5/5）。此外，`run` 子命令新增 Linux 启动上下文注入参数（`--linux-boot`、`--linux-hartid`、`--linux-dtb*`、`--linux-bootargs*`），已完成最小 bootargs/hartid 注入验收。`run` 子命令默认 `--heartbeat-mode compact`，当前 `cargo test --lib` 为 `241/241`。
+| Phase 3 | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | ⏳ 未完成   | Buildroot Linux 进入 init/userland                    | 已落地 Linux 启动上下文注入骨架（hartid/bootargs/可选DTB）；SBI firmware 链路与 Buildroot 端到端启动仍待完成                                                                  |
 | Phase 4 | Linux 用户态 SDL/FB 游戏演示                               | 🟡 部分完成 | 简化 2D 游戏跑通 + 输入设备 + Overlay                 | Framebuffer 可视化链路已完成；输入外设与游戏流程未完成                                                                             |
 | Phase 5 | NPU/LPU 模拟（MMIO 优先）                                  | 🟡 部分完成 | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU MMIO 骨架与 IRQ 已完成；DESC_ADDR/DMA/任务队列未完成                                                                       |
-| Phase 6 | 亮点封装发布（脚本化演示+回归矩阵）                        | ⏳ 未完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 仅完成 Framebuffer 一键演示脚本，完整串联未完成                                                                                    |
+| Phase 6 | 亮点封装发布（脚本化演示+回归矩阵）                        | ⏳ 未完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 已完成 Framebuffer 一键演示脚本与 xv6 shell smoke 自动化脚本，完整串联（xv6→Linux→游戏→NPU）仍未完成                                                                   |
 
 ### 执行约定（从本次开始）
 
@@ -46,7 +48,7 @@
 
 ## Phase 1: 基础框架 ✅ 完成
 
-### 目标
+
 搭建项目骨架，实现内存和寄存器基础模块。
 
 ### 任务清单
@@ -83,7 +85,7 @@
 
 ### RV32I 指令清单
 
-#### R-type (10 条)
+
 - [x] ADD  - 加法
 - [x] SUB  - 减法
 - [x] AND  - 与
@@ -92,10 +94,12 @@
 - [x] SLL  - 逻辑左移
 - [x] SRL  - 逻辑右移
 - [x] SRA  - 算术右移
+
 - [x] SLT  - 有符号小于比较
 - [x] SLTU - 无符号小于比较
 
 #### I-type (14 条)
+
 - [x] ADDI  - 加立即数
 - [x] ANDI  - 与立即数
 - [x] ORI   - 或立即数
@@ -107,24 +111,29 @@
 - [x] SRAI  - 算术右移立即数
 - [x] LB    - 加载字节
 - [x] LH    - 加载半字
+
 - [x] LW    - 加载字
 - [x] LBU   - 加载无符号字节
 - [x] LHU   - 加载无符号半字
 
 #### S-type (3 条)
+
 - [x] SB - 存储字节
 - [x] SH - 存储半字
 - [x] SW - 存储字
-
 #### B-type (6 条)
+
 - [x] BEQ  - 相等跳转
+
 - [x] BNE  - 不等跳转
 - [x] BLT  - 有符号小于跳转
 - [x] BGE  - 有符号大于等于跳转
 - [x] BLTU - 无符号小于跳转
+
 - [x] BGEU - 无符号大于等于跳转
 
 #### U-type (2 条)
+
 - [x] LUI   - 加载高位立即数
 - [x] AUIPC - PC 加高位立即数
 
@@ -133,19 +142,20 @@
 - [x] JALR - 跳转并链接寄存器
 
 #### System (3 条)
-- [x] ECALL - 环境调用
+
 - [x] EBREAK - 断点
 - [x] FENCE - 内存屏障
 
 ### 产出
+
 - ✅ 所有 RV32I 指令测试通过 (67 个单元测试)
 - ✅ 可运行简单算术程序
 
 ---
-
 ## Phase 3: 流水线实现 ✅ 完成
 
 ### 目标
+
 实现 5 级流水线，处理数据冒险和控制冒险。
 
 ### 任务清单
@@ -175,11 +185,11 @@
 - ✅ Load-Use 冒险正确暂停
 - ✅ 分支预测错误正确冲刷流水线
 
----
 
 ## Phase 4: 特权级与异常 ✅ 完成
 
 ### 目标
+
 实现 M/S/U 三级特权模式，支持异常和中断处理。
 
 ### 任务清单
@@ -198,6 +208,7 @@
 - [x] 异常处理
   - [x] 异常入口 (xtvec) - 单周期 CPU + 流水线
   - [x] 上下文保存/恢复 - 单周期 CPU + 流水线
+
   - [x] 异常返回 - 单周期 CPU + 流水线 (mret)
 - [x] 中断系统 - CLINT
   - [x] CLINT 实现 (mtime, mtimecmp, msip)
@@ -211,18 +222,19 @@
   - [x] 中断委托 (M → S) via mideleg/medeleg
 
 ### 产出
+
 - ✅ CSR 寄存器测试通过
 - ✅ CLINT 测试通过 (7 个测试)
 - ✅ PLIC 测试通过 (8 个测试)
 - ✅ 单周期 CPU 支持完整中断和异常处理
 - ✅ 流水线 CPU 支持 CSR 指令和 mret
 - ✅ 中断委托机制实现 (M-mode → S-mode)
-
 ---
 
 ## Phase 5: 外设与调试 ✅ 完成
 
 ### 目标
+
 实现 UART 串口输出，支持程序加载，实现 GDB 调试接口。
 
 ### 任务清单
@@ -242,6 +254,7 @@
   - [x] 时钟中断
 - [x] ELF 加载器
   - [x] 解析 ELF 头 (使用 goblin crate)
+
   - [x] 加载程序段
   - [x] 设置入口点
   - [x] BSS 段零填充
@@ -257,6 +270,7 @@
   - [x] 错误报告与日志
 
 ### 产出
+
 - ✅ UART 串口模块实现 (NS16550A 兼容)
 - ✅ ELF 加载器实现 (使用 goblin crate)
 - ✅ GDB 调试服务器框架
@@ -280,6 +294,7 @@
   - [x] 周期计数 (Cycles)
   - [x] 指令退休计数 (InstructionsRetired)
   - [x] Load-Use 暂停计数
+
   - [x] 控制冒险计数
   - [x] 分支统计 (Taken/NotTaken)
   - [x] 内存访问统计
@@ -289,13 +304,16 @@
   - [x] CSR HPM 计数器更新
 - [x] 性能报告生成
   - [x] IPC/CPI 计算
+
   - [x] 暂停率统计
   - [x] 分支预测准确率
   - [x] 格式化输出
 - [x] CLI 集成
+
   - [x] --perf-report 选项
 
 ### 产出
+
 - ✅ 性能计数器 CSR 实现 (符合 RISC-V HPM 规范)
 - ✅ PerfCollector 事件收集器
 - ✅ PerfReport 格式化报告
@@ -309,12 +327,15 @@
 - [x] DIV, DIVU, REM, REMU
 
 ### P2: C 扩展 (压缩指令) (可选)
+
 - [ ] 16 位压缩指令解码
 - [ ] 常用指令的压缩形式
 
 ### P3: Sv32 分页 (可选)
+
 - [x] 页表结构（SATP CSR + Sv32 两级页表遍历骨架）
 - [ ] TLB 缓存
+
 - [x] 地址翻译入口（单周期 CPU：取指/Load/Store）
 - [x] 页错误异常（Instruction/Load/Store Page Fault）
 
@@ -335,6 +356,7 @@
   - 暂未实现 A/D 位硬件更新语义与权限细则（SUM/MXR 等）
 
 ### P4: 多核支持 (可选)
+
 - [ ] 多个 Hart (硬件线程)
 - [ ] 核间中断 (IPI)
 - [ ] 共享内存
