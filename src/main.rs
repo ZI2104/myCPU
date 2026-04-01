@@ -90,6 +90,22 @@ enum Commands {
         #[arg(long, value_enum, default_value = "step")]
         uart_inject_trigger: UartInjectTrigger,
 
+        /// Inject host input events into Input MMIO peripheral.
+        ///
+        /// Script format examples:
+        /// - "right:down;right:up;a:down;a:up"
+        /// - "up down\nup up\nclear"
+        #[arg(long)]
+        input_script: Option<String>,
+
+        /// Start injecting input script at this instruction count
+        #[arg(long, default_value = "0")]
+        input_inject_at: u64,
+
+        /// Inject one input action every N instructions
+        #[arg(long, default_value = "500000")]
+        input_inject_every: u64,
+
         /// Enable Linux boot context injection (hartid/dtb/bootargs)
         #[arg(long, default_value_t = false)]
         linux_boot: bool,
@@ -216,6 +232,9 @@ fn main() -> anyhow::Result<()> {
             uart_inject_at,
             uart_inject_every,
             uart_inject_trigger,
+            input_script,
+            input_inject_at,
+            input_inject_every,
             linux_boot,
             linux_hartid,
             linux_dtb,
@@ -240,6 +259,9 @@ fn main() -> anyhow::Result<()> {
             uart_inject_at,
             uart_inject_every,
             uart_inject_trigger,
+            input_script,
+            input_inject_at,
+            input_inject_every,
             linux_boot,
             linux_hartid,
             linux_dtb,
@@ -285,6 +307,9 @@ fn run_program(
     uart_inject_at: u64,
     uart_inject_every: u64,
     uart_inject_trigger: UartInjectTrigger,
+    input_script: Option<String>,
+    input_inject_at: u64,
+    input_inject_every: u64,
     linux_boot: bool,
     linux_hartid: u32,
     linux_dtb: Option<PathBuf>,
@@ -398,18 +423,38 @@ fn run_program(
         );
     }
 
+    let mut input_injector = input_script
+        .map(|script| {
+            parse_input_script(&script).map(|actions| {
+                InputInjector::new(actions, input_inject_at, input_inject_every.max(1))
+            })
+        })
+        .transpose()?
+        .filter(|injector| !injector.is_empty());
+
+    if let Some(injector) = input_injector.as_ref() {
+        println!(
+            "Input script injection enabled: {} actions, start_at={}, every={} steps",
+            injector.total_len(),
+            injector.inject_at,
+            injector.inject_every
+        );
+    }
+
     let start_time = Instant::now();
-    let instructions_executed = if heartbeat_every == 0 && uart_injector.is_none() {
-        cpu.run(max_count)?
-    } else {
-        run_with_heartbeat(
-            &mut cpu,
-            max_count,
-            heartbeat_every,
-            heartbeat_mode,
-            uart_injector.as_mut(),
-        )?
-    };
+    let instructions_executed =
+        if heartbeat_every == 0 && uart_injector.is_none() && input_injector.is_none() {
+            cpu.run(max_count)?
+        } else {
+            run_with_heartbeat(
+                &mut cpu,
+                max_count,
+                heartbeat_every,
+                heartbeat_mode,
+                uart_injector.as_mut(),
+                input_injector.as_mut(),
+            )?
+        };
     let elapsed = start_time.elapsed();
 
     println!("\n--- Execution complete ---");
@@ -428,6 +473,14 @@ fn run_program(
     if let Some(injector) = uart_injector.as_ref() {
         println!(
             "UART script injected: {}/{} bytes",
+            injector.injected_len(),
+            injector.total_len()
+        );
+    }
+
+    if let Some(injector) = input_injector.as_ref() {
+        println!(
+            "Input script injected: {}/{} actions",
             injector.injected_len(),
             injector.total_len()
         );
@@ -460,6 +513,21 @@ struct UartInjector {
     prompt_chunk_index: usize,
     prompt_chunk_offset: usize,
     prompt_wait_for_prompt: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InputAction {
+    key_code: u8,
+    pressed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct InputInjector {
+    actions: Vec<InputAction>,
+    next_index: usize,
+    injected_total: usize,
+    inject_at: u64,
+    inject_every: u64,
 }
 
 #[derive(Debug, Default)]
@@ -558,6 +626,51 @@ impl UartInjector {
                     }
                 }
             }
+        }
+    }
+}
+
+impl InputInjector {
+    fn new(actions: Vec<InputAction>, inject_at: u64, inject_every: u64) -> Self {
+        Self {
+            actions,
+            next_index: 0,
+            injected_total: 0,
+            inject_at,
+            inject_every,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
+
+    fn injected_len(&self) -> usize {
+        self.injected_total
+    }
+
+    fn total_len(&self) -> usize {
+        self.actions.len()
+    }
+
+    fn maybe_inject(&mut self, step: u64, cpu: &mut Cpu) {
+        if self.next_index >= self.actions.len() {
+            return;
+        }
+        if step < self.inject_at {
+            return;
+        }
+        if (step - self.inject_at) % self.inject_every != 0 {
+            return;
+        }
+
+        let action = self.actions[self.next_index];
+        if cpu
+            .bus_mut()
+            .inject_input_key(action.key_code, action.pressed)
+        {
+            self.next_index += 1;
+            self.injected_total += 1;
         }
     }
 }
@@ -791,12 +904,97 @@ fn parse_escaped_uart_script(script: &str) -> Vec<u8> {
     out
 }
 
+fn parse_u32_auto(input: &str) -> Option<u32> {
+    if let Some(hex) = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+    {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        input.parse::<u32>().ok()
+    }
+}
+
+fn parse_input_key_code(input: &str) -> Option<u8> {
+    match input.to_ascii_lowercase().as_str() {
+        "up" | "w" => Some(0),
+        "left" | "a" => Some(1),
+        "down" | "s" => Some(2),
+        "right" | "d" => Some(3),
+        "btn_a" | "action" | "j" => Some(4),
+        "btn_b" | "back" | "k" => Some(5),
+        "start" => Some(6),
+        "select" => Some(7),
+        other => parse_u32_auto(other).and_then(|v| (v <= u8::MAX as u32).then_some(v as u8)),
+    }
+}
+
+fn parse_input_pressed(input: &str) -> Option<bool> {
+    match input.to_ascii_lowercase().as_str() {
+        "down" | "press" | "pressed" | "1" => Some(true),
+        "up" | "release" | "released" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_input_script(script: &str) -> anyhow::Result<Vec<InputAction>> {
+    let decoded = String::from_utf8_lossy(&parse_escaped_uart_script(script)).to_string();
+    let normalized = decoded.replace(';', "\n");
+    let mut actions = Vec::new();
+
+    for raw_line in normalized.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.eq_ignore_ascii_case("clear") {
+            for key_code in 0u8..8u8 {
+                actions.push(InputAction {
+                    key_code,
+                    pressed: false,
+                });
+            }
+            continue;
+        }
+
+        let parsed = if let Some((left, right)) = line.split_once(':') {
+            (left.trim(), right.trim())
+        } else {
+            let mut parts = line.split_whitespace();
+            let key = parts.next().ok_or_else(|| {
+                anyhow::anyhow!("invalid input script item '{}': missing key", line)
+            })?;
+            let state = parts.next().ok_or_else(|| {
+                anyhow::anyhow!("invalid input script item '{}': missing state", line)
+            })?;
+            if parts.next().is_some() {
+                return Err(anyhow::anyhow!(
+                    "invalid input script item '{}': expected '<key> <down|up>'",
+                    line
+                ));
+            }
+            (key, state)
+        };
+
+        let key_code = parse_input_key_code(parsed.0)
+            .ok_or_else(|| anyhow::anyhow!("invalid input key '{}'", parsed.0))?;
+        let pressed = parse_input_pressed(parsed.1)
+            .ok_or_else(|| anyhow::anyhow!("invalid input state '{}'", parsed.1))?;
+
+        actions.push(InputAction { key_code, pressed });
+    }
+
+    Ok(actions)
+}
+
 fn run_with_heartbeat(
     cpu: &mut Cpu,
     max_count: u64,
     heartbeat_every: u64,
     heartbeat_mode: HeartbeatMode,
     mut uart_injector: Option<&mut UartInjector>,
+    mut input_injector: Option<&mut InputInjector>,
 ) -> anyhow::Result<u64> {
     const XV6_CPU0_ADDR: u32 = 0x8001_34C4;
     const XV6_PROC_BASE: u32 = 0x8001_36E4;
@@ -823,6 +1021,10 @@ fn run_with_heartbeat(
         count += 1;
 
         if let Some(injector) = uart_injector.as_deref_mut() {
+            injector.maybe_inject(count, cpu);
+        }
+
+        if let Some(injector) = input_injector.as_deref_mut() {
             injector.maybe_inject(count, cpu);
         }
 
@@ -1099,8 +1301,8 @@ fn run_with_heartbeat(
 #[cfg(test)]
 mod tests {
     use super::{
-        generate_minimal_linux_dtb, parse_escaped_uart_script, split_prompt_chunks,
-        PromptDetectorState,
+        generate_minimal_linux_dtb, parse_escaped_uart_script, parse_input_script,
+        split_prompt_chunks, InputAction, PromptDetectorState,
     };
 
     #[test]
@@ -1156,6 +1358,54 @@ mod tests {
         let text = String::from_utf8_lossy(&dtb);
         assert!(text.contains("bootargs"));
         assert!(text.contains("console=ttyS0"));
+    }
+
+    #[test]
+    fn test_parse_input_script_supports_semicolon_and_colon() {
+        let actions = parse_input_script("right:down;right:up;btn_a:down").unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                InputAction {
+                    key_code: 3,
+                    pressed: true,
+                },
+                InputAction {
+                    key_code: 3,
+                    pressed: false,
+                },
+                InputAction {
+                    key_code: 4,
+                    pressed: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_input_script_supports_escaped_newlines_and_clear() {
+        let actions = parse_input_script("up down\\nclear\\nup up").unwrap();
+        assert_eq!(
+            actions.first(),
+            Some(&InputAction {
+                key_code: 0,
+                pressed: true,
+            })
+        );
+        assert_eq!(actions.len(), 10);
+        assert_eq!(
+            actions.last(),
+            Some(&InputAction {
+                key_code: 0,
+                pressed: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_input_script_rejects_invalid_item() {
+        let err = parse_input_script("unknown down").unwrap_err().to_string();
+        assert!(err.contains("invalid input key"));
     }
 }
 

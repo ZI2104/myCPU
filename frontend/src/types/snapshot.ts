@@ -94,6 +94,34 @@ export interface FramebufferResponse {
   error: string | null;
 }
 
+export interface InputStateResponse {
+  type: 'input_state';
+  success: boolean;
+  base_addr?: number;
+  key_state?: number;
+  last_event?: number;
+  event_count?: number;
+  irq_pending?: boolean;
+  error?: string;
+}
+
+export interface FramebufferGameResponse {
+  type: 'framebuffer_game';
+  success: boolean;
+  action: string;
+  tick?: number;
+  key_state?: number;
+  ball_x?: number;
+  ball_y?: number;
+  vel_x?: number;
+  vel_y?: number;
+  left_paddle_y?: number;
+  right_paddle_y?: number;
+  score_left?: number;
+  score_right?: number;
+  error?: string;
+}
+
 // Breakpoints
 export interface Breakpoint {
   addr: number;

@@ -706,3 +706,34 @@
     1) 增加 Linux 用户态小游戏 demo 程序并接入输入寄存器；
     2) 在前端补 Overlay（FPS/IPC/stall/syscall）并与运行态联动；
     3) 为 Phase 4 增加一键验收脚本（渲染+输入回环断言）。
+
+### 2026-04-01 Phase-4-02（Guest 输入脚本注入 + Mario CPU 验收脚本）
+
+- 完成内容：
+  - `run` 子命令新增输入脚本注入参数：
+    - `--input-script`：按键事件脚本（支持 `;` / `\n` 分隔）
+    - `--input-inject-at`：从第 N 条指令开始注入
+    - `--input-inject-every`：每 N 条指令注入一个输入事件
+  - 新增输入脚本解析能力：
+    - 支持 `key:down|up` 与 `key down|up` 两种语法；
+    - 支持 `clear` 指令（批量释放 key0~key7）；
+    - 支持十六进制/十进制 key code 与常见别名（方向键/WASD/J/K）。
+  - 在执行主循环中接入 Input 注入器，并增加执行统计输出：
+    - `Input script injected: X/Y actions`。
+  - 新增一键验收脚本 `scripts/run_mario_cpu_validation.ps1`，用于 guest 程序 CPU 行为验证（含最小指令数阈值、输入注入计数和可选日志 marker 断言）。
+- 变更文件：
+  - `src/main.rs`
+  - `scripts/run_mario_cpu_validation.ps1`
+- 验收命令：
+  - `cargo test --lib`
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_mario_cpu_validation.ps1 -GuestBinary .\third_party\xv6-rv32\kernel\kernel -VirtioDisk .\third_party\xv6-rv32\fs.img -ExpectedMarkers "init: starting sh" -RequireInputFullyInjected`
+- 验收结果：
+  - 通过：新增解析单测和全量库测试通过。
+  - 通过：Mario CPU 验收脚本可完成一次 guest 运行并输出 PASS，总结包含指令计数与输入注入计数。
+- 风险/未完成项：
+  - 当前仍是“输入事件注入 + CPU 里程碑验收”基础能力，尚未接入真实 guest NES 模拟器应用与 ROM 端到端链路。
+- 上下文压缩（供下一步直接续做）：
+  - 现已具备可脚本化的 guest 输入回放与 CPU 验收框架；
+  - 下一步优先：
+    1) 引入 guest 侧 NES 应用二进制与 ROM 资源；
+    2) 用同一验收脚本补齐“标题画面出现 + 输入响应 + 帧缓冲变化”断言。

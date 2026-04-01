@@ -68,6 +68,240 @@ impl DemoPattern {
     }
 }
 
+#[derive(Debug, Clone)]
+struct GameDemoState {
+    initialized: bool,
+    tick: u64,
+    ball_x: i32,
+    ball_y: i32,
+    vel_x: i32,
+    vel_y: i32,
+    left_paddle_y: i32,
+    right_paddle_y: i32,
+    score_left: u32,
+    score_right: u32,
+}
+
+impl Default for GameDemoState {
+    fn default() -> Self {
+        let mut state = Self {
+            initialized: false,
+            tick: 0,
+            ball_x: 0,
+            ball_y: 0,
+            vel_x: 3,
+            vel_y: 2,
+            left_paddle_y: 0,
+            right_paddle_y: 0,
+            score_left: 0,
+            score_right: 0,
+        };
+        state.reset();
+        state
+    }
+}
+
+impl GameDemoState {
+    const PADDLE_H: i32 = 36;
+    const PADDLE_W: i32 = 3;
+    const PADDLE_MARGIN: i32 = 10;
+    const BALL_R: i32 = 3;
+
+    const KEY_UP: u32 = 1 << 0;
+    const KEY_DOWN: u32 = 1 << 2;
+    const KEY_LEFT: u32 = 1 << 1;
+    const KEY_RIGHT: u32 = 1 << 3;
+    const KEY_A: u32 = 1 << 4;
+    const KEY_B: u32 = 1 << 5;
+
+    fn reset(&mut self) {
+        self.tick = 0;
+        self.ball_x = (LINUX_FB_WIDTH / 2) as i32;
+        self.ball_y = (LINUX_FB_HEIGHT / 2) as i32;
+        self.vel_x = 3;
+        self.vel_y = 2;
+        self.left_paddle_y = (LINUX_FB_HEIGHT as i32 - Self::PADDLE_H) / 2;
+        self.right_paddle_y = (LINUX_FB_HEIGHT as i32 - Self::PADDLE_H) / 2;
+        self.initialized = true;
+    }
+
+    fn clamp_paddles(&mut self) {
+        let max_y = LINUX_FB_HEIGHT as i32 - Self::PADDLE_H;
+        self.left_paddle_y = self.left_paddle_y.clamp(0, max_y);
+        self.right_paddle_y = self.right_paddle_y.clamp(0, max_y);
+    }
+
+    fn step(&mut self, key_state: u32) {
+        if !self.initialized {
+            self.reset();
+        }
+
+        if (key_state & Self::KEY_B) != 0 {
+            self.score_left = 0;
+            self.score_right = 0;
+        }
+
+        let paddle_speed = if (key_state & Self::KEY_A) != 0 { 6 } else { 4 };
+        if (key_state & Self::KEY_UP) != 0 {
+            self.left_paddle_y -= paddle_speed;
+        }
+        if (key_state & Self::KEY_DOWN) != 0 {
+            self.left_paddle_y += paddle_speed;
+        }
+
+        if (key_state & Self::KEY_LEFT) != 0 {
+            self.vel_x = (self.vel_x - 1).max(-5);
+        }
+        if (key_state & Self::KEY_RIGHT) != 0 {
+            self.vel_x = (self.vel_x + 1).min(5);
+        }
+        if self.vel_x == 0 {
+            self.vel_x = 1;
+        }
+
+        // Right paddle AI follows ball.
+        let right_center = self.right_paddle_y + Self::PADDLE_H / 2;
+        if self.ball_y > right_center + 2 {
+            self.right_paddle_y += 3;
+        } else if self.ball_y < right_center - 2 {
+            self.right_paddle_y -= 3;
+        }
+
+        self.clamp_paddles();
+
+        self.ball_x += self.vel_x;
+        self.ball_y += self.vel_y;
+
+        let top = Self::BALL_R;
+        let bottom = LINUX_FB_HEIGHT as i32 - 1 - Self::BALL_R;
+        if self.ball_y <= top || self.ball_y >= bottom {
+            self.vel_y = -self.vel_y;
+            self.ball_y = self.ball_y.clamp(top, bottom);
+        }
+
+        let left_x = Self::PADDLE_MARGIN + Self::PADDLE_W;
+        let right_x = LINUX_FB_WIDTH as i32 - 1 - Self::PADDLE_MARGIN - Self::PADDLE_W;
+
+        let left_hit = self.ball_x - Self::BALL_R <= left_x
+            && self.ball_y >= self.left_paddle_y
+            && self.ball_y <= self.left_paddle_y + Self::PADDLE_H;
+        if left_hit {
+            self.vel_x = self.vel_x.abs().max(2);
+            self.ball_x = left_x + Self::BALL_R;
+        }
+
+        let right_hit = self.ball_x + Self::BALL_R >= right_x
+            && self.ball_y >= self.right_paddle_y
+            && self.ball_y <= self.right_paddle_y + Self::PADDLE_H;
+        if right_hit {
+            self.vel_x = -self.vel_x.abs().max(2);
+            self.ball_x = right_x - Self::BALL_R;
+        }
+
+        if self.ball_x < 0 {
+            self.score_right = self.score_right.wrapping_add(1);
+            self.ball_x = (LINUX_FB_WIDTH / 2) as i32;
+            self.ball_y = (LINUX_FB_HEIGHT / 2) as i32;
+            self.vel_x = 3;
+            self.vel_y = 2;
+        } else if self.ball_x >= LINUX_FB_WIDTH as i32 {
+            self.score_left = self.score_left.wrapping_add(1);
+            self.ball_x = (LINUX_FB_WIDTH / 2) as i32;
+            self.ball_y = (LINUX_FB_HEIGHT / 2) as i32;
+            self.vel_x = -3;
+            self.vel_y = 2;
+        }
+
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    fn render_rgb565(&self) -> Vec<u8> {
+        let width = LINUX_FB_WIDTH;
+        let height = LINUX_FB_HEIGHT;
+        let mut buf = vec![0u8; (width * height * 2) as usize];
+
+        let bg = rgb565(8, 10, 20);
+        let line = rgb565(120, 130, 160);
+        let paddle = rgb565(235, 235, 235);
+        let ball = rgb565(255, 130, 50);
+        let score = rgb565(80, 200, 120);
+
+        for y in 0..height {
+            for x in 0..width {
+                write_rgb565_pixel(&mut buf, width, x, y, bg);
+            }
+        }
+
+        // Middle line
+        let mid = width / 2;
+        for y in (0..height).step_by(8) {
+            for dy in 0..4 {
+                if y + dy < height {
+                    write_rgb565_pixel(&mut buf, width, mid, y + dy, line);
+                }
+            }
+        }
+
+        // Paddles
+        let lx = Self::PADDLE_MARGIN as u32;
+        let rx = width - 1 - Self::PADDLE_MARGIN as u32;
+        for y in
+            self.left_paddle_y.max(0) as u32..(self.left_paddle_y + Self::PADDLE_H).max(0) as u32
+        {
+            if y >= height {
+                break;
+            }
+            for dx in 0..Self::PADDLE_W as u32 {
+                write_rgb565_pixel(&mut buf, width, lx + dx, y, paddle);
+                write_rgb565_pixel(&mut buf, width, rx.saturating_sub(dx), y, paddle);
+            }
+        }
+
+        // Ball
+        let bx = self.ball_x;
+        let by = self.ball_y;
+        for y in (by - Self::BALL_R)..=(by + Self::BALL_R) {
+            if y < 0 || y >= height as i32 {
+                continue;
+            }
+            for x in (bx - Self::BALL_R)..=(bx + Self::BALL_R) {
+                if x < 0 || x >= width as i32 {
+                    continue;
+                }
+                write_rgb565_pixel(&mut buf, width, x as u32, y as u32, ball);
+            }
+        }
+
+        // Score bars
+        let left_score_len = self.score_left.min(20);
+        let right_score_len = self.score_right.min(20);
+        for i in 0..left_score_len {
+            let x = 12 + i * 6;
+            for y in 8..14 {
+                write_rgb565_pixel(&mut buf, width, x, y, score);
+                write_rgb565_pixel(&mut buf, width, x + 1, y, score);
+            }
+        }
+        for i in 0..right_score_len {
+            let x = width.saturating_sub(14 + i * 6);
+            for y in 8..14 {
+                write_rgb565_pixel(&mut buf, width, x, y, score);
+                write_rgb565_pixel(&mut buf, width, x.saturating_sub(1), y, score);
+            }
+        }
+
+        buf
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GameCommandAction {
+    Init,
+    Step,
+    Reset,
+    State,
+}
+
 fn rgb565(r: u8, g: u8, b: u8) -> u16 {
     let r5 = (r as u16 >> 3) & 0x1F;
     let g6 = (g as u16 >> 2) & 0x3F;
@@ -180,8 +414,7 @@ fn parse_input_key_code(input: &str) -> Option<u8> {
         "b" | "back" => Some(5),
         "start" => Some(6),
         "select" => Some(7),
-        other => parse_u32_auto(other)
-            .and_then(|v| (v <= u8::MAX as u32).then_some(v as u8)),
+        other => parse_u32_auto(other).and_then(|v| (v <= u8::MAX as u32).then_some(v as u8)),
     }
 }
 
@@ -304,6 +537,8 @@ enum Command {
     },
     /// Generate and write a demo framebuffer scene into memory.
     FramebufferDemo { pattern: DemoPattern },
+    /// Run framebuffer game demo command.
+    FramebufferGame { action: GameCommandAction },
     /// Inject one input key event.
     InputKey { key_code: u8, pressed: bool },
     /// Clear all input key states.
@@ -418,6 +653,17 @@ impl Command {
                     .unwrap_or(DemoPattern::Pong);
                 Some(Command::FramebufferDemo { pattern })
             }
+            "fb_game" | "framebuffer_game" => {
+                let action = match parts.get(1).map(|value| value.to_ascii_lowercase()) {
+                    Some(value) if value == "init" => GameCommandAction::Init,
+                    Some(value) if value == "reset" => GameCommandAction::Reset,
+                    Some(value) if value == "state" => GameCommandAction::State,
+                    Some(value) if value == "step" => GameCommandAction::Step,
+                    Some(_) => return None,
+                    None => GameCommandAction::Step,
+                };
+                Some(Command::FramebufferGame { action })
+            }
             "input" | "in" => {
                 if parts.len() < 2 {
                     return None;
@@ -469,6 +715,8 @@ pub struct CommandContext {
     pub breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
     /// Execution history
     pub history: Arc<Mutex<VecDeque<HistoryRecord>>>,
+    /// Framebuffer game state
+    game_state: Arc<Mutex<GameDemoState>>,
 }
 
 impl CommandContext {
@@ -480,6 +728,7 @@ impl CommandContext {
         tx: WsSender,
         breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
         history: Arc<Mutex<VecDeque<HistoryRecord>>>,
+        game_state: Arc<Mutex<GameDemoState>>,
     ) -> Self {
         Self {
             cpu,
@@ -488,6 +737,7 @@ impl CommandContext {
             tx,
             breakpoints,
             history,
+            game_state,
         }
     }
 
@@ -517,6 +767,8 @@ pub struct VisualizeServer {
     breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
     /// Execution history
     history: Arc<Mutex<VecDeque<HistoryRecord>>>,
+    /// Framebuffer game state
+    game_state: Arc<Mutex<GameDemoState>>,
     /// Maximum history size
     max_history: usize,
 }
@@ -532,6 +784,7 @@ impl VisualizeServer {
             state_tx,
             breakpoints: Arc::new(Mutex::new(HashMap::new())),
             history: Arc::new(Mutex::new(VecDeque::new())),
+            game_state: Arc::new(Mutex::new(GameDemoState::default())),
             max_history: 10000,
         }
     }
@@ -551,6 +804,7 @@ impl VisualizeServer {
         let state_tx = self.state_tx.clone();
         let breakpoints = self.breakpoints.clone();
         let history = self.history.clone();
+        let game_state = self.game_state.clone();
         let max_history = self.max_history;
 
         // Spawn the continuous execution task
@@ -573,6 +827,7 @@ impl VisualizeServer {
             let mut state_rx = self.state_tx.subscribe();
             let breakpoints = self.breakpoints.clone();
             let history = self.history.clone();
+            let game_state = game_state.clone();
 
             tokio::spawn(async move {
                 println!("Client connected from {}", client_addr);
@@ -613,6 +868,7 @@ impl VisualizeServer {
                                                 tx,
                                                 breakpoints.clone(),
                                                 history.clone(),
+                                                game_state.clone(),
                                             );
                                             if Self::execute_command(&mut ctx, command).await.is_err() {
                                                 break;
@@ -960,6 +1216,119 @@ impl VisualizeServer {
 
                 ctx.send_json(response.to_string()).await;
             }
+            Command::FramebufferGame { action } => {
+                let response = {
+                    let mut cpu_guard = ctx.cpu.lock().await;
+                    let mut game_state = ctx.game_state.lock().await;
+
+                    match action {
+                        GameCommandAction::Init => {
+                            game_state.reset();
+                            let frame = game_state.render_rgb565();
+                            match cpu_guard
+                                .bus_mut()
+                                .write_bytes(Addr::new(LINUX_FB_ADDR), &frame)
+                            {
+                                Ok(_) => serde_json::json!({
+                                    "type": "framebuffer_game",
+                                    "success": true,
+                                    "action": "init",
+                                    "tick": game_state.tick,
+                                    "ball_x": game_state.ball_x,
+                                    "ball_y": game_state.ball_y,
+                                    "score_left": game_state.score_left,
+                                    "score_right": game_state.score_right,
+                                }),
+                                Err(err) => serde_json::json!({
+                                    "type": "framebuffer_game",
+                                    "success": false,
+                                    "action": "init",
+                                    "error": err.to_string(),
+                                }),
+                            }
+                        }
+                        GameCommandAction::Reset => {
+                            game_state.score_left = 0;
+                            game_state.score_right = 0;
+                            game_state.reset();
+                            let frame = game_state.render_rgb565();
+                            match cpu_guard
+                                .bus_mut()
+                                .write_bytes(Addr::new(LINUX_FB_ADDR), &frame)
+                            {
+                                Ok(_) => serde_json::json!({
+                                    "type": "framebuffer_game",
+                                    "success": true,
+                                    "action": "reset",
+                                    "tick": game_state.tick,
+                                    "ball_x": game_state.ball_x,
+                                    "ball_y": game_state.ball_y,
+                                    "score_left": game_state.score_left,
+                                    "score_right": game_state.score_right,
+                                }),
+                                Err(err) => serde_json::json!({
+                                    "type": "framebuffer_game",
+                                    "success": false,
+                                    "action": "reset",
+                                    "error": err.to_string(),
+                                }),
+                            }
+                        }
+                        GameCommandAction::State => serde_json::json!({
+                            "type": "framebuffer_game",
+                            "success": true,
+                            "action": "state",
+                            "tick": game_state.tick,
+                            "ball_x": game_state.ball_x,
+                            "ball_y": game_state.ball_y,
+                            "vel_x": game_state.vel_x,
+                            "vel_y": game_state.vel_y,
+                            "left_paddle_y": game_state.left_paddle_y,
+                            "right_paddle_y": game_state.right_paddle_y,
+                            "score_left": game_state.score_left,
+                            "score_right": game_state.score_right,
+                        }),
+                        GameCommandAction::Step => {
+                            let key_state = cpu_guard
+                                .bus()
+                                .get_input_snapshot()
+                                .map(|(state, _, _, _)| state)
+                                .unwrap_or(0);
+
+                            game_state.step(key_state);
+                            let frame = game_state.render_rgb565();
+                            match cpu_guard
+                                .bus_mut()
+                                .write_bytes(Addr::new(LINUX_FB_ADDR), &frame)
+                            {
+                                Ok(_) => serde_json::json!({
+                                    "type": "framebuffer_game",
+                                    "success": true,
+                                    "action": "step",
+                                    "tick": game_state.tick,
+                                    "key_state": key_state,
+                                    "ball_x": game_state.ball_x,
+                                    "ball_y": game_state.ball_y,
+                                    "vel_x": game_state.vel_x,
+                                    "vel_y": game_state.vel_y,
+                                    "left_paddle_y": game_state.left_paddle_y,
+                                    "right_paddle_y": game_state.right_paddle_y,
+                                    "score_left": game_state.score_left,
+                                    "score_right": game_state.score_right,
+                                }),
+                                Err(err) => serde_json::json!({
+                                    "type": "framebuffer_game",
+                                    "success": false,
+                                    "action": "step",
+                                    "error": err.to_string(),
+                                }),
+                            }
+                        }
+                    }
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
             Command::InputKey { key_code, pressed } => {
                 let success = {
                     let mut cpu_guard = ctx.cpu.lock().await;
@@ -1231,6 +1600,44 @@ mod tests {
     fn test_parse_input_state_and_clear_commands() {
         assert_eq!(Command::parse("input state"), Some(Command::InputState));
         assert_eq!(Command::parse("input clear"), Some(Command::InputClear));
+    }
+
+    #[test]
+    fn test_parse_framebuffer_game_commands() {
+        assert_eq!(
+            Command::parse("fb_game init"),
+            Some(Command::FramebufferGame {
+                action: GameCommandAction::Init,
+            })
+        );
+        assert_eq!(
+            Command::parse("fb_game"),
+            Some(Command::FramebufferGame {
+                action: GameCommandAction::Step,
+            })
+        );
+        assert_eq!(
+            Command::parse("fb_game reset"),
+            Some(Command::FramebufferGame {
+                action: GameCommandAction::Reset,
+            })
+        );
+        assert_eq!(
+            Command::parse("fb_game state"),
+            Some(Command::FramebufferGame {
+                action: GameCommandAction::State,
+            })
+        );
+    }
+
+    #[test]
+    fn test_game_demo_state_step_progresses_tick() {
+        let mut game = GameDemoState::default();
+        let before_tick = game.tick;
+        let before_ball_x = game.ball_x;
+        game.step(0);
+        assert!(game.tick > before_tick);
+        assert_ne!(game.ball_x, before_ball_x);
     }
 }
 

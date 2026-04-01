@@ -18,9 +18,9 @@
 //! bus.attach_peripheral(Addr::new(0x1000_0000), Box::new(uart));
 //! ```
 
+mod input;
 mod lpu;
 mod npu;
-mod input;
 mod uart;
 mod virtio_block;
 
