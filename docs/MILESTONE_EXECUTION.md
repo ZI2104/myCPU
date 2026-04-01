@@ -606,3 +606,63 @@
 - 上下文压缩（供下一步直接续做）：
   - Phase 3 已具备最小运行时上下文注入能力（hartid/bootargs/可选DTB），可作为 Linux bring-up 基础。
   - 下一步优先：补齐 SBI 引导入口（firmware + payload）并接入 Buildroot Linux 镜像验证。
+
+### 2026-04-01 Phase-3-02（SBI + payload 双镜像加载链路）
+
+- 完成内容：
+  - `run` 子命令新增 Linux SBI 启动链参数：
+    - `--linux-sbi <path>`
+    - `--linux-sbi-addr <hex>`
+    - `--linux-payload-addr <hex>`
+  - 新增双镜像加载流程：
+    - payload（位置参数 `FILE`）按 raw image 加载到 `--linux-payload-addr`；
+    - SBI firmware 按 `load_file()` 加载（支持 ELF 入口），模拟器起始 PC 选择 SBI 入口。
+  - 增加参数约束：`--linux-sbi` 需要配合 `--linux-boot` 使用，避免误配置。
+- 变更文件：
+  - `src/main.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `cargo run --release -- run --count 1000000 --memory 128 third_party\\xv6-rv32\\kernel\\kernel --virtio-disk third_party\\xv6-rv32\\fs.img --linux-boot --linux-sbi third_party\\xv6-rv32\\kernel\\kernel --linux-sbi-addr 0x80000000 --linux-payload-addr 0x80200000 --linux-hartid 0 --linux-bootargs "console=ttyS0 root=/dev/vda rw"`
+- 验收结果：
+  - 通过：构建成功，库测试回归 `241/241`。
+  - 通过：运行日志确认 payload 与 SBI 分别加载，并以 SBI 入口作为起始 PC：
+    - `Linux boot chain: loaded payload ... at 0x80200000`
+    - `Linux boot chain: loaded SBI firmware ... start 0x80000000`
+  - 通过：1,000,000 指令窗口稳定完成，无新增 panic。
+- 风险/未完成项：
+  - 当前仍是“链路级装载能力”，尚未引入真实 OpenSBI 固件与 Buildroot Linux 镜像做端到端启动。
+  - payload 当前按 raw image 装载，后续需根据 Linux 镜像类型补充更细粒度的装载策略与校验。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 3 现已具备：启动上下文注入（hartid/bootargs/DTB）+ SBI/payload 双镜像加载链路。
+  - 下一步优先：接入真实 OpenSBI（fw_jump/fw_payload）与 Buildroot Image + DTB，冲刺 `init/userland`。
+
+### 2026-04-01 Phase-3-03（自动 FDT 注入 + Phase3 终验阻塞确认）
+
+- 完成内容：
+  - 新增 `--linux-auto-dtb`：当未提供 `--linux-dtb` 时，自动生成最小可引导 DTB（含 `chosen.bootargs`、`memory@80000000`、`#address-cells/#size-cells`）并写入 `--linux-dtb-addr`。
+  - 启动上下文自动设置 `a1` 指向自动生成的 DTB 地址，保持 `a0=hartid`。
+  - 新增 DTB 生成单测：校验 FDT magic 与 `bootargs` 字符串注入。
+  - 完成仓库工件核验：扫描 `Image/zImage/bzImage/fw_jump/fw_payload/opensbi/rootfs*.dtb`，当前仓库无真实 OpenSBI/Buildroot Linux 工件。
+- 变更文件：
+  - `src/main.rs`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `cargo build`
+  - `cargo test --lib`
+  - `cargo run --release -- run --count 2000000 --memory 128 third_party\\xv6-rv32\\kernel\\kernel --virtio-disk third_party\\xv6-rv32\\fs.img --linux-boot --linux-auto-dtb --linux-sbi third_party\\xv6-rv32\\kernel\\kernel --linux-sbi-addr 0x80000000 --linux-payload-addr 0x80200000 --linux-hartid 0 --linux-bootargs "console=ttyS0 root=/dev/vda rw"`
+  - `Get-ChildItem -Path . -Recurse -File ...`（关键工件扫描）
+- 验收结果：
+  - 通过：构建成功，库测试回归 `241/241`。
+  - 通过：运行日志确认自动 DTB 注入成功：
+    - `Linux boot: auto-generated DTB ... at 0x87f00000`
+    - `Linux boot context: a0(hartid)=0, a1(dtb)=0x87f00000`
+  - 阻塞确认：仓库内未发现真实 OpenSBI 与 Buildroot Linux 端到端启动所需镜像，当前无法完成“进入 init/userland”的最终验收。
+- 风险/未完成项：
+  - Phase 3 的最终目标（Buildroot Linux 进入 `init/userland`）依赖外部工件，当前仓库资产不足。
+- 上下文压缩（供下一步直接续做）：
+  - 模拟器侧 Phase 3 链路能力已齐全：SBI + 自动/外部 FDT + bootargs + payload 装载。
+  - 下一步只需补齐外部工件（OpenSBI + Buildroot Image/rootfs/dtb）即可执行终验并闭环。

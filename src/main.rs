@@ -102,6 +102,10 @@ enum Commands {
         #[arg(long)]
         linux_dtb: Option<PathBuf>,
 
+        /// Auto-generate a minimal Linux DTB when --linux-dtb is not provided
+        #[arg(long, default_value_t = false)]
+        linux_auto_dtb: bool,
+
         /// Guest memory address to place Linux DTB blob
         #[arg(long, default_value = "0x87f00000")]
         linux_dtb_addr: String,
@@ -113,6 +117,18 @@ enum Commands {
         /// Guest memory address to place Linux bootargs string
         #[arg(long, default_value = "0x87ff0000")]
         linux_bootargs_addr: String,
+
+        /// Optional SBI firmware image for Linux boot chain (entry used as start PC)
+        #[arg(long)]
+        linux_sbi: Option<PathBuf>,
+
+        /// Guest memory address to place SBI firmware when image is raw binary
+        #[arg(long, default_value = "0x80000000")]
+        linux_sbi_addr: String,
+
+        /// Guest memory address to place Linux payload image in SBI boot chain
+        #[arg(long, default_value = "0x80200000")]
+        linux_payload_addr: String,
     },
 
     /// Start GDB debug server
@@ -203,9 +219,13 @@ fn main() -> anyhow::Result<()> {
             linux_boot,
             linux_hartid,
             linux_dtb,
+            linux_auto_dtb,
             linux_dtb_addr,
             linux_bootargs,
             linux_bootargs_addr,
+            linux_sbi,
+            linux_sbi_addr,
+            linux_payload_addr,
         } => run_program(
             memory,
             &pc,
@@ -223,9 +243,13 @@ fn main() -> anyhow::Result<()> {
             linux_boot,
             linux_hartid,
             linux_dtb,
+            linux_auto_dtb,
             &linux_dtb_addr,
             linux_bootargs,
             &linux_bootargs_addr,
+            linux_sbi,
+            &linux_sbi_addr,
+            &linux_payload_addr,
         ),
         Commands::Debug {
             port,
@@ -264,9 +288,13 @@ fn run_program(
     linux_boot: bool,
     linux_hartid: u32,
     linux_dtb: Option<PathBuf>,
+    linux_auto_dtb: bool,
     linux_dtb_addr_str: &str,
     linux_bootargs: Option<String>,
     linux_bootargs_addr_str: &str,
+    linux_sbi: Option<PathBuf>,
+    linux_sbi_addr_str: &str,
+    linux_payload_addr_str: &str,
 ) -> anyhow::Result<()> {
     init_logger(verbose);
 
@@ -277,8 +305,35 @@ fn run_program(
     // Attach UART for output
     attach_stdout_uart(&mut bus, Some(Arc::clone(&uart_prompt_ready)));
 
-    let file_entry = load_file(&mut bus, &file, requested_pc)?;
-    let start_pc = file_entry.unwrap_or(requested_pc);
+    let start_pc = if let Some(sbi_path) = linux_sbi.as_ref() {
+        if !linux_boot {
+            return Err(anyhow::anyhow!(
+                "--linux-sbi requires --linux-boot to be enabled"
+            ));
+        }
+
+        let sbi_addr = parse_hex_address(linux_sbi_addr_str)?;
+        let payload_addr = parse_hex_address(linux_payload_addr_str)?;
+        let payload_size = load_raw_file_at(&mut bus, &file, payload_addr)?;
+        println!(
+            "Linux boot chain: loaded payload {} ({} bytes) at {}",
+            file.display(),
+            payload_size,
+            payload_addr
+        );
+
+        let sbi_entry = load_file(&mut bus, sbi_path, sbi_addr)?;
+        let sbi_start_pc = sbi_entry.unwrap_or(sbi_addr);
+        println!(
+            "Linux boot chain: loaded SBI firmware {} start {}",
+            sbi_path.display(),
+            sbi_start_pc
+        );
+        sbi_start_pc
+    } else {
+        let file_entry = load_file(&mut bus, &file, requested_pc)?;
+        file_entry.unwrap_or(requested_pc)
+    };
     bus.print_memory_map();
 
     let mut cpu = Cpu::with_pc(bus, start_pc);
@@ -288,9 +343,11 @@ fn run_program(
         linux_boot,
         linux_hartid,
         linux_dtb,
+        linux_auto_dtb,
         linux_dtb_addr_str,
         linux_bootargs,
         linux_bootargs_addr_str,
+        memory_mb,
     )?;
 
     println!("\nmyCPU RISC-V Simulator v{}", mycpu::VERSION);
@@ -531,9 +588,11 @@ fn apply_linux_boot_context(
     linux_boot: bool,
     linux_hartid: u32,
     linux_dtb: Option<PathBuf>,
+    linux_auto_dtb: bool,
     linux_dtb_addr_str: &str,
     linux_bootargs: Option<String>,
     linux_bootargs_addr_str: &str,
+    memory_mb: usize,
 ) -> anyhow::Result<()> {
     if !linux_boot {
         return Ok(());
@@ -555,6 +614,20 @@ fn apply_linux_boot_context(
             "Linux boot: loaded DTB {} ({} bytes) at {}",
             path.display(),
             dtb.len(),
+            dtb_addr
+        );
+        dtb_addr.raw()
+    } else if linux_auto_dtb {
+        let memory_size_bytes = (memory_mb as u64)
+            .saturating_mul(1024)
+            .saturating_mul(1024)
+            .min(u32::MAX as u64) as u32;
+        let dtb = generate_minimal_linux_dtb(memory_size_bytes, linux_bootargs.as_deref());
+        cpu.bus_mut().write_bytes(dtb_addr, &dtb)?;
+        println!(
+            "Linux boot: auto-generated DTB ({} bytes, mem={} MB) at {}",
+            dtb.len(),
+            memory_mb,
             dtb_addr
         );
         dtb_addr.raw()
@@ -584,6 +657,109 @@ fn apply_linux_boot_context(
     );
 
     Ok(())
+}
+
+const FDT_MAGIC: u32 = 0xD00D_FEED;
+const FDT_BEGIN_NODE: u32 = 0x0000_0001;
+const FDT_END_NODE: u32 = 0x0000_0002;
+const FDT_PROP: u32 = 0x0000_0003;
+const FDT_END: u32 = 0x0000_0009;
+
+fn generate_minimal_linux_dtb(memory_size_bytes: u32, bootargs: Option<&str>) -> Vec<u8> {
+    fn push_be32(buf: &mut Vec<u8>, value: u32) {
+        buf.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn align4(buf: &mut Vec<u8>) {
+        while !buf.len().is_multiple_of(4) {
+            buf.push(0);
+        }
+    }
+
+    fn push_begin_node(buf: &mut Vec<u8>, name: &str) {
+        push_be32(buf, FDT_BEGIN_NODE);
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(0);
+        align4(buf);
+    }
+
+    fn push_end_node(buf: &mut Vec<u8>) {
+        push_be32(buf, FDT_END_NODE);
+    }
+
+    fn push_prop(buf: &mut Vec<u8>, nameoff: u32, data: &[u8]) {
+        push_be32(buf, FDT_PROP);
+        push_be32(buf, data.len() as u32);
+        push_be32(buf, nameoff);
+        buf.extend_from_slice(data);
+        align4(buf);
+    }
+
+    let mut strings = Vec::new();
+    let mut add_string = |s: &str| -> u32 {
+        let off = strings.len() as u32;
+        strings.extend_from_slice(s.as_bytes());
+        strings.push(0);
+        off
+    };
+
+    let off_compatible = add_string("compatible");
+    let off_model = add_string("model");
+    let off_address_cells = add_string("#address-cells");
+    let off_size_cells = add_string("#size-cells");
+    let off_bootargs = add_string("bootargs");
+    let off_device_type = add_string("device_type");
+    let off_reg = add_string("reg");
+
+    let mut structure = Vec::new();
+    push_begin_node(&mut structure, "");
+    push_prop(&mut structure, off_compatible, b"mycpu,virt\0");
+    push_prop(&mut structure, off_model, b"mycpu-rv32\0");
+    push_prop(&mut structure, off_address_cells, &1u32.to_be_bytes());
+    push_prop(&mut structure, off_size_cells, &1u32.to_be_bytes());
+
+    push_begin_node(&mut structure, "chosen");
+    if let Some(args) = bootargs {
+        let mut data = args.as_bytes().to_vec();
+        data.push(0);
+        push_prop(&mut structure, off_bootargs, &data);
+    }
+    push_end_node(&mut structure);
+
+    push_begin_node(&mut structure, "memory@80000000");
+    push_prop(&mut structure, off_device_type, b"memory\0");
+    let mut reg = Vec::with_capacity(8);
+    reg.extend_from_slice(&0x8000_0000u32.to_be_bytes());
+    reg.extend_from_slice(&memory_size_bytes.to_be_bytes());
+    push_prop(&mut structure, off_reg, &reg);
+    push_end_node(&mut structure);
+
+    push_end_node(&mut structure);
+    push_be32(&mut structure, FDT_END);
+    align4(&mut structure);
+
+    let off_mem_rsvmap = 40u32;
+    let mem_rsvmap = vec![0u8; 16];
+    let off_dt_struct = off_mem_rsvmap + mem_rsvmap.len() as u32;
+    let off_dt_strings = off_dt_struct + structure.len() as u32;
+    let totalsize = off_dt_strings + strings.len() as u32;
+
+    let mut out = Vec::with_capacity(totalsize as usize);
+    push_be32(&mut out, FDT_MAGIC);
+    push_be32(&mut out, totalsize);
+    push_be32(&mut out, off_dt_struct);
+    push_be32(&mut out, off_dt_strings);
+    push_be32(&mut out, off_mem_rsvmap);
+    push_be32(&mut out, 17);
+    push_be32(&mut out, 16);
+    push_be32(&mut out, 0);
+    push_be32(&mut out, strings.len() as u32);
+    push_be32(&mut out, structure.len() as u32);
+    out.extend_from_slice(&mem_rsvmap);
+    out.extend_from_slice(&structure);
+    out.extend_from_slice(&strings);
+
+    out
 }
 
 fn parse_escaped_uart_script(script: &str) -> Vec<u8> {
@@ -922,7 +1098,10 @@ fn run_with_heartbeat(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_escaped_uart_script, split_prompt_chunks, PromptDetectorState};
+    use super::{
+        generate_minimal_linux_dtb, parse_escaped_uart_script, split_prompt_chunks,
+        PromptDetectorState,
+    };
 
     #[test]
     fn test_parse_escaped_uart_script_common_sequences() {
@@ -962,6 +1141,21 @@ mod tests {
     fn test_split_prompt_chunks_keeps_tail_without_newline() {
         let chunks = split_prompt_chunks(b"echo tail");
         assert_eq!(chunks, vec![b"echo tail".to_vec()]);
+    }
+
+    #[test]
+    fn test_generate_minimal_linux_dtb_has_magic() {
+        let dtb = generate_minimal_linux_dtb(128 * 1024 * 1024, None);
+        assert!(dtb.len() >= 4);
+        assert_eq!(&dtb[0..4], &0xD00D_FEEDu32.to_be_bytes());
+    }
+
+    #[test]
+    fn test_generate_minimal_linux_dtb_contains_bootargs() {
+        let dtb = generate_minimal_linux_dtb(128 * 1024 * 1024, Some("console=ttyS0"));
+        let text = String::from_utf8_lossy(&dtb);
+        assert!(text.contains("bootargs"));
+        assert!(text.contains("console=ttyS0"));
     }
 }
 
@@ -1107,6 +1301,20 @@ fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<O
         println!("Loaded {} bytes at {}", data.len(), load_addr);
         Ok(None)
     }
+}
+
+/// Load a file as raw bytes at the specified address.
+fn load_raw_file_at(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<usize> {
+    let data = std::fs::read(path)?;
+    if data.len() >= 4 && &data[0..4] == &[0x7F, b'E', b'L', b'F'] {
+        println!(
+            "Linux boot chain: payload {} looks like ELF, but loaded as raw image at {}",
+            path.display(),
+            load_addr
+        );
+    }
+    bus.write_bytes(load_addr, &data)?;
+    Ok(data.len())
 }
 
 /// Start visualization server
