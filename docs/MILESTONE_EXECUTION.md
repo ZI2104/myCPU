@@ -484,7 +484,7 @@
 
 - 完成内容：
   - `run` 子命令新增 `--uart-inject-trigger <step|prompt>`，支持按 shell prompt 输出事件启动注入。
-  - 在 UART 输出回调中新增 prompt 检测（`$ ` 序列），并通过共享信号与注入器解耦。
+  - 在 UART 输出回调中新增 prompt 检测（`$` 后跟空格的序列），并通过共享信号与注入器解耦。
   - `scripts/run_xv6_shell_smoke.ps1` 新增 `-UartInjectTrigger` 参数并默认使用 `prompt`。
   - 为 prompt 检测补充单元测试：`PromptDetectorState` 序列识别/误报防护。
 - 变更文件：
@@ -501,7 +501,7 @@
   - `echo/ls/cat` 三场景矩阵 smoke 全部 PASS。
   - 运行日志确认注入模式为 `trigger=Prompt` 且 `UART script injected` 计数完整。
 - 风险/未完成项：
-  - prompt 检测当前基于 `$ ` 文本序列，后续可扩展对不同 shell/提示符风格的可配置匹配。
+  - prompt 检测当前基于 `$` 后跟空格的文本序列，后续可扩展对不同 shell/提示符风格的可配置匹配。
   - 当前断言仍基于正则文本，尚未升级为结构化会话状态机。
 - 上下文压缩（供下一步直接续做）：
   - 注入链路已具备 step/prompt 双模式，常规回归建议使用 `prompt` 降低固定步数参数调优成本。
@@ -523,7 +523,7 @@
   - 每场景均输出完整日志尾部与总结，且退出码为 0。
 - 风险/未完成项：
   - 当前“有序断言”仍是轻量状态验证，尚未上升为完整会话自动机（含异常分支与重试）。
-  - 提示符检测仍基于 `$ `，需为其他 shell 风格预留可配置项。
+  - 提示符检测仍基于 `$` 后跟空格，需为其他 shell 风格预留可配置项。
 - 上下文压缩（供下一步直接续做）：
   - 当前 smoke 已具备：step/prompt 双触发 + 正则匹配 + 有序断言三层保障。
   - 下一步优先：扩展矩阵场景（`grep/wc/usertests`）并沉淀失败分类（启动失败/注入失败/断言失败）。
@@ -737,3 +737,152 @@
   - 下一步优先：
     1) 引入 guest 侧 NES 应用二进制与 ROM 资源；
     2) 用同一验收脚本补齐“标题画面出现 + 输入响应 + 帧缓冲变化”断言。
+
+### 2026-04-01 Phase-4-03（渲染+输入自动验收脚本闭环）
+
+- 完成内容：
+  - 新增 Phase 4 自动验收脚本 `scripts/run_phase4_input_framebuffer_acceptance.ps1`：
+    - 自动启动 `visualize --linux-fb-demo --warmup` 后端；
+    - 通过 WebSocket 串联 `fb_game init/step`、`input right down/up/clear`、`input state`、`fb linux`；
+    - 断言输入状态位变化（RIGHT 按下后置位、clear 后归零）；
+    - 断言帧缓冲有效且发生变化（非零像素 + 签名变化），完成“渲染+输入回环”自动验收。
+  - 脚本执行后自动清理后端进程，并输出日志路径。
+- 变更文件：
+  - `scripts/run_phase4_input_framebuffer_acceptance.ps1`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1`
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：Phase 4 自动验收脚本 PASS（frame signature changed + input loop verified）。
+  - 通过：`cargo test --lib` -> `250/250`。
+  - 通过：前端构建成功（`vite build`）。
+- 风险/未完成项：
+  - 当前仍是 host 侧 `fb_game` 演示闭环，尚未切换到 guest 侧 NES 应用 + ROM 的端到端链路。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 4 已具备“Framebuffer + Input + 自动验收脚本”闭环能力；
+  - 下一步优先：将验收目标从 `fb_game` 迁移到 guest 侧 NES 程序（标题画面、输入响应、帧变化三类断言）。
+
+### 2026-04-01 Phase-4-04（Guest 就绪验收：stepn + 双模式脚本）
+
+- 完成内容：
+  - 可视化后端新增 WebSocket 命令 `stepn <N>`（批量执行 N 个 CPU step），用于 guest 程序场景下快速推进运行态。
+  - 修复可见性告警：`CommandContext::new` 由 `pub` 收敛为模块内私有，避免 `private_interfaces` 警告。
+  - 升级 `scripts/run_phase4_input_framebuffer_acceptance.ps1` 为双模式：
+    - `host-demo`：沿用 `fb_game + input + framebuffer` 回环；
+    - `guest-binary`：新增 `stepn` 推进 + guest 帧缓冲签名变化断言 + 输入状态断言。
+  - `guest-binary` 在未提供 `-GuestProgram` 时自动生成最小 RV32 帧缓冲 demo 二进制，确保脚本可独立运行完成验收。
+- 变更文件：
+  - `src/visualize/server.rs`
+  - `scripts/run_phase4_input_framebuffer_acceptance.ps1`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode host-demo`
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode guest-binary`
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`host-demo` 模式 PASS。
+  - 通过：`guest-binary` 模式 PASS（自动生成 guest demo + `stepn` 推进 + 帧变化断言）。
+  - 通过：库测试 `251/251`；前端构建通过。
+- 风险/未完成项：
+  - 当前 guest 模式默认二进制为“最小帧缓冲 demo”，尚未接入真实 NES guest 应用与 ROM 资源。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 4 验收已从 host-only 扩展为 host/guest 双模式，具备 `stepn` 快速推进能力；
+  - 下一步优先：接入真实 guest NES 应用并将断言从“帧变化”升级到“标题画面 + 输入响应 + 帧变化”三联验收。
+
+### 2026-04-01 Phase-4-04-R1（待办收尾复验 + 文档同步）
+
+- 完成内容：
+  - 基于当前工作区最新文件状态，复验 `stepn` + Phase4 双模式验收脚本链路。
+  - 复跑 host/guest 两条自动验收路径，确认输入回环与帧签名变化断言稳定通过。
+  - 复跑库测试与前端构建，并同步记录到里程碑与路线图文档。
+- 变更文件：
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/ROADMAP.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode host-demo`
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode guest-binary -SkipBuild`
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`host-demo` 模式 PASS（input loop verified + frame signature changed）。
+  - 通过：`guest-binary` 模式 PASS（自动 guest demo + `stepn=120000` + frame signature changed）。
+  - 通过：库测试 `251/251`。
+  - 通过：前端构建成功（Vite build）。
+- 风险/未完成项：
+  - 仍未接入真实 NES guest 应用与 ROM，当前 guest 验收目标仍是“最小帧缓冲 demo”。
+- 上下文压缩（供下一步直接续做）：
+  - 待办中的“stepn/双模式验收/回归测试/文档同步”已全部闭环；
+  - 下一步可直接进入真实 guest NES 工件接入与“三联业务断言”升级。
+
+### 2026-04-01 Phase-4-04-R2（相关文档整理更新）
+
+- 完成内容：
+  - 整理并更新用户入口文档，补齐 Phase 4 自动验收命令与说明，降低“脚本存在但入口文档缺失”的使用门槛。
+  - 在 `README.md` 的快速开始中新增：
+    - `run_phase4_input_framebuffer_acceptance.ps1`（`host-demo` / `guest-binary`）
+    - `run_mario_cpu_validation.ps1`（guest CPU 行为验收）
+  - 在 `docs/DEMO_GUIDE.md` 增加“Phase 4 快速验收”章节，包含 host/guest 一键验收命令与 PASS 关键字说明。
+  - 同步修正文档中的 Markdown 代码块语言标注（避免无语言围栏告警）。
+- 变更文件：
+  - `README.md`
+  - `docs/DEMO_GUIDE.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - 文档整理项，无额外运行时回归；功能链路沿用 R1 复验结果（host/guest 验收 + `cargo test --lib` + 前端构建均通过）。
+- 验收结果：
+  - 通过：文档入口与当前实现能力对齐，Phase 4 验收路径可直接按文档执行。
+- 风险/未完成项：
+  - 真实 NES guest 应用与 ROM 仍未接入，文档中的 guest 验收仍基于最小 demo binary。
+- 上下文压缩（供下一步直接续做）：
+  - 用户入口文档已补齐到 Phase 4 当前能力；
+  - 下一步可在文档中继续补“真实 NES 工件接入与三联断言”操作手册。
+
+### 2026-04-01 Phase-4-05（前端游戏流程控制闭环）
+
+- 完成内容：
+  - 新增前端 `GameFlowPanel`，打通 `fb_game` 的可视化操作流程：`init/step/run-pause/reset/sync`。
+  - 在 `framebuffer` 页签内接入游戏状态与输入状态联动展示：
+    - 实时显示 `tick/score`；
+    - 同步显示 `input_state` 位图与 IRQ 状态；
+    - 支持运行间隔配置，形成“输入→游戏推进→帧刷新”的前端闭环。
+  - `App` 消息分发补齐 `framebuffer_game` / `input_state` 响应接线。
+- 变更文件：
+  - `frontend/src/App.tsx`
+  - `frontend/src/components/GameFlowPanel.tsx`
+- 验收命令：
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：前端构建通过（含新增组件与状态分发）。
+- 风险/未完成项：
+  - 当前 guest 路径仍以最小 demo binary 为默认工件，真实 NES guest 工件接入不在本条目范围。
+- 上下文压缩（供下一步直接续做）：
+  - 游戏流程控制已进入前端主界面，下一步聚焦 Overlay 完成度与自动验收断言增强。
+
+### 2026-04-01 Phase-4-06（Overlay 完成 + Phase4 终验）
+
+- 完成内容：
+  - `FramebufferView` 新增 Overlay HUD：显示 `FPS/IPC/Stalls/Tick/Score/InputBits`。
+  - 增强 Phase 4 自动验收脚本 `run_phase4_input_framebuffer_acceptance.ps1`：
+    - host 模式新增 `fb_game state` 断言（`tick >= 6` 且包含 `ball_x/ball_y`）；
+    - guest 模式新增 `stepn.executed > 0` 断言。
+  - 形成“游戏流程 + 输入 + 帧缓冲 + Overlay 指标”的 Phase 4 完整交付。
+- 变更文件：
+  - `frontend/src/components/FramebufferView.tsx`
+  - `frontend/src/App.css`
+  - `scripts/run_phase4_input_framebuffer_acceptance.ps1`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode host-demo -SkipBuild`
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode guest-binary -SkipBuild`
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`host-demo` PASS（含新增游戏状态断言）。
+  - 通过：`guest-binary` PASS（含 `stepn executed` 断言）。
+  - 通过：库测试 `251/251`。
+  - 通过：前端构建成功。
+- 风险/未完成项：
+  - 真实 NES guest 应用与 ROM 仍属下一阶段增强项，不影响本阶段“简化 2D 游戏 + 输入 + Overlay”验收闭环。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 4 已完成并具备自动化验收；
+  - 下一阶段可直接转向“真实 NES guest 工件接入 + 三联业务断言（标题画面/输入响应/帧变化）”。

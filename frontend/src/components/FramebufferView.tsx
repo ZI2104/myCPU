@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FramebufferResponse } from '../types/snapshot';
+import type {
+    FramebufferGameResponse,
+    FramebufferResponse,
+    InputStateResponse,
+    PerfSnapshot,
+} from '../types/snapshot';
 
 interface FramebufferViewProps {
   sendCommand: (command: string) => void;
   onFramebufferData: (handler: (data: FramebufferResponse) => void) => void;
+  perf: PerfSnapshot | null;
+  gameState: FramebufferGameResponse | null;
+  inputState: InputStateResponse | null;
 }
 
 type PixelFormat = 'gray8' | 'rgb565' | 'rgb888';
@@ -17,6 +25,9 @@ const LINUX_FB_FORMAT: PixelFormat = 'rgb565';
 export const FramebufferView: React.FC<FramebufferViewProps> = ({
   sendCommand,
   onFramebufferData,
+  perf,
+  gameState,
+  inputState,
 }) => {
   const [addrInput, setAddrInput] = useState(LINUX_FB_ADDR);
   const [width, setWidth] = useState(LINUX_FB_WIDTH);
@@ -26,7 +37,9 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
   const [demoPattern, setDemoPattern] = useState<DemoPattern>('pong');
   const [lastFrame, setLastFrame] = useState<FramebufferResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fps, setFps] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frameTimeRef = useRef<number | null>(null);
 
   const refresh = useCallback(() => {
     sendCommand(`framebuffer ${addrInput} ${width} ${height} ${format}`);
@@ -48,6 +61,14 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
   useEffect(() => {
     onFramebufferData((data: FramebufferResponse) => {
       if (data.success) {
+        const now = performance.now();
+        if (frameTimeRef.current !== null) {
+          const delta = now - frameTimeRef.current;
+          if (delta > 0) {
+            setFps(1000 / delta);
+          }
+        }
+        frameTimeRef.current = now;
         setLastFrame(data);
         setError(null);
       } else {
@@ -102,6 +123,25 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
     }
     return `addr=${lastFrame.addr.toString(16)} format=${lastFrame.format} ${lastFrame.width}x${lastFrame.height}`;
   }, [lastFrame]);
+
+  const overlayText = useMemo(() => {
+    const ipc = perf ? perf.ipc.toFixed(3) : 'N/A';
+    const stalls = perf ? perf.stalls.toLocaleString() : 'N/A';
+    const tick = gameState?.tick ?? 0;
+    const scoreLeft = gameState?.score_left ?? 0;
+    const scoreRight = gameState?.score_right ?? 0;
+    const inputBits = inputState?.key_state !== undefined
+      ? `0x${inputState.key_state.toString(16).toUpperCase()}`
+      : 'N/A';
+    return {
+      fps: fps > 0 ? fps.toFixed(1) : '0.0',
+      ipc,
+      stalls,
+      tick,
+      score: `${scoreLeft}:${scoreRight}`,
+      inputBits,
+    };
+  }, [fps, gameState, inputState, perf]);
 
   return (
     <div className="framebuffer-view">
@@ -167,6 +207,14 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
 
       <div className="framebuffer-canvas-wrapper">
         <canvas ref={canvasRef} className="framebuffer-canvas" />
+        <div className="framebuffer-overlay">
+          <div className="overlay-item">FPS {overlayText.fps}</div>
+          <div className="overlay-item">IPC {overlayText.ipc}</div>
+          <div className="overlay-item">Stalls {overlayText.stalls}</div>
+          <div className="overlay-item">Tick {overlayText.tick}</div>
+          <div className="overlay-item">Score {overlayText.score}</div>
+          <div className="overlay-item">Input {overlayText.inputBits}</div>
+        </div>
       </div>
     </div>
   );

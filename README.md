@@ -67,6 +67,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1
 # Windows 一键启动图案演示（旧模式）
 powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mode pattern-demo
 
+# Windows 执行 Phase 4 帧缓冲+输入自动验收（host 模式）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode host-demo
+
+# Windows 执行 Phase 4 帧缓冲+输入自动验收（guest 模式，含 stepn）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode guest-binary
+
+# Windows 执行 guest CPU 行为验收（输入脚本注入）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_mario_cpu_validation.ps1 -GuestBinary .\third_party\xv6-rv32\kernel\kernel -VirtioDisk .\third_party\xv6-rv32\fs.img
+
 # Windows 清理临时工作区文件（推荐定期执行）
 powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1
 ```
@@ -74,12 +83,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1
 ## 文档
 
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构详细说明
-- [指令集实现](docs/INSTRUCTIONS.md) - RV32I 指令集实现状态
 - [开发计划](docs/ROADMAP.md) - 开发路线图
+- [里程碑执行记录](docs/MILESTONE_EXECUTION.md) - 分阶段验收与上下文压缩
+- [课程演示指南](docs/DEMO_GUIDE.md) - 可视化与演示流程
 
 ## 项目结构
 
-```
+```text
 myCPU/
 ├── src/
 │   ├── lib.rs           # 库入口

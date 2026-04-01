@@ -3,6 +3,7 @@ import './App.css';
 import { ControlPanel } from './components/ControlPanel';
 import { DebugInspector } from './components/DebugInspector';
 import { FramebufferView } from './components/FramebufferView';
+import { GameFlowPanel } from './components/GameFlowPanel';
 import { InputPanel } from './components/InputPanel';
 import { MemoryView } from './components/MemoryView';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
@@ -13,8 +14,10 @@ import type {
     Breakpoint,
     CpuSnapshot,
     DisassemblyResponse,
+    FramebufferGameResponse,
     FramebufferResponse,
     HistoryResponse,
+    InputStateResponse,
     MemoryReadResponse,
 } from './types/snapshot';
 
@@ -28,6 +31,8 @@ function App() {
   const [disassembly, setDisassembly] = useState<DisassemblyResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([]);
+  const [gameState, setGameState] = useState<FramebufferGameResponse | null>(null);
+  const [inputState, setInputState] = useState<InputStateResponse | null>(null);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
   const framebufferHandlersRef = useRef<((data: FramebufferResponse) => void)[]>([]);
 
@@ -45,6 +50,10 @@ function App() {
         } else if (data.type === 'framebuffer' && data.width !== undefined && data.height !== undefined) {
           const fbResponse = data as FramebufferResponse;
           framebufferHandlersRef.current.forEach(handler => handler(fbResponse));
+        } else if (data.type === 'framebuffer_game') {
+          setGameState(data as FramebufferGameResponse);
+        } else if (data.type === 'input_state') {
+          setInputState(data as InputStateResponse);
         } else if (data.base_addr !== undefined && Array.isArray(data.instructions)) {
           setDisassembly(data as DisassemblyResponse);
         } else if (Array.isArray(data.records) && data.total !== undefined) {
@@ -178,9 +187,17 @@ function App() {
 
               {activeTab === 'framebuffer' && (
                 <>
+                  <GameFlowPanel
+                    sendCommand={send}
+                    gameState={gameState}
+                    inputState={inputState}
+                  />
                   <FramebufferView
                     sendCommand={send}
                     onFramebufferData={registerFramebufferHandler}
+                    perf={snapshot.perf}
+                    gameState={gameState}
+                    inputState={inputState}
                   />
                   <InputPanel sendCommand={send} />
                 </>

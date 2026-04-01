@@ -4,7 +4,7 @@
 
 ## 快速启动（Framebuffer 演示）
 
-```powershell
+```bash
 # 仓库根目录执行（Windows）
 powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1
 ```
@@ -17,16 +17,36 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1
 
 如需使用旧的图案命令演示（`fb_demo`）：
 
-```powershell
+```bash
 powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mode pattern-demo
 ```
+
+## 快速验收（Phase 4：输入 + 帧缓冲）
+
+```bash
+# host 演示链路验收（fb_game + input + framebuffer）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode host-demo
+
+# guest 演示链路验收（guest binary + stepn + input/framebuffer）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode guest-binary
+```
+
+期望输出关键字：
+
+- `PASS(host-demo)`
+- `PASS(guest-binary)`
+
+说明：guest 模式在未提供 `-GuestProgram` 时会自动生成最小 RV32 帧缓冲 demo 二进制用于验收。
 
 浏览器操作：
 
 1. 进入 `Framebuffer` 标签页
-2. 点击 `Linux Preset`
-3. （默认模式）点击 `Refresh` 观察程序输出
-4. （图案模式）选择 `pong/checker/gradient` 后点击 `Demo Frame`
+2. 点击 `Game Flow` 区域的 `Init` 初始化游戏状态
+3. 点击 `Run`（或 `Step`）驱动 `fb_game`，再观察帧变化
+4. 使用 `Input Panel`（键盘 WASD/方向键 + J/K）验证输入响应
+5. 观察画布左上角 Overlay：`FPS/IPC/Stalls/Tick/Score/InputBits`
+6. 如需直接读取 Linux 预设地址，点击 `Linux Preset` + `Refresh`
+7. （图案模式）选择 `pong/checker/gradient` 后点击 `Demo Frame`
 
 说明：后端 `visualize` 支持不传程序文件，且可通过 `--linux-fb-demo` 预置 RV32I 帧缓冲写入程序。
 
@@ -50,6 +70,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mod
 > "大家好，我今天要展示的是 myCPU —— 一个使用 Rust 实现的 RISC-V RV32I 模拟器。
 >
 > 这个项目实现了：
+>
 > - 完整的 RV32I 指令集（40 条指令）
 > - 经典的 5 级流水线架构
 > - M/S/U 三级特权模式
@@ -76,7 +97,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_framebuffer_demo.ps1 -Mod
 
 ### 架构图 (备用)
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         myCPU Architecture                           │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -303,6 +324,7 @@ test result: ok. 8 passed
 > 5. **实现了性能监控功能**，符合 RISC-V HPM 规范
 >
 > 通过这个项目，我深入理解了：
+>
 > - CPU 流水线的工作原理
 > - 数据冒险和控制冒险的处理方法
 > - 特权级和异常处理机制

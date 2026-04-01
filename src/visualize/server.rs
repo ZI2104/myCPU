@@ -508,6 +508,8 @@ enum Command {
     State,
     /// Execute single step
     Step,
+    /// Execute N steps in one request
+    StepN { count: u32 },
     /// Start continuous execution
     Run,
     /// Pause execution
@@ -558,6 +560,10 @@ impl Command {
         match parts[0] {
             "state" => Some(Command::State),
             "step" => Some(Command::Step),
+            "stepn" | "step_n" => parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .map(|count| Command::StepN { count }),
             "run" => Some(Command::Run),
             "pause" => Some(Command::Pause),
             "reset" => Some(Command::Reset),
@@ -721,7 +727,7 @@ pub struct CommandContext {
 
 impl CommandContext {
     /// Create a new command context.
-    pub fn new(
+    fn new(
         cpu: Arc<Mutex<PipelineCpu>>,
         running: Arc<Mutex<bool>>,
         speed: Arc<Mutex<u32>>,
@@ -932,6 +938,31 @@ impl VisualizeServer {
                     serde_json::to_string(&snapshot).unwrap()
                 };
                 ctx.send_json(json).await;
+            }
+            Command::StepN { count } => {
+                let response = {
+                    let mut cpu_guard = ctx.cpu.lock().await;
+                    let mut executed = 0u32;
+                    let target = count.max(1);
+
+                    while executed < target {
+                        if cpu_guard.is_halted() {
+                            break;
+                        }
+                        let _ = cpu_guard.clock();
+                        executed += 1;
+                    }
+
+                    let snapshot = cpu_guard.snapshot();
+                    serde_json::json!({
+                        "type": "stepn",
+                        "success": true,
+                        "requested": count,
+                        "executed": executed,
+                        "snapshot": snapshot,
+                    })
+                };
+                ctx.send_json(response.to_string()).await;
             }
             Command::Run => {
                 {
@@ -1600,6 +1631,19 @@ mod tests {
     fn test_parse_input_state_and_clear_commands() {
         assert_eq!(Command::parse("input state"), Some(Command::InputState));
         assert_eq!(Command::parse("input clear"), Some(Command::InputClear));
+    }
+
+    #[test]
+    fn test_parse_stepn_command() {
+        assert_eq!(
+            Command::parse("stepn 100"),
+            Some(Command::StepN { count: 100 })
+        );
+        assert_eq!(
+            Command::parse("step_n 42"),
+            Some(Command::StepN { count: 42 })
+        );
+        assert_eq!(Command::parse("stepn"), None);
     }
 
     #[test]
