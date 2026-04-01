@@ -666,3 +666,43 @@
 - 上下文压缩（供下一步直接续做）：
   - 模拟器侧 Phase 3 链路能力已齐全：SBI + 自动/外部 FDT + bootargs + payload 装载。
   - 下一步只需补齐外部工件（OpenSBI + Buildroot Image/rootfs/dtb）即可执行终验并闭环。
+
+### 2026-04-01 Phase-4-01（输入外设通路：MMIO + 可视化命令 + 前端面板）
+
+- 完成内容：
+  - 新增输入外设 `InputDevice`（`0x1000_2000`）：
+    - `key_state` 位图、`last_event`、`event_count`、`control/status`（IRQ pending）寄存器。
+    - 支持主机注入按键按下/抬起、清空按键状态与中断确认。
+  - 总线新增输入能力：
+    - `inject_input_key()` / `clear_input_keys()` / `get_input_snapshot()`。
+  - 可视化服务新增输入命令：
+    - `input <key> <down|up>`、`input clear`、`input state`。
+  - 前端新增 `InputPanel`：
+    - 鼠标按键（↑←↓→/A/B）与键盘映射（WASD/方向键 + J/K）上报输入命令。
+    - 支持 `Release All` 一键释放。
+- 变更文件：
+  - `src/peripheral/input.rs`
+  - `src/peripheral/mod.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `src/main.rs`
+  - `frontend/src/components/InputPanel.tsx`
+  - `frontend/src/App.tsx`
+  - `frontend/src/App.css`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`cargo test --lib` -> `248/248` 全通过（新增 `peripheral::input`、`memory::bus`、`visualize::server` 输入相关测试）。
+  - 通过：前端构建成功（`vite build` 完成）。
+- 风险/未完成项：
+  - 当前已打通“输入设备通路”，但 Linux 用户态游戏程序本体与 Overlay 指标展示尚未完成。
+  - 输入协议当前为轻量文本命令，后续可演进为结构化事件通道（含按键重复、时间戳与批量提交）。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 4 已完成“渲染 + 输入”两条基础链路（Framebuffer + Input）。
+  - 下一步优先：
+    1) 增加 Linux 用户态小游戏 demo 程序并接入输入寄存器；
+    2) 在前端补 Overlay（FPS/IPC/stall/syscall）并与运行态联动；
+    3) 为 Phase 4 增加一键验收脚本（渲染+输入回环断言）。

@@ -4,7 +4,7 @@
 //! and routes memory accesses to the appropriate components.
 
 use crate::error::{check_alignment, Result, SimError};
-use crate::peripheral::{Uart, VirtioBlock};
+use crate::peripheral::{InputDevice, Uart, VirtioBlock};
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
 use std::fmt;
@@ -273,6 +273,59 @@ impl Bus {
         }
 
         false
+    }
+
+    /// Inject one key event into Input peripheral.
+    ///
+    /// Returns `true` if Input peripheral exists.
+    pub fn inject_input_key(&mut self, key_code: u8, pressed: bool) -> bool {
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() != "Input" {
+                continue;
+            }
+
+            if let Some(input) = peripheral.as_any_mut().downcast_mut::<InputDevice>() {
+                input.set_key(key_code, pressed);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Clear all input key states.
+    ///
+    /// Returns `true` if Input peripheral exists.
+    pub fn clear_input_keys(&mut self) -> bool {
+        for (_, _, peripheral) in &mut self.peripheral_regions {
+            if peripheral.name() != "Input" {
+                continue;
+            }
+
+            if let Some(input) = peripheral.as_any_mut().downcast_mut::<InputDevice>() {
+                input.clear_keys();
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Get input snapshot if Input peripheral is attached.
+    ///
+    /// Returns `(key_state, last_event, event_count, irq_pending)`.
+    pub fn get_input_snapshot(&self) -> Option<(u32, u32, u32, bool)> {
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() != "Input" {
+                continue;
+            }
+
+            if let Some(input) = peripheral.as_any().downcast_ref::<InputDevice>() {
+                return Some(input.snapshot());
+            }
+        }
+
+        None
     }
 
     /// Get timer and software interrupt status from CLINT.
@@ -686,5 +739,23 @@ mod tests {
         assert_eq!(read_u16(&bus, used + 2), 2);
         assert_eq!(read_u32(&bus, used + 4), 0);
         assert_eq!(read_u32(&bus, used + 16), SECTOR_SIZE);
+    }
+
+    #[test]
+    fn test_bus_input_injection_and_clear() {
+        use crate::peripheral::InputDevice;
+
+        let mut bus = Bus::new();
+        bus.attach_peripheral(InputDevice::new());
+
+        assert!(bus.inject_input_key(0, true));
+        let (state, _last, count, _irq) = bus.get_input_snapshot().unwrap();
+        assert_eq!(state & 1, 1);
+        assert_eq!(count, 1);
+
+        assert!(bus.clear_input_keys());
+        let (state_after, _last_after, count_after, _irq_after) = bus.get_input_snapshot().unwrap();
+        assert_eq!(state_after, 0);
+        assert_eq!(count_after, 1);
     }
 }

@@ -6,6 +6,7 @@
 use crate::cpu::pipeline::PipelineCpu;
 use crate::cpu::ExecutionModel;
 use crate::error::Result;
+use crate::peripheral::INPUT_BASE;
 use crate::types::Addr;
 use crate::visualize::snapshot::{
     disassemble, Breakpoint, CpuSnapshot, DisassembledInstruction, DisassemblyResponse,
@@ -169,6 +170,29 @@ fn parse_u32_auto(input: &str) -> Option<u32> {
     }
 }
 
+fn parse_input_key_code(input: &str) -> Option<u8> {
+    match input.to_ascii_lowercase().as_str() {
+        "up" => Some(0),
+        "left" => Some(1),
+        "down" => Some(2),
+        "right" => Some(3),
+        "a" | "action" => Some(4),
+        "b" | "back" => Some(5),
+        "start" => Some(6),
+        "select" => Some(7),
+        other => parse_u32_auto(other)
+            .and_then(|v| (v <= u8::MAX as u32).then_some(v as u8)),
+    }
+}
+
+fn parse_input_pressed(input: &str) -> Option<bool> {
+    match input.to_ascii_lowercase().as_str() {
+        "down" | "press" | "pressed" | "1" => Some(true),
+        "up" | "release" | "released" | "0" => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PixelFormat {
     Gray8,
@@ -280,6 +304,12 @@ enum Command {
     },
     /// Generate and write a demo framebuffer scene into memory.
     FramebufferDemo { pattern: DemoPattern },
+    /// Inject one input key event.
+    InputKey { key_code: u8, pressed: bool },
+    /// Clear all input key states.
+    InputClear,
+    /// Read input state snapshot.
+    InputState,
 }
 
 impl Command {
@@ -388,6 +418,29 @@ impl Command {
                     .unwrap_or(DemoPattern::Pong);
                 Some(Command::FramebufferDemo { pattern })
             }
+            "input" | "in" => {
+                if parts.len() < 2 {
+                    return None;
+                }
+
+                if parts[1].eq_ignore_ascii_case("clear") {
+                    return Some(Command::InputClear);
+                }
+
+                if parts[1].eq_ignore_ascii_case("state") {
+                    return Some(Command::InputState);
+                }
+
+                if parts.len() < 3 {
+                    return None;
+                }
+
+                let key_code = parse_input_key_code(parts[1])?;
+                let pressed = parse_input_pressed(parts[2])?;
+                Some(Command::InputKey { key_code, pressed })
+            }
+            "input_clear" => Some(Command::InputClear),
+            "input_state" => Some(Command::InputState),
             _ => None,
         }
     }
@@ -907,6 +960,59 @@ impl VisualizeServer {
 
                 ctx.send_json(response.to_string()).await;
             }
+            Command::InputKey { key_code, pressed } => {
+                let success = {
+                    let mut cpu_guard = ctx.cpu.lock().await;
+                    cpu_guard.bus_mut().inject_input_key(key_code, pressed)
+                };
+
+                let response = serde_json::json!({
+                    "type": "input_ack",
+                    "success": success,
+                    "key_code": key_code,
+                    "pressed": pressed,
+                });
+                ctx.send_json(response.to_string()).await;
+            }
+            Command::InputClear => {
+                let success = {
+                    let mut cpu_guard = ctx.cpu.lock().await;
+                    cpu_guard.bus_mut().clear_input_keys()
+                };
+
+                let response = serde_json::json!({
+                    "type": "input_ack",
+                    "success": success,
+                    "cleared": true,
+                });
+                ctx.send_json(response.to_string()).await;
+            }
+            Command::InputState => {
+                let response = {
+                    let cpu_guard = ctx.cpu.lock().await;
+                    if let Some((key_state, last_event, event_count, irq_pending)) =
+                        cpu_guard.bus().get_input_snapshot()
+                    {
+                        serde_json::json!({
+                            "type": "input_state",
+                            "success": true,
+                            "base_addr": INPUT_BASE,
+                            "key_state": key_state,
+                            "last_event": last_event,
+                            "event_count": event_count,
+                            "irq_pending": irq_pending,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "type": "input_state",
+                            "success": false,
+                            "error": "Input peripheral not attached",
+                        })
+                    }
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
         }
 
         Ok(())
@@ -1095,6 +1201,36 @@ mod tests {
     fn test_generate_demo_frame_size() {
         let frame = generate_demo_frame_rgb565(DemoPattern::Pong, 320, 240);
         assert_eq!(frame.len(), 320 * 240 * 2);
+    }
+
+    #[test]
+    fn test_parse_input_key_command_with_named_key() {
+        let cmd = Command::parse("input left down");
+        assert_eq!(
+            cmd,
+            Some(Command::InputKey {
+                key_code: 1,
+                pressed: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_input_key_command_with_numeric_key() {
+        let cmd = Command::parse("input 7 up");
+        assert_eq!(
+            cmd,
+            Some(Command::InputKey {
+                key_code: 7,
+                pressed: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_input_state_and_clear_commands() {
+        assert_eq!(Command::parse("input state"), Some(Command::InputState));
+        assert_eq!(Command::parse("input clear"), Some(Command::InputClear));
     }
 }
 

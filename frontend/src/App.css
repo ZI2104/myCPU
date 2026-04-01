@@ -670,6 +670,67 @@ body {
   max-width: 100%;
 }
 
+/* Input Panel */
+.input-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fafafa;
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.input-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.input-panel-header h3 {
+  margin: 0;
+}
+
+.input-reset {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.input-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(56px, 72px));
+  gap: 8px;
+  justify-content: start;
+}
+
+.input-btn {
+  height: 44px;
+  border: 1px solid #cfcfcf;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  user-select: none;
+}
+
+.input-btn.pressed {
+  background: #e8f5e9;
+  border-color: #4caf50;
+  transform: translateY(1px);
+}
+
+.input-btn.action {
+  background: #f3e5f5;
+}
+
+.input-hint {
+  margin-top: 8px;
+  color: var(--text-light);
+  font-size: 12px;
+}
+
 /* Debug Inspector */
 .debug-inspector {
   display: flex;

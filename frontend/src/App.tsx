@@ -3,6 +3,7 @@ import './App.css';
 import { ControlPanel } from './components/ControlPanel';
 import { DebugInspector } from './components/DebugInspector';
 import { FramebufferView } from './components/FramebufferView';
+import { InputPanel } from './components/InputPanel';
 import { MemoryView } from './components/MemoryView';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PipelineVisualizer } from './components/PipelineVisualizer';
@@ -176,10 +177,13 @@ function App() {
               )}
 
               {activeTab === 'framebuffer' && (
-                <FramebufferView
-                  sendCommand={send}
-                  onFramebufferData={registerFramebufferHandler}
-                />
+                <>
+                  <FramebufferView
+                    sendCommand={send}
+                    onFramebufferData={registerFramebufferHandler}
+                  />
+                  <InputPanel sendCommand={send} />
+                </>
               )}
 
               {activeTab === 'debug' && (
