@@ -21,6 +21,22 @@
 | Phase 5 | ✅    | NPU/LPU（DMA+IRQ+custom fast-path+面板+时间线）完成     |
 | Phase 6 | ✅    | 一键编排验收（xv6→Linux→Phase4→NPU/LPU→frontend）全通过 |
 
+### 课设周次映射（第 4-8 周）
+
+| 周次  | 阶段      | 交付目标                  |
+| ----- | --------- | ------------------------- |
+| 第4周 | Phase 1-2 | 基础框架 + RV32I 指令链路 |
+| 第5周 | Phase 3   | 流水线与冒险处理          |
+| 第6周 | Phase 4   | 特权级、异常与中断        |
+| 第7周 | Phase 5   | 外设与调试框架            |
+| 第8周 | Phase 6   | 一键演示与回归矩阵        |
+
+### Phase / Step 排序统一规范
+
+- Phase 主编号：`Phase 0..6`（递增排序）。
+- Step 子编号：`Step <phase>.<index>`（例如 `Step 2.1`）。
+- 里程碑编号：`Phase-<phase>-<index>`（例如 `Phase-6-02`）。
+
 ### 已完成里程碑证据
 
 - 路线图状态：`docs/ROADMAP.md`

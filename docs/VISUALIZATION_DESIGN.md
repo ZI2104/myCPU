@@ -34,12 +34,12 @@
 
 ### 技术选择理由
 
-| 技术 | 选择 | 理由 |
-|------|------|------|
-| 前端框架 | React | 生态成熟，组件丰富 |
-| 可视化库 | D3.js | SVG 动画灵活，适合硬件图 |
-| 实时通信 | WebSocket | 双向通信，低延迟 |
-| 后端 | Rust + tokio-tungstenite | 复用现有代码，高性能 |
+| 技术     | 选择                     | 理由                     |
+| -------- | ------------------------ | ------------------------ |
+| 前端框架 | React                    | 生态成熟，组件丰富       |
+| 可视化库 | D3.js                    | SVG 动画灵活，适合硬件图 |
+| 实时通信 | WebSocket                | 双向通信，低延迟         |
+| 后端     | Rust + tokio-tungstenite | 复用现有代码，高性能     |
 
 ### 替代方案
 
@@ -232,28 +232,28 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ snapshot }) => 
 └─────────────────────────────────────┘
 ```
 
-## 实现步骤
+## 实现步骤（第4-8周映射）
 
-### Week 1: 后端 API
+### 第4周：后端 API 基础
 
 1. 创建 `src/visualize/mod.rs`
 2. 实现 `CpuSnapshot` 结构
 3. 添加 `cpu.snapshot()` 方法
 4. 实现 WebSocket 服务器
 
-### Week 2: 前端基础
+### 第5周：前端基础
 
 1. 初始化 React 项目 (`frontend/`)
 2. 实现 WebSocket 连接
 3. 创建基础组件 (RegisterPanel, MemoryView)
 
-### Week 3: 流水线可视化
+### 第6-7周：流水线可视化
 
 1. D3.js 流水线动画
 2. 前递路径可视化
 3. 冒险检测高亮
 
-### Week 4: 集成与优化
+### 第8周：集成与优化
 
 1. 控制面板 (运行/暂停/单步)
 2. 性能图表

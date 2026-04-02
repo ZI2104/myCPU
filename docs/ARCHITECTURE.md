@@ -390,34 +390,22 @@ src/peripheral/
 
 ```mermaid
 gantt
-    title myCPU 开发路线图 (8 周)
+    title myCPU 开发路线图（第4-8周）
     dateFormat  YYYY-MM-DD
-    section Phase 1
-    项目骨架搭建           :a1, 2024-01-01, 3d
-    内存模块实现           :a2, after a1, 2d
-    CPU 寄存器组           :a3, after a2, 2d
+    section 第4周（Phase 1-2）
+    基础框架 + RV32I       :a1, 2026-03-30, 7d
 
-    section Phase 2
-    译码器实现             :b1, after a3, 3d
-    RV32I 基础指令         :b2, after b1, 7d
+    section 第5周（Phase 3）
+    流水线 + 冒险处理      :b1, after a1, 7d
 
-    section Phase 3
-    流水线实现             :c1, after b2, 5d
-    冒险处理               :c2, after c1, 4d
-    CSR 寄存器             :c3, after c2, 2d
+    section 第6周（Phase 4）
+    特权级 + 异常中断      :c1, after b1, 7d
 
-    section Phase 4
-    异常处理机制           :d1, after c3, 5d
-    中断控制器             :d2, after d1, 5d
-    特权级切换             :d3, after d2, 4d
+    section 第7周（Phase 5）
+    外设 + 调试 + DiffTest :d1, after c1, 7d
 
-    section Phase 5
-    UART 串口              :e1, after d3, 3d
-    ELF 加载器             :e2, after e1, 2d
-    调试器 + DiffTest      :e3, after e2, 2d
-
-    section Phase 6 P0
-    性能监控               :f1, after e3, 7d
+    section 第8周（Phase 6）
+    演示封装 + 回归矩阵    :e1, after d1, 7d
 ```
 
 ---

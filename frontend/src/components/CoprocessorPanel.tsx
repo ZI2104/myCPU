@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { LpuStateResponse, NpuStateResponse } from '../types/snapshot';
 
 interface CoprocessorPanelProps {
@@ -16,139 +16,35 @@ interface TimelinePoint {
   pending: boolean;
 }
 
+// 限制时间线最大点数，避免内存无限增长
 const MAX_TIMELINE_POINTS = 24;
 
-function formatHex(value?: number) {
-  if (value === undefined) {
-    return '--';
-  }
-  return `0x${value.toString(16).toUpperCase().padStart(8, '0')}`;
+// 独立的 CoprocessorCard 组件，避免在渲染时创建组件
+interface CoprocessorCardProps {
+  title: string;
+  state: NpuStateResponse | LpuStateResponse | null;
+  refreshCommand: string;
+  timeline: TimelinePoint[];
+  onRefresh: (command: string) => void;
+  renderTimeline: (timeline: TimelinePoint[]) => React.ReactNode;
 }
 
-function formatHex64(value?: number) {
-  if (value === undefined) {
-    return '--';
-  }
-  return `0x${Math.trunc(value).toString(16).toUpperCase()}`;
-}
-
-export function CoprocessorPanel({ sendCommand, npuState, lpuState }: CoprocessorPanelProps) {
-  const [npuTimeline, setNpuTimeline] = useState<TimelinePoint[]>([]);
-  const [lpuTimeline, setLpuTimeline] = useState<TimelinePoint[]>([]);
-
-  useEffect(() => {
-    if (!npuState?.success) {
-      return;
-    }
-
-    const point: TimelinePoint = {
-      ts: Date.now(),
-      notify: npuState.desc_notify_count ?? 0,
-      done: npuState.tasks_done ?? 0,
-      error: npuState.tasks_error ?? 0,
-      cycles: npuState.cycles ?? 0,
-      pending: Boolean(npuState.pending_desc_notify),
-    };
-
-    setNpuTimeline((prev) => {
-      const last = prev[prev.length - 1];
-      const unchanged =
-        last &&
-        last.notify === point.notify &&
-        last.done === point.done &&
-        last.error === point.error &&
-        last.cycles === point.cycles &&
-        last.pending === point.pending;
-
-      if (unchanged) {
-        return prev;
-      }
-
-      const next = [...prev, point];
-      return next.slice(-MAX_TIMELINE_POINTS);
-    });
-  }, [npuState]);
-
-  useEffect(() => {
-    if (!lpuState?.success) {
-      return;
-    }
-
-    const point: TimelinePoint = {
-      ts: Date.now(),
-      notify: lpuState.desc_notify_count ?? 0,
-      done: lpuState.tasks_done ?? 0,
-      error: lpuState.tasks_error ?? 0,
-      cycles: lpuState.cycles ?? 0,
-      pending: Boolean(lpuState.pending_desc_notify),
-    };
-
-    setLpuTimeline((prev) => {
-      const last = prev[prev.length - 1];
-      const unchanged =
-        last &&
-        last.notify === point.notify &&
-        last.done === point.done &&
-        last.error === point.error &&
-        last.cycles === point.cycles &&
-        last.pending === point.pending;
-
-      if (unchanged) {
-        return prev;
-      }
-
-      const next = [...prev, point];
-      return next.slice(-MAX_TIMELINE_POINTS);
-    });
-  }, [lpuState]);
-
-  const refreshAll = () => {
-    sendCommand('npu state');
-    sendCommand('lpu state');
-  };
-
-  const renderTimeline = (timeline: TimelinePoint[]) => {
-    if (timeline.length === 0) {
-      return <div className="coproc-timeline-empty">暂无时间线数据</div>;
-    }
-
-    return (
-      <div className="coproc-timeline">
-        {timeline
-          .slice()
-          .reverse()
-          .map((point, index, reversed) => {
-            const older = reversed[index + 1];
-            const doneDelta = older ? point.done - older.done : 0;
-            const errorDelta = older ? point.error - older.error : 0;
-            const notifyDelta = older ? point.notify - older.notify : 0;
-            return (
-              <div className="coproc-timeline-row" key={`${point.ts}-${point.done}-${point.notify}-${index}`}>
-                <span>{new Date(point.ts).toLocaleTimeString()}</span>
-                <span>notify {point.notify} ({notifyDelta >= 0 ? '+' : ''}{notifyDelta})</span>
-                <span>done {point.done} ({doneDelta >= 0 ? '+' : ''}{doneDelta})</span>
-                <span>err {point.error} ({errorDelta >= 0 ? '+' : ''}{errorDelta})</span>
-                <span>pending {point.pending ? 'Y' : 'N'}</span>
-              </div>
-            );
-          })}
-      </div>
-    );
-  };
-
-  const renderCard = (
-    title: string,
-    state: NpuStateResponse | LpuStateResponse | null,
-    refreshCommand: string,
-    timeline: TimelinePoint[],
-  ) => (
+function CoprocessorCard({
+  title,
+  state,
+  refreshCommand,
+  timeline,
+  onRefresh,
+  renderTimeline,
+}: CoprocessorCardProps) {
+  return (
     <div className="coproc-card">
       <div className="coproc-card-header">
         <h3>{title}</h3>
-        <button onClick={() => sendCommand(refreshCommand)}>刷新</button>
+        <button onClick={() => onRefresh(refreshCommand)}>刷新</button>
       </div>
 
-      {!state && <div className="coproc-empty">暂无状态，点击“刷新”获取</div>}
+      {!state && <div className="coproc-empty">暂无状态，点击"刷新"获取</div>}
 
       {state && state.success === false && (
         <div className="coproc-error">{state.error ?? '读取失败'}</div>
@@ -177,6 +73,109 @@ export function CoprocessorPanel({ sendCommand, npuState, lpuState }: Coprocesso
       )}
     </div>
   );
+}
+
+function formatHex(value?: number) {
+  if (value === undefined) {
+    return '--';
+  }
+  return `0x${value.toString(16).toUpperCase().padStart(8, '0')}`;
+}
+
+function formatHex64(value?: number) {
+  if (value === undefined) {
+    return '--';
+  }
+  return `0x${Math.trunc(value).toString(16).toUpperCase()}`;
+}
+
+// 提取通用的时间线更新逻辑，避免代码重复
+function useTimeline(
+  state: NpuStateResponse | LpuStateResponse | null,
+  maxPoints: number,
+): TimelinePoint[] {
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
+
+  useEffect(() => {
+    if (!state?.success) {
+      return;
+    }
+
+    const point: TimelinePoint = {
+      ts: Date.now(),
+      notify: state.desc_notify_count ?? 0,
+      done: state.tasks_done ?? 0,
+      error: state.tasks_error ?? 0,
+      cycles: state.cycles ?? 0,
+      pending: Boolean(state.pending_desc_notify),
+    };
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 从外部系统（WebSocket）同步状态是正确的用例
+    setTimeline((prev) => {
+      const last = prev[prev.length - 1];
+      const unchanged =
+        last &&
+        last.notify === point.notify &&
+        last.done === point.done &&
+        last.error === point.error &&
+        last.cycles === point.cycles &&
+        last.pending === point.pending;
+
+      if (unchanged) {
+        return prev;
+      }
+
+      const next = [...prev, point];
+      return next.slice(-maxPoints);
+    });
+  }, [state, maxPoints]);
+
+  return timeline;
+}
+
+export function CoprocessorPanel({ sendCommand, npuState, lpuState }: CoprocessorPanelProps) {
+  const npuTimeline = useTimeline(npuState, MAX_TIMELINE_POINTS);
+  const lpuTimeline = useTimeline(lpuState, MAX_TIMELINE_POINTS);
+
+  // 使用 useCallback 缓存函数，避免不必要的子组件重新渲染
+  const refreshAll = useCallback(() => {
+    sendCommand('npu state');
+    sendCommand('lpu state');
+  }, [sendCommand]);
+
+  const handleRefresh = useCallback((command: string) => {
+    sendCommand(command);
+  }, [sendCommand]);
+
+  // 使用 useMemo 缓存时间线渲染结果，避免不必要的重新计算
+  const renderTimeline = useCallback((timeline: TimelinePoint[]): ReactNode => {
+    if (timeline.length === 0) {
+      return <div className="coproc-timeline-empty">暂无时间线数据</div>;
+    }
+
+    return (
+      <div className="coproc-timeline">
+        {timeline
+          .slice()
+          .reverse()
+          .map((point, index, reversed) => {
+            const older = reversed[index + 1];
+            const doneDelta = older ? point.done - older.done : 0;
+            const errorDelta = older ? point.error - older.error : 0;
+            const notifyDelta = older ? point.notify - older.notify : 0;
+            return (
+              <div className="coproc-timeline-row" key={index}>
+                <span>{new Date(point.ts).toLocaleTimeString()}</span>
+                <span>notify {point.notify} ({notifyDelta >= 0 ? '+' : ''}{notifyDelta})</span>
+                <span>done {point.done} ({doneDelta >= 0 ? '+' : ''}{doneDelta})</span>
+                <span>err {point.error} ({errorDelta >= 0 ? '+' : ''}{errorDelta})</span>
+                <span>pending {point.pending ? 'Y' : 'N'}</span>
+              </div>
+            );
+          })}
+      </div>
+    );
+  }, []);
 
   return (
     <div className="coproc-panel">
@@ -185,8 +184,8 @@ export function CoprocessorPanel({ sendCommand, npuState, lpuState }: Coprocesso
         <button onClick={refreshAll}>刷新全部</button>
       </div>
       <div className="coproc-cards">
-        {renderCard('NPU', npuState, 'npu state', npuTimeline)}
-        {renderCard('LPU', lpuState, 'lpu state', lpuTimeline)}
+        <CoprocessorCard title="NPU" state={npuState} refreshCommand="npu state" timeline={npuTimeline} onRefresh={handleRefresh} renderTimeline={renderTimeline} />
+        <CoprocessorCard title="LPU" state={lpuState} refreshCommand="lpu state" timeline={lpuTimeline} onRefresh={handleRefresh} renderTimeline={renderTimeline} />
       </div>
     </div>
   );

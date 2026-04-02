@@ -103,7 +103,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.
 
 - **代码量**: ~6000 行 Rust 代码
 - **测试覆盖**: 182 单元测试，全部通过
-- **开发周期**: Phase 1-6 P0 共 8 周
+- **课设排期**: Phase 1-6 统一对齐第4-8周
 
 ---
 
