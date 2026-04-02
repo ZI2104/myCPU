@@ -38,7 +38,21 @@ riscv64-unknown-elf-objcopy -O binary npu_vector_example.elf npu_vector_example.
 cargo test --test npu_elf_integration -- --nocapture
 ```
 
-- To enable verbose debugging for this test, set the environment variable `MYCPU_NPU_DEBUG=1` before running the test.
+# Note: 该测试为可选（默认跳过）。在运行测试前需要显式设置环境变量 `RUN_ELF_INTEGRATION=1`。
+
+# 在 Windows PowerShell 下示例：
+```
+Set-Item -Path Env:RUN_ELF_INTEGRATION -Value 1
+Set-Item -Path Env:MYCPU_NPU_DEBUG -Value 1    # 可选：启用 NPU 调试输出
+cargo test --test npu_elf_integration -- --nocapture
+```
+
+# 在 Unix / WSL 下示例：
+```
+RUN_ELF_INTEGRATION=1 MYCPU_NPU_DEBUG=1 cargo test --test npu_elf_integration -- --nocapture
+```
+
+# To enable verbose debugging for this test, set the environment variable `MYCPU_NPU_DEBUG=1` before running the test.
 
 Key successful log excerpts
 ---------------------------

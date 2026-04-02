@@ -1,0 +1,63 @@
+name: "Optional: NPU ELF Integration"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: 'Set to "true" to run the ELF integration end-to-end test (requires riscv toolchain).'
+        required: true
+        default: "true"
+
+jobs:
+  elf-integration:
+    name: Run optional ELF integration test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install common packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl git pkg-config ca-certificates
+
+      - name: Install or provide riscv toolchain (best-effort)
+        run: |
+          set -euo pipefail
+          echo "Attempting to install riscv cross toolchain via apt (best-effort)"
+          sudo apt-get install -y gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf || true
+
+          if command -v riscv64-unknown-elf-gcc >/dev/null 2>&1; then
+            riscv64-unknown-elf-gcc --version
+          else
+            echo "riscv64-unknown-elf-gcc not available via apt; attempting a best-effort prebuilt download"
+            TOOLCHAIN_URL="https://github.com/riscv/riscv-gnu-toolchain/releases/download/2023.04.00/riscv64-unknown-elf-gcc-12.2.0-x86_64-linux-gnu.tar.gz"
+            echo "Downloading: $TOOLCHAIN_URL"
+            curl -fSL -o /tmp/riscv-toolchain.tar.gz "$TOOLCHAIN_URL" || { echo "Prebuilt download failed; please provide a riscv toolchain in the runner environment"; exit 1; }
+            mkdir -p $HOME/riscv-toolchain
+            tar -xzf /tmp/riscv-toolchain.tar.gz -C $HOME/riscv-toolchain --strip-components=1
+            echo "PATH=$HOME/riscv-toolchain/bin:$PATH" >> $GITHUB_ENV
+            riscv64-unknown-elf-gcc --version
+          fi
+
+      - name: Build test program (tests/programs/build.sh)
+        run: |
+          cd tests/programs
+          chmod +x ./build.sh
+          ./build.sh
+
+      - name: Run ELF integration test
+        if: ${{ github.event.inputs.run_integration == 'true' }}
+        env:
+          RUN_ELF_INTEGRATION: "1"
+          MYCPU_NPU_DEBUG: "1"
+        run: |
+          cd ${{ github.workspace }}
+          cargo test --test npu_elf_integration -- --nocapture
