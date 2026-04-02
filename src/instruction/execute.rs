@@ -8,9 +8,74 @@ use super::opcode::{funct3, funct7, opcode};
 use crate::cpu::csr::{CsrOp, ExceptionCause};
 use crate::cpu::Cpu;
 use crate::error::{Result, SimError};
+use crate::peripheral::{LPU_BASE, NPU_BASE};
 use crate::types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
 
 impl Cpu {
+    /// Execute CUSTOM-0 instructions for coprocessor fast-path.
+    ///
+    /// Encoding (R-type layout):
+    /// - opcode = CUSTOM_0 (0x0B)
+    /// - funct3 = 0 => NPU, 1 => LPU
+    /// - funct7[4:0] => coprocessor opcode
+    /// - rs1/rs2 are source operands
+    /// - rd is destination register
+    pub fn execute_custom0(&mut self, instruction: u32) -> Result<()> {
+        const REG_CONTROL: u32 = 0x00;
+        const REG_OP_A: u32 = 0x08;
+        const REG_OP_B: u32 = 0x0C;
+        const REG_RESULT: u32 = 0x10;
+        const REG_OPCODE: u32 = 0x14;
+        const CONTROL_START: u32 = 1 << 0;
+
+        let rd = RegIdx::new(((instruction >> 7) & 0x1F) as u8);
+        let funct3 = ((instruction >> 12) & 0x7) as u8;
+        let rs1 = RegIdx::new(((instruction >> 15) & 0x1F) as u8);
+        let rs2 = RegIdx::new(((instruction >> 20) & 0x1F) as u8);
+        let funct7 = ((instruction >> 25) & 0x7F) as u8;
+        let cop_op = (funct7 & 0x1F) as u32;
+
+        let op_a = self.registers().read(rs1).raw();
+        let op_b = self.registers().read(rs2).raw();
+
+        let base = match funct3 {
+            0 => {
+                if cop_op > 3 {
+                    return Err(SimError::UnsupportedInstruction {
+                        pc: self.pc(),
+                        message: format!("Invalid NPU custom opcode: {}", cop_op),
+                    });
+                }
+                NPU_BASE
+            }
+            1 => {
+                if cop_op > 5 {
+                    return Err(SimError::UnsupportedInstruction {
+                        pc: self.pc(),
+                        message: format!("Invalid LPU custom opcode: {}", cop_op),
+                    });
+                }
+                LPU_BASE
+            }
+            _ => {
+                return Err(SimError::UnsupportedInstruction {
+                    pc: self.pc(),
+                    message: format!("Unsupported CUSTOM-0 funct3={:03b}", funct3),
+                });
+            }
+        };
+
+        self.write_word(Addr::new(base + REG_OP_A), Word::new(op_a))?;
+        self.write_word(Addr::new(base + REG_OP_B), Word::new(op_b))?;
+        self.write_word(Addr::new(base + REG_OPCODE), Word::new(cop_op))?;
+        self.write_word(Addr::new(base + REG_CONTROL), Word::new(CONTROL_START))?;
+
+        let result = self.read_word(Addr::new(base + REG_RESULT))?;
+        self.registers_mut().write(rd, result);
+        self.increment_pc();
+        Ok(())
+    }
+
     /// Execute a decoded instruction.
     ///
     /// This method dispatches to the appropriate execution handler based on
@@ -786,11 +851,21 @@ mod tests {
     use crate::cpu::csr::machine::medeleg_bits;
     use crate::cpu::csr::{csr_addr, exception_code, TrapVectorMode};
     use crate::memory::Ram;
+    use crate::peripheral::{Lpu, Npu};
 
     fn create_test_cpu() -> Cpu {
         let mut bus = crate::memory::Bus::new();
         let ram = Ram::new(4096);
         bus.attach_memory(Addr::new(0), ram, "RAM");
+        Cpu::new(bus)
+    }
+
+    fn create_test_cpu_with_coprocessors() -> Cpu {
+        let mut bus = crate::memory::Bus::new();
+        let ram = Ram::new(0x4000);
+        bus.attach_memory(Addr::new(0), ram, "RAM");
+        bus.attach_peripheral(Npu::new());
+        bus.attach_peripheral(Lpu::new());
         Cpu::new(bus)
     }
 
@@ -1322,5 +1397,48 @@ mod tests {
 
         assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0x0000_00FF);
         assert_eq!(cpu.read_word(Addr::new(0x100)).unwrap().raw(), 0xFFFF_0000);
+    }
+
+    #[test]
+    fn test_custom0_npu_add_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(7));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(8));
+
+        // custom0: funct3=000 (NPU), funct7=0 (Add), rd=x3, rs1=x1, rs2=x2, opcode=0x0B
+        let instr = (0u32 << 25) | (2u32 << 20) | (1u32 << 15) | (0u32 << 12) | (3u32 << 7) | 0x0B;
+
+        cpu.execute_custom0(instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 15);
+        assert_eq!(cpu.read_word(Addr::new(NPU_BASE + 0x18)).unwrap().raw(), 1);
+    }
+
+    #[test]
+    fn test_custom0_lpu_xor_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(0b1010));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(0b1100));
+
+        // custom0: funct3=001 (LPU), funct7=2 (Xor), rd=x3, rs1=x1, rs2=x2, opcode=0x0B
+        let instr = (2u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
+
+        cpu.execute_custom0(instr).unwrap();
+
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0b0110);
+        assert_eq!(cpu.read_word(Addr::new(LPU_BASE + 0x18)).unwrap().raw(), 1);
+    }
+
+    #[test]
+    fn test_custom0_invalid_opcode_rejected() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(1));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(2));
+
+        // funct3=000 (NPU), funct7=31 -> invalid for current NPU op set
+        let instr = (31u32 << 25) | (2u32 << 20) | (1u32 << 15) | (0u32 << 12) | (3u32 << 7) | 0x0B;
+
+        let err = cpu.execute_custom0(instr).unwrap_err();
+        assert!(matches!(err, SimError::UnsupportedInstruction { .. }));
     }
 }

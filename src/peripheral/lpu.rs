@@ -1,6 +1,7 @@
 //! LPU MMIO coprocessor (logic processing unit skeleton).
 
 use crate::error::{Result, SimError};
+use crate::traits::Memory;
 use crate::traits::Peripheral;
 use crate::types::Addr;
 
@@ -16,6 +17,15 @@ const REG_OP_B: u32 = 0x0C;
 const REG_RESULT: u32 = 0x10;
 const REG_OPCODE: u32 = 0x14;
 const REG_CYCLES: u32 = 0x18;
+const REG_DESC_ADDR_LOW: u32 = 0x20;
+const REG_DESC_ADDR_HIGH: u32 = 0x24;
+const REG_DESC_LEN: u32 = 0x28;
+const REG_DESC_NOTIFY: u32 = 0x2C;
+const REG_TASKS_DONE: u32 = 0x30;
+const REG_TASKS_ERROR: u32 = 0x34;
+const REG_DESC_NOTIFY_COUNT: u32 = 0x38;
+
+const LPU_DESC_STRIDE: u64 = 16;
 
 mod control_bits {
     pub const START: u32 = 1 << 0;
@@ -36,6 +46,20 @@ enum LpuOp {
     Shl = 3,
     Shr = 4,
     Sar = 5,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LpuSnapshot {
+    pub control: u32,
+    pub status: u32,
+    pub opcode: u32,
+    pub cycles: u32,
+    pub desc_addr: u64,
+    pub desc_len: u32,
+    pub tasks_done: u32,
+    pub tasks_error: u32,
+    pub desc_notify_count: u64,
+    pub pending_desc_notify: bool,
 }
 
 impl LpuOp {
@@ -62,6 +86,12 @@ pub struct Lpu {
     result: u32,
     opcode: u32,
     cycles: u32,
+    desc_addr: u64,
+    desc_len: u32,
+    tasks_done: u32,
+    tasks_error: u32,
+    desc_notify_count: u64,
+    pending_desc_notify: bool,
 }
 
 impl Default for Lpu {
@@ -85,6 +115,27 @@ impl Lpu {
             result: 0,
             opcode: 0,
             cycles: 0,
+            desc_addr: 0,
+            desc_len: 0,
+            tasks_done: 0,
+            tasks_error: 0,
+            desc_notify_count: 0,
+            pending_desc_notify: false,
+        }
+    }
+
+    pub fn snapshot(&self) -> LpuSnapshot {
+        LpuSnapshot {
+            control: self.control,
+            status: self.status,
+            opcode: self.opcode,
+            cycles: self.cycles,
+            desc_addr: self.desc_addr,
+            desc_len: self.desc_len,
+            tasks_done: self.tasks_done,
+            tasks_error: self.tasks_error,
+            desc_notify_count: self.desc_notify_count,
+            pending_desc_notify: self.pending_desc_notify,
         }
     }
 
@@ -97,6 +148,12 @@ impl Lpu {
             REG_RESULT => self.result,
             REG_OPCODE => self.opcode,
             REG_CYCLES => self.cycles,
+            REG_DESC_ADDR_LOW => self.desc_addr as u32,
+            REG_DESC_ADDR_HIGH => (self.desc_addr >> 32) as u32,
+            REG_DESC_LEN => self.desc_len,
+            REG_TASKS_DONE => self.tasks_done,
+            REG_TASKS_ERROR => self.tasks_error,
+            REG_DESC_NOTIFY_COUNT => self.desc_notify_count as u32,
             _ => 0,
         }
     }
@@ -123,6 +180,21 @@ impl Lpu {
             REG_RESULT => self.result = value,
             REG_OPCODE => self.opcode = value,
             REG_CYCLES => self.cycles = value,
+            REG_DESC_ADDR_LOW => {
+                self.desc_addr = (self.desc_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
+            }
+            REG_DESC_ADDR_HIGH => {
+                self.desc_addr = (self.desc_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+            }
+            REG_DESC_LEN => self.desc_len = value,
+            REG_DESC_NOTIFY => {
+                if value != 0 {
+                    self.pending_desc_notify = true;
+                    self.desc_notify_count = self.desc_notify_count.wrapping_add(1);
+                }
+            }
+            REG_TASKS_DONE => self.tasks_done = value,
+            REG_TASKS_ERROR => self.tasks_error = value,
             _ => {}
         }
     }
@@ -136,10 +208,153 @@ impl Lpu {
     fn write_u8(&mut self, offset: u32, value: u8) {
         let reg = offset & !0x3;
         let shift = (offset & 0x3) * 8;
+
+        if reg == REG_DESC_NOTIFY {
+            if shift == 0 {
+                self.write_reg(reg, value as u32);
+            }
+            return;
+        }
+
         let mut current = self.read_reg(reg);
         current &= !(0xFF << shift);
         current |= (value as u32) << shift;
         self.write_reg(reg, current);
+    }
+
+    fn compute_result(&self, op: LpuOp) -> u32 {
+        let shamt = self.op_b & 0x1F;
+        match op {
+            LpuOp::And => self.op_a & self.op_b,
+            LpuOp::Or => self.op_a | self.op_b,
+            LpuOp::Xor => self.op_a ^ self.op_b,
+            LpuOp::Shl => self.op_a.wrapping_shl(shamt),
+            LpuOp::Shr => self.op_a.wrapping_shr(shamt),
+            LpuOp::Sar => ((self.op_a as i32) >> shamt) as u32,
+        }
+    }
+
+    fn guest_addr(raw: u64) -> Result<Addr> {
+        if raw > u32::MAX as u64 {
+            return Err(SimError::Peripheral(
+                "lpu guest address out of rv32 range".to_string(),
+            ));
+        }
+        Ok(Addr::new(raw as u32))
+    }
+
+    fn read_guest_u8(
+        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        addr: u64,
+    ) -> Result<u8> {
+        let addr = Self::guest_addr(addr)?;
+        let target = addr.raw() as usize;
+
+        for (base, size, memory) in ram_regions.iter_mut() {
+            let base_addr = base.raw() as usize;
+            if target >= base_addr && target < base_addr + *size {
+                let relative = Addr::new((target - base_addr) as u32);
+                return memory.read_byte(relative).map(|b| b.raw());
+            }
+        }
+
+        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+    }
+
+    fn write_guest_u8(
+        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        addr: u64,
+        value: u8,
+    ) -> Result<()> {
+        let addr = Self::guest_addr(addr)?;
+        let target = addr.raw() as usize;
+
+        for (base, size, memory) in ram_regions.iter_mut() {
+            let base_addr = base.raw() as usize;
+            if target >= base_addr && target < base_addr + *size {
+                let relative = Addr::new((target - base_addr) as u32);
+                return memory.write_byte(relative, crate::types::Byte::new(value));
+            }
+        }
+
+        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+    }
+
+    fn read_guest_u32(
+        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        addr: u64,
+    ) -> Result<u32> {
+        let mut value = 0u32;
+        for i in 0..4 {
+            value |= (Self::read_guest_u8(ram_regions, addr + i)? as u32) << (i * 8);
+        }
+        Ok(value)
+    }
+
+    fn write_guest_u32(
+        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        addr: u64,
+        value: u32,
+    ) -> Result<()> {
+        for i in 0..4 {
+            Self::write_guest_u8(ram_regions, addr + i, ((value >> (i * 8)) & 0xFF) as u8)?;
+        }
+        Ok(())
+    }
+
+    fn execute_descriptor_entry(
+        &mut self,
+        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        index: u32,
+    ) -> Result<()> {
+        let desc_base = self.desc_addr + (index as u64) * LPU_DESC_STRIDE;
+        self.opcode = Self::read_guest_u32(ram_regions, desc_base)?;
+
+        let op_a_addr = Self::read_guest_u32(ram_regions, desc_base + 4)? as u64;
+        let op_b_addr = Self::read_guest_u32(ram_regions, desc_base + 8)? as u64;
+        let result_addr = Self::read_guest_u32(ram_regions, desc_base + 12)? as u64;
+
+        self.op_a = Self::read_guest_u32(ram_regions, op_a_addr)?;
+        self.op_b = Self::read_guest_u32(ram_regions, op_b_addr)?;
+
+        let op = LpuOp::from_u32(self.opcode);
+        self.result = self.compute_result(op);
+        self.cycles = self.cycles.wrapping_add(1);
+        self.tasks_done = self.tasks_done.wrapping_add(1);
+
+        Self::write_guest_u32(ram_regions, result_addr, self.result)
+    }
+
+    pub fn has_pending_descriptor_notify(&self) -> bool {
+        self.pending_desc_notify
+    }
+
+    pub fn process_pending_descriptor_notify(
+        &mut self,
+        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+    ) -> Result<()> {
+        if !self.pending_desc_notify {
+            return Ok(());
+        }
+
+        self.pending_desc_notify = false;
+        self.status |= status_bits::BUSY;
+        self.status &= !status_bits::DONE;
+
+        for index in 0..self.desc_len {
+            if self.execute_descriptor_entry(ram_regions, index).is_err() {
+                self.tasks_error = self.tasks_error.wrapping_add(1);
+            }
+        }
+
+        self.status &= !status_bits::BUSY;
+        self.status |= status_bits::DONE;
+
+        if (self.control & control_bits::IRQ_EN) != 0 {
+            self.status |= status_bits::IRQ_PENDING;
+        }
+
+        Ok(())
     }
 
     fn execute_once(&mut self) {
@@ -147,15 +362,7 @@ impl Lpu {
         self.status &= !status_bits::DONE;
 
         let op = LpuOp::from_u32(self.opcode);
-        let shamt = self.op_b & 0x1F;
-        self.result = match op {
-            LpuOp::And => self.op_a & self.op_b,
-            LpuOp::Or => self.op_a | self.op_b,
-            LpuOp::Xor => self.op_a ^ self.op_b,
-            LpuOp::Shl => self.op_a.wrapping_shl(shamt),
-            LpuOp::Shr => self.op_a.wrapping_shr(shamt),
-            LpuOp::Sar => ((self.op_a as i32) >> shamt) as u32,
-        };
+        self.result = self.compute_result(op);
 
         self.cycles = self.cycles.wrapping_add(1);
         self.status &= !status_bits::BUSY;
@@ -273,5 +480,57 @@ mod tests {
         assert!(lpu.has_interrupt());
         lpu.acknowledge_interrupt();
         assert!(!lpu.has_interrupt());
+    }
+
+    #[test]
+    fn test_lpu_descriptor_dma_batch() {
+        use crate::memory::Ram;
+
+        const RAM_BASE: u32 = 0x8000_0000;
+        let mut regions: Vec<(Addr, usize, Box<dyn Memory>)> =
+            vec![(Addr::new(RAM_BASE), 0x4000, Box::new(Ram::new(0x4000)))];
+
+        let mut lpu = Lpu::new();
+
+        let desc_addr = RAM_BASE + 0x300;
+        let op_a0 = RAM_BASE + 0x400;
+        let op_b0 = RAM_BASE + 0x404;
+        let out0 = RAM_BASE + 0x408;
+        let op_a1 = RAM_BASE + 0x40C;
+        let op_b1 = RAM_BASE + 0x410;
+        let out1 = RAM_BASE + 0x414;
+
+        Lpu::write_guest_u32(&mut regions, desc_addr as u64, LpuOp::Xor as u32).unwrap();
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 4) as u64, op_a0).unwrap();
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 8) as u64, op_b0).unwrap();
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 12) as u64, out0).unwrap();
+
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 16) as u64, LpuOp::Shl as u32).unwrap();
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 20) as u64, op_a1).unwrap();
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 24) as u64, op_b1).unwrap();
+        Lpu::write_guest_u32(&mut regions, (desc_addr + 28) as u64, out1).unwrap();
+
+        Lpu::write_guest_u32(&mut regions, op_a0 as u64, 0b1010).unwrap();
+        Lpu::write_guest_u32(&mut regions, op_b0 as u64, 0b1100).unwrap();
+        Lpu::write_guest_u32(&mut regions, op_a1 as u64, 3).unwrap();
+        Lpu::write_guest_u32(&mut regions, op_b1 as u64, 4).unwrap();
+
+        write_u32(&mut lpu, REG_DESC_ADDR_LOW, desc_addr);
+        write_u32(&mut lpu, REG_DESC_LEN, 2);
+        write_u32(&mut lpu, REG_CONTROL, control_bits::IRQ_EN);
+        write_u32(&mut lpu, REG_DESC_NOTIFY, 1);
+
+        assert!(lpu.has_pending_descriptor_notify());
+        lpu.process_pending_descriptor_notify(&mut regions).unwrap();
+
+        assert_eq!(
+            Lpu::read_guest_u32(&mut regions, out0 as u64).unwrap(),
+            0b0110
+        );
+        assert_eq!(Lpu::read_guest_u32(&mut regions, out1 as u64).unwrap(), 48);
+        assert_eq!(read_u32(&lpu, REG_TASKS_DONE), 2);
+        assert_eq!(read_u32(&lpu, REG_TASKS_ERROR), 0);
+        assert_ne!(read_u32(&lpu, REG_STATUS) & status_bits::DONE, 0);
+        assert!(lpu.has_interrupt());
     }
 }

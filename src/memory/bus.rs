@@ -4,7 +4,7 @@
 //! and routes memory accesses to the appropriate components.
 
 use crate::error::{check_alignment, Result, SimError};
-use crate::peripheral::{InputDevice, Uart, VirtioBlock};
+use crate::peripheral::{InputDevice, Lpu, LpuSnapshot, Npu, NpuSnapshot, Uart, VirtioBlock};
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
 use std::fmt;
@@ -57,6 +57,8 @@ impl fmt::Debug for Bus {
 impl Bus {
     const VIRTIO_IRQ_SOURCE: usize = 1;
     const UART_IRQ_SOURCE: usize = 10;
+    const NPU_IRQ_SOURCE: usize = 11;
+    const LPU_IRQ_SOURCE: usize = 12;
 
     /// Create a new empty system bus.
     pub fn new() -> Self {
@@ -139,6 +141,18 @@ impl Bus {
                 if let Some(virtio_block) = peripheral.as_any_mut().downcast_mut::<VirtioBlock>() {
                     if virtio_block.has_pending_descriptor_notify() {
                         virtio_block.process_pending_descriptor_notify(&mut self.ram_regions)?;
+                    }
+                }
+
+                if let Some(npu) = peripheral.as_any_mut().downcast_mut::<Npu>() {
+                    if npu.has_pending_descriptor_notify() {
+                        npu.process_pending_descriptor_notify(&mut self.ram_regions)?;
+                    }
+                }
+
+                if let Some(lpu) = peripheral.as_any_mut().downcast_mut::<Lpu>() {
+                    if lpu.has_pending_descriptor_notify() {
+                        lpu.process_pending_descriptor_notify(&mut self.ram_regions)?;
                     }
                 }
 
@@ -328,6 +342,36 @@ impl Bus {
         None
     }
 
+    /// Get NPU snapshot if NPU peripheral is attached.
+    pub fn get_npu_snapshot(&self) -> Option<NpuSnapshot> {
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() != "NPU" {
+                continue;
+            }
+
+            if let Some(npu) = peripheral.as_any().downcast_ref::<Npu>() {
+                return Some(npu.snapshot());
+            }
+        }
+
+        None
+    }
+
+    /// Get LPU snapshot if LPU peripheral is attached.
+    pub fn get_lpu_snapshot(&self) -> Option<LpuSnapshot> {
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() != "LPU" {
+                continue;
+            }
+
+            if let Some(lpu) = peripheral.as_any().downcast_ref::<Lpu>() {
+                return Some(lpu.snapshot());
+            }
+        }
+
+        None
+    }
+
     /// Get timer and software interrupt status from CLINT.
     ///
     /// Returns (mtip, msip) where:
@@ -402,6 +446,8 @@ impl Bus {
     pub fn sync_plic_pending_from_peripherals(&mut self) {
         let mut virtio_pending = false;
         let mut uart_pending = false;
+        let mut npu_pending = false;
+        let mut lpu_pending = false;
 
         for (_, _, peripheral) in &self.peripheral_regions {
             if peripheral.name() == "VirtIO-Block" && peripheral.has_interrupt() {
@@ -410,9 +456,15 @@ impl Bus {
             if peripheral.name() == "UART" && peripheral.has_interrupt() {
                 uart_pending = true;
             }
+            if peripheral.name() == "NPU" && peripheral.has_interrupt() {
+                npu_pending = true;
+            }
+            if peripheral.name() == "LPU" && peripheral.has_interrupt() {
+                lpu_pending = true;
+            }
         }
 
-        if !virtio_pending && !uart_pending {
+        if !virtio_pending && !uart_pending && !npu_pending && !lpu_pending {
             return;
         }
 
@@ -426,6 +478,12 @@ impl Bus {
                     }
                     if uart_pending {
                         plic.set_pending(Self::UART_IRQ_SOURCE);
+                    }
+                    if npu_pending {
+                        plic.set_pending(Self::NPU_IRQ_SOURCE);
+                    }
+                    if lpu_pending {
+                        plic.set_pending(Self::LPU_IRQ_SOURCE);
                     }
                 }
                 break;
@@ -527,7 +585,7 @@ impl Default for Bus {
 mod tests {
     use super::*;
     use crate::memory::Ram;
-    use crate::peripheral::{VirtioBlock, VIRTIO_BLK_BASE};
+    use crate::peripheral::{Lpu, Npu, VirtioBlock, LPU_BASE, NPU_BASE, VIRTIO_BLK_BASE};
 
     #[test]
     fn test_bus_basic() {
@@ -757,5 +815,65 @@ mod tests {
         let (state_after, _last_after, count_after, _irq_after) = bus.get_input_snapshot().unwrap();
         assert_eq!(state_after, 0);
         assert_eq!(count_after, 1);
+    }
+
+    #[test]
+    fn test_bus_npu_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Npu::new());
+
+        let desc_addr = RAM_BASE + 0x1000;
+        let op_a = RAM_BASE + 0x2000;
+        let op_b = RAM_BASE + 0x2004;
+        let out = RAM_BASE + 0x2008;
+
+        write_u32(&mut bus, desc_addr, 0); // Add
+        write_u32(&mut bus, desc_addr + 4, op_a);
+        write_u32(&mut bus, desc_addr + 8, op_b);
+        write_u32(&mut bus, desc_addr + 12, out);
+
+        write_u32(&mut bus, op_a, 11);
+        write_u32(&mut bus, op_b, 31);
+
+        write_u32(&mut bus, NPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, NPU_BASE + 0x28, 1);
+        write_u32(&mut bus, NPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, NPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out), 42);
+        assert!(bus.has_peripheral_interrupt("NPU"));
+    }
+
+    #[test]
+    fn test_bus_lpu_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Lpu::new());
+
+        let desc_addr = RAM_BASE + 0x1100;
+        let op_a = RAM_BASE + 0x2100;
+        let op_b = RAM_BASE + 0x2104;
+        let out = RAM_BASE + 0x2108;
+
+        write_u32(&mut bus, desc_addr, 2); // Xor
+        write_u32(&mut bus, desc_addr + 4, op_a);
+        write_u32(&mut bus, desc_addr + 8, op_b);
+        write_u32(&mut bus, desc_addr + 12, out);
+
+        write_u32(&mut bus, op_a, 0b1010);
+        write_u32(&mut bus, op_b, 0b1100);
+
+        write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, LPU_BASE + 0x28, 1);
+        write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out), 0b0110);
+        assert!(bus.has_peripheral_interrupt("LPU"));
     }
 }

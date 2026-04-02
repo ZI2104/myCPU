@@ -547,6 +547,10 @@ enum Command {
     InputClear,
     /// Read input state snapshot.
     InputState,
+    /// Read NPU state snapshot.
+    NpuState,
+    /// Read LPU state snapshot.
+    LpuState,
 }
 
 impl Command {
@@ -693,6 +697,22 @@ impl Command {
             }
             "input_clear" => Some(Command::InputClear),
             "input_state" => Some(Command::InputState),
+            "npu" => {
+                let action = parts.get(1).map(|value| value.to_ascii_lowercase());
+                if action.as_deref() == Some("state") || action.as_deref() == Some("status") {
+                    Some(Command::NpuState)
+                } else {
+                    None
+                }
+            }
+            "lpu" => {
+                let action = parts.get(1).map(|value| value.to_ascii_lowercase());
+                if action.as_deref() == Some("state") || action.as_deref() == Some("status") {
+                    Some(Command::LpuState)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1413,6 +1433,64 @@ impl VisualizeServer {
 
                 ctx.send_json(response.to_string()).await;
             }
+            Command::NpuState => {
+                let response = {
+                    let cpu_guard = ctx.cpu.lock().await;
+                    if let Some(state) = cpu_guard.bus().get_npu_snapshot() {
+                        serde_json::json!({
+                            "type": "npu_state",
+                            "success": true,
+                            "control": state.control,
+                            "status": state.status,
+                            "opcode": state.opcode,
+                            "cycles": state.cycles,
+                            "desc_addr": state.desc_addr,
+                            "desc_len": state.desc_len,
+                            "tasks_done": state.tasks_done,
+                            "tasks_error": state.tasks_error,
+                            "desc_notify_count": state.desc_notify_count,
+                            "pending_desc_notify": state.pending_desc_notify,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "type": "npu_state",
+                            "success": false,
+                            "error": "NPU peripheral not attached",
+                        })
+                    }
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
+            Command::LpuState => {
+                let response = {
+                    let cpu_guard = ctx.cpu.lock().await;
+                    if let Some(state) = cpu_guard.bus().get_lpu_snapshot() {
+                        serde_json::json!({
+                            "type": "lpu_state",
+                            "success": true,
+                            "control": state.control,
+                            "status": state.status,
+                            "opcode": state.opcode,
+                            "cycles": state.cycles,
+                            "desc_addr": state.desc_addr,
+                            "desc_len": state.desc_len,
+                            "tasks_done": state.tasks_done,
+                            "tasks_error": state.tasks_error,
+                            "desc_notify_count": state.desc_notify_count,
+                            "pending_desc_notify": state.pending_desc_notify,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "type": "lpu_state",
+                            "success": false,
+                            "error": "LPU peripheral not attached",
+                        })
+                    }
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
         }
 
         Ok(())
@@ -1631,6 +1709,16 @@ mod tests {
     fn test_parse_input_state_and_clear_commands() {
         assert_eq!(Command::parse("input state"), Some(Command::InputState));
         assert_eq!(Command::parse("input clear"), Some(Command::InputClear));
+    }
+
+    #[test]
+    fn test_parse_npu_lpu_state_commands() {
+        assert_eq!(Command::parse("npu state"), Some(Command::NpuState));
+        assert_eq!(Command::parse("npu status"), Some(Command::NpuState));
+        assert_eq!(Command::parse("lpu state"), Some(Command::LpuState));
+        assert_eq!(Command::parse("lpu status"), Some(Command::LpuState));
+        assert_eq!(Command::parse("npu"), None);
+        assert_eq!(Command::parse("lpu"), None);
     }
 
     #[test]

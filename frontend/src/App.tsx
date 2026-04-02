@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import { ControlPanel } from './components/ControlPanel';
+import { CoprocessorPanel } from './components/CoprocessorPanel';
 import { DebugInspector } from './components/DebugInspector';
 import { FramebufferView } from './components/FramebufferView';
 import { GameFlowPanel } from './components/GameFlowPanel';
@@ -18,7 +19,9 @@ import type {
     FramebufferResponse,
     HistoryResponse,
     InputStateResponse,
+    LpuStateResponse,
     MemoryReadResponse,
+    NpuStateResponse,
 } from './types/snapshot';
 
 const WS_URL = 'ws://127.0.0.1:8080';
@@ -27,12 +30,14 @@ function App() {
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(10);
   const [previousSnapshot, setPreviousSnapshot] = useState<CpuSnapshot | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'memory' | 'framebuffer' | 'debug'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'memory' | 'framebuffer' | 'coprocessor' | 'debug'>('pipeline');
   const [disassembly, setDisassembly] = useState<DisassemblyResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([]);
   const [gameState, setGameState] = useState<FramebufferGameResponse | null>(null);
   const [inputState, setInputState] = useState<InputStateResponse | null>(null);
+  const [npuState, setNpuState] = useState<NpuStateResponse | null>(null);
+  const [lpuState, setLpuState] = useState<LpuStateResponse | null>(null);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
   const framebufferHandlersRef = useRef<((data: FramebufferResponse) => void)[]>([]);
 
@@ -54,6 +59,10 @@ function App() {
           setGameState(data as FramebufferGameResponse);
         } else if (data.type === 'input_state') {
           setInputState(data as InputStateResponse);
+        } else if (data.type === 'npu_state') {
+          setNpuState(data as NpuStateResponse);
+        } else if (data.type === 'lpu_state') {
+          setLpuState(data as LpuStateResponse);
         } else if (data.base_addr !== undefined && Array.isArray(data.instructions)) {
           setDisassembly(data as DisassemblyResponse);
         } else if (Array.isArray(data.records) && data.total !== undefined) {
@@ -101,6 +110,24 @@ function App() {
     setSpeed(newSpeed);
     send(`speed ${newSpeed}`);
   }, [send]);
+
+  useEffect(() => {
+    if (activeTab !== 'coprocessor') {
+      return;
+    }
+
+    send('npu state');
+    send('lpu state');
+
+    const timer = window.setInterval(() => {
+      send('npu state');
+      send('lpu state');
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [activeTab, send]);
 
   return (
     <div className="app">
@@ -162,6 +189,12 @@ function App() {
                   Framebuffer
                 </button>
                 <button
+                  className={activeTab === 'coprocessor' ? 'active' : ''}
+                  onClick={() => setActiveTab('coprocessor')}
+                >
+                  Coprocessor
+                </button>
+                <button
                   className={activeTab === 'debug' ? 'active' : ''}
                   onClick={() => {
                     setActiveTab('debug');
@@ -210,6 +243,14 @@ function App() {
                   disassembly={disassembly}
                   history={history}
                   sendCommand={send}
+                />
+              )}
+
+              {activeTab === 'coprocessor' && (
+                <CoprocessorPanel
+                  sendCommand={send}
+                  npuState={npuState}
+                  lpuState={lpuState}
                 />
               )}
             </div>

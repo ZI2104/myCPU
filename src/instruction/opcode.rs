@@ -40,6 +40,9 @@ pub mod opcode {
 
     /// System instructions (ECALL, EBREAK)
     pub const SYSTEM: u8 = 0b1110011;
+
+    /// Custom-0 instructions (reserved for user-defined extensions)
+    pub const CUSTOM_0: u8 = 0b0001011;
 }
 
 /// Function 3 field (bits [14:12])
@@ -145,6 +148,7 @@ mod tests {
         assert_eq!(opcode::OP, 0x33);
         assert_eq!(opcode::AMO, 0x2F);
         assert_eq!(opcode::SYSTEM, 0x73);
+        assert_eq!(opcode::CUSTOM_0, 0x0B);
     }
 
     #[test]

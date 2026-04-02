@@ -914,3 +914,124 @@ body {
   padding: 10px;
   color: var(--text-light);
 }
+
+/* Coprocessor Panel */
+.coproc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.coproc-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.coproc-toolbar h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.coproc-toolbar button,
+.coproc-card-header button {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--secondary-bg);
+  color: #fff;
+  cursor: pointer;
+}
+
+.coproc-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.coproc-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fafafa;
+}
+
+.coproc-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.coproc-card-header h3 {
+  margin: 0;
+}
+
+.coproc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+
+.coproc-grid div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.coproc-grid span {
+  color: var(--text-light);
+}
+
+.coproc-error {
+  color: #c62828;
+  background: #ffebee;
+  border: 1px solid #ffcdd2;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.coproc-empty {
+  color: var(--text-light);
+  font-size: 12px;
+}
+
+.coproc-timeline-block {
+  margin-top: 10px;
+}
+
+.coproc-timeline-block h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.coproc-timeline {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.coproc-timeline-row {
+  display: grid;
+  grid-template-columns: 88px 1fr 1fr 1fr 70px;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f3f4f6;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.coproc-timeline-row:last-child {
+  border-bottom: none;
+}
+
+.coproc-timeline-empty {
+  color: var(--text-light);
+  font-size: 12px;
+}

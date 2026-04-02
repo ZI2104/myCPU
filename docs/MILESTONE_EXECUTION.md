@@ -925,3 +925,126 @@
   - 工件准备与验收脚本已具备“自动发现 + 前置校验 + 明确阻塞”能力；
   - 下一步只需补齐真实 Linux 工件后执行：
     - `powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.ps1 -AutoResolveArtifacts -AutoDtb -StrictUserlandMarker`。
+
+### 2026-04-02 Phase-5-01（NPU/LPU 描述符 DMA 最小闭环）
+
+- 完成内容：
+  - 为 `Npu` / `Lpu` 增加描述符寄存器组（`DESC_ADDR/DESC_LEN/DESC_NOTIFY`）与任务统计寄存器。
+  - 增加 pending-notify 处理路径：外设收到 `DESC_NOTIFY` 后进入“待处理”状态。
+  - 在 `Bus::write_byte` 中增加 NPU/LPU 后处理钩子：若存在 pending notify，由总线桥接 RAM 完成 descriptor 批处理（DMA 风格）并写回结果。
+  - 扩展 PLIC pending 同步，新增 NPU/LPU IRQ 源映射（保持 VirtIO/UART 行为不变）。
+  - 新增回归测试覆盖外设级与总线级路径。
+- 变更文件：
+  - `src/peripheral/npu.rs`
+  - `src/peripheral/lpu.rs`
+  - `src/memory/bus.rs`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+- 验收结果：
+  - 通过：库回归 `267/267`。
+  - 新增测试均通过：
+    - `peripheral::npu::tests::test_npu_descriptor_dma_batch`
+    - `peripheral::lpu::tests::test_lpu_descriptor_dma_batch`
+    - `memory::bus::tests::test_bus_npu_descriptor_notify_bridge`
+    - `memory::bus::tests::test_bus_lpu_descriptor_notify_bridge`
+- 风险/未完成项：
+  - 前端暂无 NPU/LPU 寄存器面板与任务时间线；
+  - 自定义加速指令路径尚未接入。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 5 已从“MMIO 骨架”推进到“描述符 DMA + IRQ”可执行闭环；
+  - 下一步优先：
+    1) 在可视化端新增 NPU/LPU 状态面板与任务计数趋势；
+    2) 规划并实现一条最小自定义指令到 NPU/LPU 的 fast-path。
+
+### 2026-04-02 Phase-5-02（NPU/LPU 状态可视化面板）
+
+- 完成内容：
+  - 可视化后端新增协处理器查询命令：`npu state` / `lpu state`。
+  - `Bus` 增加 `get_npu_snapshot()` / `get_lpu_snapshot()`，统一暴露协处理器快照。
+  - 前端新增 Coprocessor 页签与 `CoprocessorPanel`，可展示并刷新 NPU/LPU 的 control/status/opcode/cycles/desc/task 统计。
+  - 新增命令解析回归测试，确保命令协议稳定。
+- 变更文件：
+  - `src/peripheral/npu.rs`
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/mod.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `frontend/src/App.tsx`
+  - `frontend/src/types/snapshot.ts`
+  - `frontend/src/App.css`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：库回归 `268/268`。
+  - 通过：前端构建成功（Vite build）。
+- 风险/未完成项：
+  - 任务时间线仍未实现（当前为快照刷新模式）；
+  - 自定义加速指令路径尚未接入。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 5 已具备“MMIO + 描述符 DMA + 可视化状态面板”主链路；
+  - 下一步优先：
+    1) 增加任务时间线（notify/done/error 时间序列）；
+    2) 设计并接入最小自定义指令 fast-path（CPU -> NPU/LPU）。
+
+### 2026-04-02 Phase-5-03（CUSTOM-0 自定义指令 fast-path）
+
+- 完成内容：
+  - 为指令系统新增 `CUSTOM-0 (0x0B)` opcode 常量。
+  - 在 CPU 执行主路径中于通用解码前接入 `execute_custom0()` 分发。
+  - 新增最小自定义编码约定（R-type 布局）：
+    - `funct3=0` -> NPU；`funct3=1` -> LPU；
+    - `funct7[4:0]` -> 协处理器 opcode；
+    - `rs1/rs2` -> 输入，`rd` -> 结果。
+  - 执行逻辑采用 MMIO fast-path：CPU 将操作数/opcode 写入 NPU/LPU 寄存器，拉起 `START`，同步读取 `RESULT` 并回写寄存器。
+  - 增加非法 opcode 拒绝逻辑，避免未知协处理器操作静默退化。
+- 变更文件：
+  - `src/instruction/opcode.rs`
+  - `src/cpu/core.rs`
+  - `src/instruction/execute.rs`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+- 验收结果：
+  - 通过：库回归 `271/271`。
+  - 新增测试均通过：
+    - `instruction::execute::tests::test_custom0_npu_add_fast_path`
+    - `instruction::execute::tests::test_custom0_lpu_xor_fast_path`
+    - `instruction::execute::tests::test_custom0_invalid_opcode_rejected`
+- 风险/未完成项：
+  - 任务时间线（notify/done/error）仍未实现；
+  - 目前 fast-path 为“同步 MMIO 触发”模型，后续可按性能需求演进为异步队列化提交。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 5 现已具备“MMIO + 描述符 DMA + 可视化状态 + 自定义指令 fast-path”主链路。
+  - 下一步优先：补齐任务时间线，并在前端增加趋势图/事件序列展示。
+
+### 2026-04-02 Phase-5-04（NPU/LPU 任务时间线）
+
+- 完成内容：
+  - `CoprocessorPanel` 新增任务时间线区块，展示最近协处理器状态变化：`notify/done/error/pending`。
+  - 增加时间线增量去重逻辑：状态未变化时不重复入列。
+  - 增加协处理器页签自动轮询（1s）以持续采样，形成“快照 -> 趋势”的可观测闭环。
+  - 时间线默认保留最近 24 条记录，并显示与上一条的增量变化。
+- 变更文件：
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `frontend/src/App.tsx`
+  - `frontend/src/App.css`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：库回归 `271/271`。
+  - 通过：前端构建成功（Vite build）。
+- 风险/未完成项：
+  - 当前时间线为前端采样视角，未直接显示每条 descriptor 的详细执行元数据（如地址/opcode 细节）。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 5 已实现“MMIO + 描述符 DMA + IRQ + 可视化状态 + custom fast-path + 任务时间线”闭环。
+  - 下一步可转向 Phase 6：将 xv6→Linux→游戏→NPU/LPU 路线做脚本化串联验收与演示封装。

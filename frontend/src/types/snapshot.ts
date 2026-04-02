@@ -122,6 +122,38 @@ export interface FramebufferGameResponse {
   error?: string;
 }
 
+export interface NpuStateResponse {
+  type: 'npu_state';
+  success: boolean;
+  control?: number;
+  status?: number;
+  opcode?: number;
+  cycles?: number;
+  desc_addr?: number;
+  desc_len?: number;
+  tasks_done?: number;
+  tasks_error?: number;
+  desc_notify_count?: number;
+  pending_desc_notify?: boolean;
+  error?: string;
+}
+
+export interface LpuStateResponse {
+  type: 'lpu_state';
+  success: boolean;
+  control?: number;
+  status?: number;
+  opcode?: number;
+  cycles?: number;
+  desc_addr?: number;
+  desc_len?: number;
+  tasks_done?: number;
+  tasks_error?: number;
+  desc_notify_count?: number;
+  pending_desc_notify?: boolean;
+  error?: string;
+}
+
 // Breakpoints
 export interface Breakpoint {
   addr: number;

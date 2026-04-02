@@ -35,7 +35,7 @@
 > 复验同步（2026-04-01）：已基于当前工作区状态再次执行 Phase 4 host/guest 双模式验收，结果均 PASS；并复跑 `cargo test --lib`（251/251）与前端 `npm run build`，结果均通过。
 | Phase 3 | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | ⏳ 未完成   | Buildroot Linux 进入 init/userland                    | 模拟器侧链路能力已齐全（SBI/FDT/bootargs/payload）；仓库缺少真实 OpenSBI + Buildroot Linux 工件，最终 init/userland 终验待外部镜像补齐                                      |
 | Phase 4 | Linux 用户态 SDL/FB 游戏演示                               | ✅ 已完成   | 简化 2D 游戏跑通 + 输入设备 + Overlay                 | `fb_game` 游戏流程控制（init/step/run/reset）+ 输入面板 + Framebuffer Overlay 已落地；host/guest 自动验收脚本通过，库测 251/251 与前端构建通过                                                                             |
-| Phase 5 | NPU/LPU 模拟（MMIO 优先）                                  | 🟡 部分完成 | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU MMIO 骨架与 IRQ 已完成；DESC_ADDR/DMA/任务队列未完成                                                                       |
+| Phase 5 | NPU/LPU 模拟（MMIO 优先）                                  | ✅ 已完成   | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU 已补齐 DESC_ADDR/描述符 DMA/Bus 桥接、可视化状态面板、CUSTOM-0 自定义指令 fast-path 与任务时间线                                                       |
 | Phase 6 | 亮点封装发布（脚本化演示+回归矩阵）                        | ⏳ 未完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 已完成 Framebuffer 一键演示脚本与 xv6 shell smoke 自动化脚本，完整串联（xv6→Linux→游戏→NPU）仍未完成                                                                   |
 
 ### 执行约定（从本次开始）
@@ -362,16 +362,18 @@
 - [ ] 核间中断 (IPI)
 - [ ] 共享内存
 
-### P5: NPU/LPU 协处理器 (MMIO 路径)（进行中）
+### P5: NPU/LPU 协处理器 (MMIO 路径)（已完成）
 
 - [x] NPU MMIO 外设骨架（`0x2000_0000`）
 - [x] LPU MMIO 外设骨架（`0x2000_1000`）
 - [x] 启动命令默认挂载到系统总线（CLI 运行/调试/可视化）
 - [x] 中断查询与确认接口（`has_interrupt` / `acknowledge_interrupt`）
 - [x] 单元测试覆盖基础算子和中断行为
-- [ ] 可视化前端寄存器面板与任务时间线
-- [ ] DMA/描述符队列（大任务模式）
-- [ ] 自定义指令加速路径（后续阶段）
+- [x] DESC_ADDR + 描述符批处理（任务队列）
+- [x] Bus 侧 DMA 桥接触发（notify -> RAM 访存执行）
+- [x] 可视化前端寄存器面板（NPU/LPU state）
+- [x] 自定义指令加速路径（CUSTOM-0，CPU -> NPU/LPU）
+- [x] 任务时间线（notify/done/error）
 
 ### P6: Linux + SDL/Framebuffer 演示链路（已完成）
 
@@ -403,6 +405,70 @@
 - 验收测试：
   - `cargo test --lib` 通过（208 passed, 0 failed）
   - `cargo build` 通过
+
+#### P5 当前里程碑验收（2026-04-02）
+
+- 新增能力：
+  - NPU/LPU 新增描述符寄存器：`DESC_ADDR/DESC_LEN/DESC_NOTIFY` 与任务统计寄存器。
+  - NPU/LPU 支持按描述符批处理执行（opcode + opA_addr + opB_addr + dst_addr）。
+  - `Bus::write_byte` 新增 NPU/LPU pending-notify 桥接：通知触发后由总线代执行 RAM 读写（DMA 风格）。
+  - PLIC pending 同步新增 NPU/LPU IRQ 源映射（保留 VirtIO/UART 兼容行为）。
+- 新增测试：
+  - `peripheral::npu::tests::test_npu_descriptor_dma_batch`
+  - `peripheral::lpu::tests::test_lpu_descriptor_dma_batch`
+  - `memory::bus::tests::test_bus_npu_descriptor_notify_bridge`
+  - `memory::bus::tests::test_bus_lpu_descriptor_notify_bridge`
+- 验收测试：
+  - `cargo test --lib` 通过（267 passed, 0 failed）
+- 当前边界：
+  - 前端尚未提供 NPU/LPU 寄存器面板与任务时间线；
+  - 自定义加速指令路径尚未接入。
+
+#### P5 当前里程碑验收（2026-04-02-R2）
+
+- 新增能力：
+  - 可视化后端新增命令：`npu state`、`lpu state`，返回结构化协处理器状态快照。
+  - 总线新增快照查询接口：`get_npu_snapshot()`、`get_lpu_snapshot()`。
+  - 前端新增 Coprocessor 页签与 `CoprocessorPanel`，可手动/批量刷新 NPU/LPU 关键寄存器与任务统计。
+- 新增测试：
+  - `visualize::server::tests::test_parse_npu_lpu_state_commands`
+- 验收测试：
+  - `cargo test --lib` 通过（268 passed, 0 failed）
+  - `frontend` 构建通过（`npm run build`）
+- 当前边界：
+  - “任务时间线”仍为后续增强项；
+  - 自定义加速指令路径尚未接入。
+
+#### P5 当前里程碑验收（2026-04-02-R3）
+
+- 新增能力：
+  - 新增 `CUSTOM-0 (0x0B)` 指令路径，编码采用 R-type 布局：`funct3=0` 路由 NPU、`funct3=1` 路由 LPU。
+  - `funct7[4:0]` 作为协处理器 opcode，`rs1/rs2` 作为输入操作数，执行结果回写 `rd`。
+  - CPU 执行路径在通用解码前接入 `execute_custom0()`，通过 MMIO 快速驱动 NPU/LPU 完成一次同步运算。
+- 新增测试：
+  - `instruction::execute::tests::test_custom0_npu_add_fast_path`
+  - `instruction::execute::tests::test_custom0_lpu_xor_fast_path`
+  - `instruction::execute::tests::test_custom0_invalid_opcode_rejected`
+- 验收测试：
+  - `cargo test --lib` 通过（271 passed, 0 failed）
+- 当前边界：
+  - “任务时间线”仍为后续增强项。
+
+#### P5 当前里程碑验收（2026-04-02-R4）
+
+- 新增能力：
+  - 前端 `CoprocessorPanel` 新增任务时间线视图，按时间记录 `notify/done/error/pending` 变化。
+  - 协处理器页签新增自动轮询刷新（1s），持续沉淀时间线点位。
+  - 时间线采用增量去重与最近窗口保留（最近 24 条），便于观察任务趋势。
+- 变更文件：
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `frontend/src/App.tsx`
+  - `frontend/src/App.css`
+- 验收测试：
+  - `cargo test --lib` 通过（271 passed, 0 failed）
+  - `frontend` 构建通过（`npm run build`）
+- 当前边界：
+  - Phase 5 主链路能力已闭环，后续以性能优化与可观测性增强为主。
 
 ---
 
