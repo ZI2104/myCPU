@@ -156,8 +156,8 @@ cargo fmt
 
 ## 文档位置
 
-- 架构设计: `docs/ARCHITECTURE.md`
-- 开发路线: `docs/ROADMAP.md`
+- 架构设计: `docs/design/ARCHITECTURE.md`
+- 开发路线: `docs/design/ROADMAP.md`
 - 项目说明: `README.md`
 
 ## 下一步

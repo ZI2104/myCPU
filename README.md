@@ -153,11 +153,14 @@ runs-on: [self-hosted, linux, riscv]
 
 ## 文档
 
-- [架构设计](docs/ARCHITECTURE.md) - 系统架构详细说明
-- [开发计划](docs/ROADMAP.md) - 开发路线图
-- [里程碑执行记录](docs/MILESTONE_EXECUTION.md) - 分阶段验收与上下文压缩
-- [课程演示指南](docs/DEMO_GUIDE.md) - 可视化与演示流程
-- [目录结构说明](docs/PROJECT_STRUCTURE.md) - 目录职责、产物落位与清理建议
+- [快速上手](docs/guides/GETTING_STARTED.md) - 快速开始与常用命令
+- [架构概览](docs/design/ARCHITECTURE.md) - 系统架构概览
+- [NPU 概览](docs/npu/NPU_OVERVIEW.md) - NPU 描述符 ABI 与集成说明
+- [开发计划](docs/design/ROADMAP.md) - 开发路线图
+- [里程碑执行记录](docs/development/MILESTONE_EXECUTION.md) - 分阶段验收与上下文压缩
+- [演示指南](docs/guides/DEMO_GUIDE.md) - 可视化与演示流程
+- [目录结构说明](docs/design/PROJECT_STRUCTURE.md) - 目录职责、产物落位与清理建议
+- [文档索引](docs/INDEX.md) - 全量文档导航与分层说明
 
 ## 项目结构
 

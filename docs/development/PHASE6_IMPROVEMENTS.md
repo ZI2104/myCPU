@@ -4,6 +4,19 @@
 
 本文档描述 myCPU RISC-V 模拟器的 Phase 6 改进方向，包括实施优先级、技术方案和预期成果。
 
+> 状态口径说明：本文件用于“改进规划与方向说明”；阶段完成状态请以 `docs/design/ROADMAP.md` 为准。
+
+## 已完成功能摘要
+
+以下功能已在 Phase 6 期间实现完成：
+
+- ✅ 前端可视化（P0）：WebSocket 状态导出 + React 可视化组件 + 流水线动画 + 寄存器/CSR 面板
+- ✅ 性能监控：HPM CSR + PerfCollector + IPC/CPI 报告
+- ✅ M 扩展（P1）：MUL/MULH/MULHSU/MULHU/DIV/DIVU/REM/REMU 全部实现
+- ✅ NPU/LPU 协处理器（P5）：MMIO 外设 + DMA 桥接 + 自定义指令 fast-path + 可视化面板 + 任务时间线
+- ✅ Linux + Framebuffer 演示（P6）：帧缓冲渲染 + 输入设备 + 游戏演示
+- 🟡 Sv32 虚拟内存（P3）：页表结构 + 地址翻译 + 页错误异常（TLB 待实现)
+
 ## 当前状态
 
 | Phase   | 状态   | 主要功能                           |
@@ -21,16 +34,16 @@
 
 ## 改进方向概览
 
-| 方向                | 亮点指数 | 复杂度 | 周次安排（第4-8周口径） | 推荐优先级 | 状态   |
-| ------------------- | -------- | ------ | ----------------------- | ---------- | ------ |
-| 🎨 前端可视化        | ⭐⭐⭐⭐⭐    | 中     | 第6-7周                 | P0         | 待开始 |
-| 📊 性能监控          | ⭐⭐⭐⭐     | 低-中  | 第4周                   | P0         | ✅ 完成 |
-| 🔢 M 扩展 (乘除法)   | ⭐⭐⭐      | 低     | 第4-5周                 | P1         | 待开始 |
-| 🤖 NPU/ML 扩展       | ⭐⭐⭐⭐⭐    | 高     | 第8周（课设后继续）     | P2         | 待开始 |
-| 💾 Sv32 虚拟内存     | ⭐⭐⭐⭐     | 高     | 第8周                   | P2         | 待开始 |
-| 🖥️ 运行 miniOS       | ⭐⭐⭐⭐⭐    | 高     | 课设后拓展              | P2         | 待开始 |
-| 📦 C 扩展 (压缩指令) | ⭐⭐⭐      | 中     | 第8周（课设后继续）     | P3         | 待开始 |
-| 🔗 多核支持          | ⭐⭐⭐⭐     | 很高   | 课设后拓展              | P3         | 待开始 |
+| 方向                | 亮点指数 | 复杂度 | 周次安排（第4-8周口径） | 推荐优先级 | 状态     |
+| ------------------- | -------- | ------ | ----------------------- | ---------- | -------- |
+| 🎨 前端可视化        | ⭐⭐⭐⭐⭐    | 中     | 第6-7周                 | P0         | ✅ 完成   |
+| 📊 性能监控          | ⭐⭐⭐⭐     | 低-中  | 第4周                   | P0         | ✅ 完成   |
+| 🔢 M 扩展 (乘除法)   | ⭐⭐⭐      | 低     | 第4-5周                 | P1         | ✅ 完成   |
+| 🤖 NPU/ML 扩展       | ⭐⭐⭐⭐⭐    | 高     | 第8周（课设后继续）     | P2         | ✅ 完成   |
+| 💾 Sv32 虚拟内存     | ⭐⭐⭐⭐     | 高     | 第8周                   | P2         | 🟡 部分   |
+| 🖥️ 运行 miniOS       | ⭐⭐⭐⭐⭐    | 高     | 课设后拓展              | P2         | 待开始   |
+| 📦 C 扩展 (压缩指令) | ⭐⭐⭐      | 中     | 第8周（课设后继续）     | P3         | 待开始   |
+| 🔗 多核支持          | ⭐⭐⭐⭐     | 很高   | 课设后拓展              | P3         | 待开始   |
 
 ---
 
@@ -67,7 +80,7 @@
 3. 创建前端可视化组件
 4. 添加单步执行、暂停、复位控制
 
-**详细设计**: 见 [VISUALIZATION_DESIGN.md](./VISUALIZATION_DESIGN.md)
+**详细设计**: 见 [../design/VISUALIZATION_DESIGN.md](../design/VISUALIZATION_DESIGN.md)
 
 ---
 
@@ -99,7 +112,7 @@
 - **Dhrystone**: 经典整数基准
 - **自写测试**: 斐波那契、排序算法等
 
-**详细设计**: 见 [PERFORMANCE_MONITORING.md](./PERFORMANCE_MONITORING.md)
+**详细设计**: 见 [../design/PERFORMANCE_MONITORING.md](../design/PERFORMANCE_MONITORING.md)
 
 ---
 
@@ -275,8 +288,8 @@ Sv32 页表项 (PTE):
 
 ## 相关文档
 
-- [VISUALIZATION_DESIGN.md](./VISUALIZATION_DESIGN.md) - 可视化技术方案
-- [PERFORMANCE_MONITORING.md](./PERFORMANCE_MONITORING.md) - 性能监控设计
-- [DEMO_GUIDE.md](./DEMO_GUIDE.md) - 汇报演示指南
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - 系统架构设计
-- [ROADMAP.md](./ROADMAP.md) - 开发路线图
+- [../design/VISUALIZATION_DESIGN.md](../design/VISUALIZATION_DESIGN.md) - 可视化技术方案
+- [../design/PERFORMANCE_MONITORING.md](../design/PERFORMANCE_MONITORING.md) - 性能监控设计
+- [../guides/DEMO_GUIDE.md](../guides/DEMO_GUIDE.md) - 汇报演示指南
+- [../design/ARCHITECTURE.md](../design/ARCHITECTURE.md) - 系统架构设计
+- [../design/ROADMAP.md](../design/ROADMAP.md) - 开发路线图

@@ -1,6 +1,6 @@
 # OS 里程碑执行记录（逐项验收 + 上下文压缩）
 
-> 目标：按 `docs/ROADMAP.md` 中的“OS Bring-up 里程碑（用户目标对齐）”逐项推进。  
+> 目标：按 `docs/design/ROADMAP.md` 中的“OS Bring-up 里程碑（用户目标对齐）”逐项推进。  
 > 规则：每完成一项，必须补充“完成记录 + 测试验收 + 上下文压缩”。
 
 ## 记录模板
@@ -25,7 +25,7 @@
   - 明确“每项完成后必须记录 + 压缩上下文 + 验收”的执行约定。
   - 修正 `ROADMAP` 中 P1 RV32M 状态为已完成。
 - 变更文件：
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`（本文件）
 - 验收命令：
   - `cargo test --test bringup_smoke`
@@ -68,7 +68,7 @@
   - `src/peripheral/virtio_block.rs`
   - `src/peripheral/mod.rs`
   - `src/main.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo test virtio_block::tests --lib`
   - `cargo test --lib`
@@ -91,7 +91,7 @@
   - 保持旧命令路径兼容（`READ_SECTOR/WRITE_SECTOR`）。
 - 变更文件：
   - `src/peripheral/virtio_block.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo test virtio_block::tests --lib`
   - `cargo test --lib`
@@ -118,7 +118,7 @@
   - `src/peripheral/virtio_block.rs`
   - `src/memory/bus.rs`
   - `src/peripheral/mod.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo test virtio_block::tests --lib`
   - `cargo test memory::bus::tests::test_bus_virtio_descriptor_notify_bridge --lib`
@@ -146,7 +146,7 @@
 - 变更文件：
   - `src/peripheral/virtio_block.rs`
   - `src/memory/bus.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo test virtio_block::tests --lib`
   - `cargo test memory::bus::tests::test_bus_virtio_descriptor_notify_bridge --lib`
@@ -171,7 +171,7 @@
 - 变更文件：
   - `src/main.rs`
   - `src/peripheral/virtio_block.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test virtio_block::tests --lib`
@@ -259,7 +259,7 @@
   - `src/cpu/core.rs`
   - `src/cpu/pipeline/mod.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -299,7 +299,7 @@
   - `src/cpu/pipeline/mod.rs`
   - `src/cpu/csr/mod.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -327,7 +327,7 @@
   - `src/interrupt/plic.rs`
   - `src/main.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -362,7 +362,7 @@
   - `src/cpu/core.rs`
   - `src/peripheral/virtio_block.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo test --lib`
   - `cargo run --release -- run --count 120000000 --heartbeat-every 20000000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-rv32\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-rv32\\fs.img`
@@ -395,7 +395,7 @@
   - `src/memory/bus.rs`
   - `src/peripheral/uart.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -419,7 +419,7 @@
 - 变更文件：
   - `scripts/run_xv6_shell_smoke.ps1`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1`
 - 验收结果：
@@ -442,7 +442,7 @@
 - 变更文件：
   - `src/main.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1`
@@ -466,7 +466,7 @@
 - 变更文件：
   - `scripts/run_xv6_shell_smoke.ps1`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
 - 验收结果：
@@ -491,7 +491,7 @@
   - `src/main.rs`
   - `scripts/run_xv6_shell_smoke.ps1`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -515,7 +515,7 @@
 - 变更文件：
   - `scripts/run_xv6_shell_smoke.ps1`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
 - 验收结果：
@@ -537,7 +537,7 @@
 - 变更文件：
   - `scripts/run_xv6_shell_smoke.ps1`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\\scripts\\run_xv6_shell_smoke.ps1 -Mode matrix`
 - 验收结果：
@@ -563,7 +563,7 @@
   - `src/main.rs`
   - `scripts/run_xv6_shell_smoke.ps1`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -594,7 +594,7 @@
 - 变更文件：
   - `src/main.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `target\\release\\mycpu.exe run --count 1000000 --memory 128 third_party\\xv6-rv32\\kernel\\kernel --virtio-disk third_party\\xv6-rv32\\fs.img --linux-boot --linux-hartid 0 --linux-bootargs "console=ttyS0 root=/dev/vda rw"`
 - 验收结果：
@@ -621,7 +621,7 @@
 - 变更文件：
   - `src/main.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -649,7 +649,7 @@
 - 变更文件：
   - `src/main.rs`
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `cargo build`
   - `cargo test --lib`
@@ -689,7 +689,7 @@
   - `frontend/src/components/InputPanel.tsx`
   - `frontend/src/App.tsx`
   - `frontend/src/App.css`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `cargo test --lib`
@@ -798,7 +798,7 @@
   - 复跑库测试与前端构建，并同步记录到里程碑与路线图文档。
 - 变更文件：
   - `docs/MILESTONE_EXECUTION.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode host-demo`
   - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_acceptance.ps1 -Mode guest-binary -SkipBuild`
@@ -822,11 +822,11 @@
   - 在 `README.md` 的快速开始中新增：
     - `run_phase4_input_framebuffer_acceptance.ps1`（`host-demo` / `guest-binary`）
     - `run_mario_cpu_validation.ps1`（guest CPU 行为验收）
-  - 在 `docs/DEMO_GUIDE.md` 增加“Phase 4 快速验收”章节，包含 host/guest 一键验收命令与 PASS 关键字说明。
+  - 在 `docs/guides/DEMO_GUIDE.md` 增加“Phase 4 快速验收”章节，包含 host/guest 一键验收命令与 PASS 关键字说明。
   - 同步修正文档中的 Markdown 代码块语言标注（避免无语言围栏告警）。
 - 变更文件：
   - `README.md`
-  - `docs/DEMO_GUIDE.md`
+  - `docs/guides/DEMO_GUIDE.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - 文档整理项，无额外运行时回归；功能链路沿用 R1 复验结果（host/guest 验收 + `cargo test --lib` + 前端构建均通过）。
@@ -907,7 +907,7 @@
   - `scripts/build_phase3_buildroot_artifacts.ps1`
   - `scripts/run_linux_phase3_acceptance.ps1`
   - `README.md`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\scripts\setup_phase3_artifacts.ps1`
@@ -938,7 +938,7 @@
   - `src/peripheral/npu.rs`
   - `src/peripheral/lpu.rs`
   - `src/memory/bus.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `cargo test --lib`
@@ -975,7 +975,7 @@
   - `frontend/src/App.tsx`
   - `frontend/src/types/snapshot.ts`
   - `frontend/src/App.css`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `cargo test --lib`
@@ -1007,7 +1007,7 @@
   - `src/instruction/opcode.rs`
   - `src/cpu/core.rs`
   - `src/instruction/execute.rs`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `cargo test --lib`
@@ -1035,7 +1035,7 @@
   - `frontend/src/components/CoprocessorPanel.tsx`
   - `frontend/src/App.tsx`
   - `frontend/src/App.css`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `cargo test --lib`
@@ -1061,7 +1061,7 @@
   - 新增统一阶段汇总与日志归档（`target/phase6-demo-logs`），支持按阶段跳过（`-SkipXv6/-SkipPhase4/...`）。
 - 变更文件：
   - `scripts/run_phase6_showcase_pipeline.ps1`
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -SkipBuild -SkipXv6 -SkipPhase4 -SkipFrontendBuild`
@@ -1083,7 +1083,7 @@
   - 执行 Phase6 编排脚本全量模式（启用 Linux 阶段），完成从 xv6 到 Linux、再到 Phase4 游戏链路、NPU/LPU 回归与前端构建的一体化验收。
   - 统一输出阶段总结并确认所有 required stage 均通过。
 - 变更文件：
-  - `docs/ROADMAP.md`
+  - `docs/design/ROADMAP.md`
   - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
   - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -EnableLinux`
@@ -1102,3 +1102,23 @@
   - 无阻塞项；后续以演示体验优化与执行耗时优化为主。
 - 上下文压缩（供下一步直接续做）：
   - Phase 6 已完成。下一步可进入发布与演示包装优化（如日志可视化摘要、并行化缩短时长、演示材料模板化）。
+
+### 2026-04-03 Phase-META-02（调研文档并入主线文档）
+
+- 完成内容：
+  - 将 `docs/research/CPU_SIMULATOR_RESEARCH_REVIEW_20260331.md` 的可执行结论并入 `docs/design/ROADMAP.md`。
+  - 在路线图中新增“调研结论并入”章节，统一收口：对标启示、风险优先级、状态追踪、执行口径。
+  - 同步更新 `docs/INDEX.md`，明确“调研结论主入口”已迁移到 `ROADMAP`。
+- 变更文件：
+  - `docs/design/ROADMAP.md`
+  - `docs/INDEX.md`
+  - `docs/MILESTONE_EXECUTION.md`
+  - `docs/research/CPU_SIMULATOR_RESEARCH_REVIEW_20260331.md`
+- 验收命令：
+  - 文档合并项（无代码逻辑改动），采用文档一致性检查：入口与索引互相可达。
+- 验收结果：
+  - 通过：调研报告关键结论在主线文档可直接检索，且原文档保留详版证据。
+- 风险/未完成项：
+  - 报告中“历史测试数（185/193）”为当时快照，当前基线请以 `ROADMAP` 最新同步校验口径为准。
+- 上下文压缩（供下一步直接续做）：
+  - 后续新增调研报告时，先并入 `ROADMAP` 的“调研结论并入”章节，再保留原文作详细证据归档。
