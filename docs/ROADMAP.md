@@ -36,7 +36,7 @@
 | Phase 3 | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | ⏳ 未完成   | Buildroot Linux 进入 init/userland                    | 模拟器侧链路能力已齐全（SBI/FDT/bootargs/payload）；仓库缺少真实 OpenSBI + Buildroot Linux 工件，最终 init/userland 终验待外部镜像补齐                                      |
 | Phase 4 | Linux 用户态 SDL/FB 游戏演示                               | ✅ 已完成   | 简化 2D 游戏跑通 + 输入设备 + Overlay                 | `fb_game` 游戏流程控制（init/step/run/reset）+ 输入面板 + Framebuffer Overlay 已落地；host/guest 自动验收脚本通过，库测 251/251 与前端构建通过                                                                             |
 | Phase 5 | NPU/LPU 模拟（MMIO 优先）                                  | ✅ 已完成   | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU 已补齐 DESC_ADDR/描述符 DMA/Bus 桥接、可视化状态面板、CUSTOM-0 自定义指令 fast-path 与任务时间线                                                       |
-| Phase 6 | 亮点封装发布（脚本化演示+回归矩阵）                        | ⏳ 未完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 已完成 Framebuffer 一键演示脚本与 xv6 shell smoke 自动化脚本，完整串联（xv6→Linux→游戏→NPU）仍未完成                                                                   |
+| Phase 6 | 亮点封装发布（脚本化演示+回归矩阵）                        | ✅ 已完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | `run_phase6_showcase_pipeline.ps1 -EnableLinux` 全链路通过：xv6、Linux、Phase4 host/guest、NPU/LPU 回归与前端构建均 PASS                                                     |
 
 ### 执行约定（从本次开始）
 
@@ -397,6 +397,24 @@
   - 已完成“程序写帧缓冲 → 后端读取转换 → 前端渲染”的端到端闭环
   - 图案命令模式（`fb_demo`）保留用于小游戏画面演示
 
+#### Phase 6 全链路终验（2026-04-02）
+
+- 新增能力：
+  - 新增统一编排脚本：`scripts/run_phase6_showcase_pipeline.ps1`。
+  - 一条命令串联并验收：
+    - `build-release`
+    - `xv6-shell-matrix`
+    - `phase4-host-demo`
+    - `phase4-guest-demo`
+    - `linux-phase3-acceptance`
+    - `coprocessor-fastpath-tests`
+    - `coprocessor-dma-bridge-tests`
+    - `frontend-build`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -EnableLinux`
+- 验收结果：
+  - 全部 required stage PASS。
+
 #### P5 当前里程碑验收（2026-03-31）
 
 - 新增文件：
@@ -469,6 +487,17 @@
   - `frontend` 构建通过（`npm run build`）
 - 当前边界：
   - Phase 5 主链路能力已闭环，后续以性能优化与可观测性增强为主。
+
+#### P6 当前里程碑验收（2026-04-02）
+
+- 新增能力：
+  - 新增 Phase6 编排脚本：`scripts/run_phase6_showcase_pipeline.ps1`。
+  - 支持一键串联阶段：`xv6 shell smoke`、`Linux Phase3 acceptance`（可选启用）、`Phase4 host/guest acceptance`、`NPU/LPU 回归`、`frontend build`。
+  - 提供阶段化开关与统一日志汇总（`target/phase6-demo-logs`），便于课程演示与回归复现。
+- 验收测试：
+  - 轻量烟测通过：`-SkipBuild -SkipXv6 -SkipPhase4 -SkipFrontendBuild`（协处理器回归阶段 PASS）。
+- 当前边界：
+  - 尚未在同一轮执行中完成“xv6→Linux→游戏→NPU/LPU”全链路 PASS（受 Linux 工件准备与执行时长影响）。
 
 ---
 

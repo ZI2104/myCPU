@@ -95,52 +95,26 @@ powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1
 - [开发计划](docs/ROADMAP.md) - 开发路线图
 - [里程碑执行记录](docs/MILESTONE_EXECUTION.md) - 分阶段验收与上下文压缩
 - [课程演示指南](docs/DEMO_GUIDE.md) - 可视化与演示流程
+- [目录结构说明](docs/PROJECT_STRUCTURE.md) - 目录职责、产物落位与清理建议
 
 ## 项目结构
 
 ```text
 myCPU/
-├── src/
-│   ├── lib.rs           # 库入口
-│   ├── main.rs          # CLI 入口
-│   ├── types.rs         # 基础类型 (Addr, Word, Byte 等)
-│   ├── error.rs         # 错误类型定义
-│   ├── perf_report.rs   # 性能报告生成
-│   ├── traits/          # 核心 trait 定义
-│   │   ├── memory.rs    # Memory trait
-│   │   └── peripheral.rs # Peripheral trait
-│   ├── memory/          # 内存系统
-│   │   ├── ram.rs       # RAM 实现
-│   │   ├── rom.rs       # ROM 实现
-│   │   └── bus.rs       # 系统总线
-│   ├── cpu/             # CPU 核心
-│   │   ├── mod.rs       # CPU 模块导出
-│   │   ├── core.rs      # 单周期 CPU 实现
-│   │   ├── registers.rs # 通用寄存器
-│   │   ├── pc.rs        # 程序计数器
-│   │   ├── state.rs     # CPU 状态快照
-│   │   ├── perf_collector.rs # 性能事件收集器
-│   │   ├── csr/         # CSR 寄存器
-│   │   │   ├── mod.rs   # CSR 模块
-│   │   │   ├── perf.rs  # 性能计数器 CSR
-│   │   │   ├── machine.rs # M-mode CSR
-│   │   │   └── ...
-│   │   ├── pipeline/    # 5 级流水线
-│   │   │   ├── mod.rs   # 流水线控制
-│   │   │   ├── stages/  # 各阶段实现
-│   │   │   ├── hazard.rs # 冒险检测
-│   │   │   └── forward.rs # 前递逻辑
-│   │   └── ...
-│   ├── instruction/     # 指令译码和执行
-│   ├── interrupt/       # 中断控制器 (CLINT/PLIC)
-│   ├── peripheral/      # 外设 (UART)
-│   ├── loader/          # ELF 加载器
-│   ├── debug/           # GDB 调试接口
-│   └── difftest/        # QEMU DiffTest
-├── docs/                # 设计文档
-├── tests/               # 集成测试
-└── firmware/            # 测试固件
+├── src/                 # Rust 核心实现（CPU/指令/内存/外设/可视化）
+├── tests/               # 集成测试与测试程序
+├── frontend/            # 可视化前端（Vite + React + TS）
+├── scripts/             # 一键验收与构建脚本（Phase3~Phase6）
+├── docs/                # 架构、路线图、里程碑、演示文档
+│   └── presentations/   # 课程汇报与开题资料（已从根目录收拢）
+├── plans/               # 施工蓝图与规划文档
+├── artifacts/           # 外部工件（如 phase3 Linux 工件）
+├── third_party/         # 外部源码依赖（xv6/buildroot 等）
+├── target/              # Rust 构建输出（可清理）
+└── tmp/                 # 临时文件目录（可清理）
 ```
+
+> 说明：`target/`、`tmp/` 与脚本生成日志均属于运行产物；建议定期清理，避免污染工作区视图。
 
 ## 技术栈
 

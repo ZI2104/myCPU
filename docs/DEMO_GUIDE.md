@@ -38,6 +38,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_phase4_input_framebuffer_
 
 说明：guest 模式在未提供 `-GuestProgram` 时会自动生成最小 RV32 帧缓冲 demo 二进制用于验收。
 
+## 快速验收（Phase 6：一键编排）
+
+```bash
+# 轻量烟测（仅验证脚本框架与协处理器回归阶段）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -SkipBuild -SkipXv6 -SkipPhase4 -SkipFrontendBuild
+
+# 全量串联（在 Linux 工件准备齐全时启用）
+powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -EnableLinux
+```
+
+已验证结果（2026-04-02）：
+
+- `-EnableLinux` 全量模式 PASS（xv6、Linux、Phase4 host/guest、NPU/LPU、frontend build 全通过）。
+
+说明：
+
+- 编排日志统一输出到 `target/phase6-demo-logs`。
+- Linux 阶段默认关闭，避免在缺少工件时阻塞整条演示链路。
+
 浏览器操作：
 
 1. 进入 `Framebuffer` 标签页

@@ -1,16 +1,47 @@
-# myCPU: 完整 RISC-V 模拟器施工蓝图 v2.0
+# myCPU: 完整 RISC-V 模拟器施工蓝图 v3.0
 
-> **目标**: 实现一个支持完整特权级的 5 级流水线 RISC-V RV32I 模拟器
+> **目标**: 构建一个可复现、可演示、可回归的 RISC-V RV32 模拟器平台（CPU + OS bring-up + 协处理器 + 可视化）
 >
-> **状态**: Phase 1 已完成，待实现 Phase 2-5
+> **当前状态**: Phase 1-6 已完成（截至 2026-04-02）
 >
-> **预计周期**: 6-8 周
+> **当前阶段**: 进入发布工程化与持续回归优化（Phase 7，规划中）
 
 ---
 
 ## 项目背景
 
-### 已完成 (Phase 1 ✅)
+### 当前状态快照（2026-04-02）
+
+| 阶段    | 状态 | 关键结果                                                |
+| ------- | ---- | ------------------------------------------------------- |
+| Phase 1 | ✅    | 基础框架（类型/内存/寄存器/主循环）稳定                 |
+| Phase 2 | ✅    | RV32I 指令集与执行链路完成                              |
+| Phase 3 | ✅    | 流水线与 OS bring-up 关键能力完成                       |
+| Phase 4 | ✅    | 特权/异常中断 + 输入/帧缓冲演示闭环完成                 |
+| Phase 5 | ✅    | NPU/LPU（DMA+IRQ+custom fast-path+面板+时间线）完成     |
+| Phase 6 | ✅    | 一键编排验收（xv6→Linux→Phase4→NPU/LPU→frontend）全通过 |
+
+### 已完成里程碑证据
+
+- 路线图状态：`docs/ROADMAP.md`
+- 执行台账：`docs/MILESTONE_EXECUTION.md`
+- 全链路终验命令：`powershell -ExecutionPolicy Bypass -File .\\scripts\\run_phase6_showcase_pipeline.ps1 -EnableLinux`
+- 最近结论：required stages 全部 PASS。
+
+### 下一阶段（Phase 7）建议目标
+
+1. 将 Phase 6 编排脚本纳入 CI（夜间全量 + PR 轻量回归）。
+2. 收敛回归耗时（分层并行、缓存工件、失败快速定位）。
+3. 增强演示可观测性（统一摘要报告 + 时间线导出）。
+4. 按需推进 guest 侧 NES/应用链路，强化“CPU 行为验证优先”证据。
+
+---
+
+### 历史背景（归档）
+
+以下是 v2 蓝图撰写时的起点状态，保留作为历史记录：
+
+#### 已完成 (Phase 1 ✅)
 
 - ✅ 基础类型系统 (Addr, Word, Byte, RegIdx, PrivilegeLevel)
 - ✅ 错误处理框架 (SimError)
@@ -20,7 +51,7 @@
 - ✅ 主循环框架 (step/run)
 - ✅ 35 个单元测试全部通过
 
-### 待实现 (Phase 2-5)
+#### 待实现 (Phase 2-5)
 
 | Phase   | 内容                       | 关键产出       |
 | ------- | -------------------------- | -------------- |
@@ -35,11 +66,12 @@
 
 ```mermaid
 graph TB
-    P1[Phase 1: 基础框架 ✅] --> P2[Phase 2: 指令集]
-    P2 --> P3[Phase 3: 流水线]
-    P2 --> P4[Phase 4: 特权级]
-    P3 --> P5[Phase 5: 调试]
-    P4 --> P5
+    P1[Phase 1: 基础框架 ✅] --> P2[Phase 2: 指令集 ✅]
+    P2 --> P3[Phase 3: 流水线/OS Bring-up ✅]
+    P3 --> P4[Phase 4: 特权+异常+输入/渲染 ✅]
+    P4 --> P5[Phase 5: NPU/LPU ✅]
+    P5 --> P6[Phase 6: 一键编排验收 ✅]
+    P6 --> P7[Phase 7: CI/发布工程化（规划）]
 
     P2 --> P2A[测试基础设施]
     P2A --> P2B[指令译码器]
@@ -57,9 +89,13 @@ graph TB
     style P2A fill:#ff9,stroke:#333,stroke-width:2px
 ```
 
-**注意**: 步骤 2C-2I 标记为粉色，表示可**半并行**开发（可在分支中并行开发，但需按序集成）
+**注意**: 图中 P2A-P2J 及后续 Phase 2-5 细化步骤为历史施工记录，当前已完成并归档。
 
 ---
+
+## 历史施工细化（归档）
+
+> 本节保留 v2 细化步骤用于追溯，不再作为当前执行清单。当前执行以 `docs/ROADMAP.md` 与 `docs/MILESTONE_EXECUTION.md` 为准。
 
 ## Phase 2: RV32I 指令集实现
 
@@ -1206,7 +1242,7 @@ echo "=== All Invariants Passed ==="
 
 ---
 
-*蓝图版本: 2.0*
+*蓝图版本: 3.0*
 *创建日期: 2026-03-24*
-*最后更新: 2026-03-24 (根据审查反馈修订)*
-*预计完成: 2026-05-15*
+*最后更新: 2026-04-02 (同步 Phase 6 全链路完成状态)*
+*备注: v2 细化实施步骤已转为历史归档，现行推进请参考 ROADMAP 与 MILESTONE_EXECUTION*

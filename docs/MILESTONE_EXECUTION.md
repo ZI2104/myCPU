@@ -1048,3 +1048,57 @@
 - 上下文压缩（供下一步直接续做）：
   - Phase 5 已实现“MMIO + 描述符 DMA + IRQ + 可视化状态 + custom fast-path + 任务时间线”闭环。
   - 下一步可转向 Phase 6：将 xv6→Linux→游戏→NPU/LPU 路线做脚本化串联验收与演示封装。
+
+### 2026-04-02 Phase-6-01（演示链路一键编排脚本）
+
+- 完成内容：
+  - 新增 `scripts/run_phase6_showcase_pipeline.ps1`，用于串联以下阶段：
+    - `xv6 shell smoke matrix`
+    - `Linux Phase3 acceptance`（`-EnableLinux` 可选启用）
+    - `Phase4 host-demo + guest-binary acceptance`
+    - `NPU/LPU custom fast-path + descriptor bridge` 回归
+    - `frontend build`
+  - 新增统一阶段汇总与日志归档（`target/phase6-demo-logs`），支持按阶段跳过（`-SkipXv6/-SkipPhase4/...`）。
+- 变更文件：
+  - `scripts/run_phase6_showcase_pipeline.ps1`
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -SkipBuild -SkipXv6 -SkipPhase4 -SkipFrontendBuild`
+- 验收结果：
+  - 通过：轻量烟测 PASS。
+  - 通过：`coprocessor-fastpath-tests`、`coprocessor-dma-bridge-tests` 两阶段在编排脚本内执行成功。
+- 风险/未完成项：
+  - 目前仅完成轻量烟测，尚未在单轮中完成完整“xv6→Linux→游戏→NPU/LPU”全链路 PASS。
+  - Linux 阶段仍依赖外部工件完整性，默认未启用。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 6 已具备统一入口脚本，下一步可在工件齐全环境执行：
+    1) `-EnableLinux` 打开 Linux 阶段；
+    2) 执行全量编排并固化最终演示日志；
+    3) 将全链路 PASS 结果回填路线图状态为完成。
+
+### 2026-04-02 Phase-6-02（全链路终验 PASS）
+
+- 完成内容：
+  - 执行 Phase6 编排脚本全量模式（启用 Linux 阶段），完成从 xv6 到 Linux、再到 Phase4 游戏链路、NPU/LPU 回归与前端构建的一体化验收。
+  - 统一输出阶段总结并确认所有 required stage 均通过。
+- 变更文件：
+  - `docs/ROADMAP.md`
+  - `docs/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -EnableLinux`
+- 验收结果：
+  - 通过：
+    - `build-release`
+    - `xv6-shell-matrix`
+    - `phase4-host-demo`
+    - `phase4-guest-demo`
+    - `linux-phase3-acceptance`
+    - `coprocessor-fastpath-tests`
+    - `coprocessor-dma-bridge-tests`
+    - `frontend-build`
+  - 总结：`[phase6] PASS: showcase pipeline completed (required stages).`
+- 风险/未完成项：
+  - 无阻塞项；后续以演示体验优化与执行耗时优化为主。
+- 上下文压缩（供下一步直接续做）：
+  - Phase 6 已完成。下一步可进入发布与演示包装优化（如日志可视化摘要、并行化缩短时长、演示材料模板化）。
