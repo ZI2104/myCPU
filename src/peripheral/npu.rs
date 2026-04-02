@@ -29,6 +29,8 @@ const REG_TASKS_ERROR: u32 = 0x34;
 const REG_DESC_NOTIFY_COUNT: u32 = 0x38;
 
 const NPU_DESC_STRIDE: u64 = 16;
+// Vector mode flag: when set in descriptor opcode indicates vector-mode
+const VECTOR_FLAG: u32 = 0x1000;
 
 mod control_bits {
     pub const START: u32 = 1 << 0;
@@ -184,6 +186,7 @@ impl Npu {
             REG_CYCLES => self.cycles = value,
             REG_DESC_ADDR_LOW => {
                 self.desc_addr = (self.desc_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
+                eprintln!("[NPU] REG_DESC_ADDR_LOW <- 0x{:08x}", value);
             }
             REG_DESC_ADDR_HIGH => {
                 self.desc_addr = (self.desc_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
@@ -193,6 +196,10 @@ impl Npu {
                 if value != 0 {
                     self.pending_desc_notify = true;
                     self.desc_notify_count = self.desc_notify_count.wrapping_add(1);
+                    eprintln!(
+                        "[NPU] REG_DESC_NOTIFY <- {} (pending_desc_notify set)",
+                        value
+                    );
                 }
             }
             REG_TASKS_DONE => self.tasks_done = value,
@@ -313,12 +320,52 @@ impl Npu {
         index: u32,
     ) -> Result<()> {
         let desc_base = self.desc_addr + (index as u64) * NPU_DESC_STRIDE;
-        self.opcode = Self::read_guest_u32(ram_regions, desc_base)?;
+        // Read raw opcode from descriptor and detect vector-mode
+        let raw_opcode = Self::read_guest_u32(ram_regions, desc_base)?;
+        let is_vector = (raw_opcode & VECTOR_FLAG) != 0;
+        let base_opcode = raw_opcode & !VECTOR_FLAG;
 
         let op_a_addr = Self::read_guest_u32(ram_regions, desc_base + 4)? as u64;
         let op_b_addr = Self::read_guest_u32(ram_regions, desc_base + 8)? as u64;
         let result_addr = Self::read_guest_u32(ram_regions, desc_base + 12)? as u64;
 
+        if is_vector {
+            // In vector-mode, REG_DESC_LEN holds element_count
+            let elem_count = self.desc_len as usize;
+            if elem_count == 0 {
+                // nothing to do, count as error
+                self.tasks_error = self.tasks_error.wrapping_add(1);
+                return Ok(());
+            }
+
+            for i in 0..elem_count {
+                let a = Self::read_guest_u32(ram_regions, op_a_addr + (i as u64) * 4)?;
+                let b = Self::read_guest_u32(ram_regions, op_b_addr + (i as u64) * 4)?;
+
+                let op = NpuOp::from_u32(base_opcode);
+                let res = match op {
+                    NpuOp::Add => a.wrapping_add(b),
+                    NpuOp::Mul => a.wrapping_mul(b),
+                    NpuOp::Max => a.max(b),
+                    NpuOp::Relu => {
+                        if (a as i32) < 0 {
+                            0
+                        } else {
+                            a
+                        }
+                    }
+                };
+
+                Self::write_guest_u32(ram_regions, result_addr + (i as u64) * 4, res)?;
+                self.cycles = self.cycles.wrapping_add(1);
+            }
+
+            self.tasks_done = self.tasks_done.wrapping_add(1);
+            return Ok(());
+        }
+
+        // Scalar path (existing behavior)
+        self.opcode = raw_opcode;
         self.op_a = Self::read_guest_u32(ram_regions, op_a_addr)?;
         self.op_b = Self::read_guest_u32(ram_regions, op_b_addr)?;
 
@@ -346,9 +393,31 @@ impl Npu {
         self.status |= status_bits::BUSY;
         self.status &= !status_bits::DONE;
 
-        for index in 0..self.desc_len {
-            if self.execute_descriptor_entry(ram_regions, index).is_err() {
-                self.tasks_error = self.tasks_error.wrapping_add(1);
+        // Detect if first descriptor is vector-mode. If so, treat REG_DESC_LEN as
+        // element_count and process the single vector descriptor at index 0.
+        if self.desc_len == 0 {
+            // nothing
+        } else {
+            // Try to peek at first descriptor opcode
+            match Npu::read_guest_u32(ram_regions, self.desc_addr) {
+                Ok(first_opcode) => {
+                    if (first_opcode & VECTOR_FLAG) != 0 {
+                        // vector-mode: process only first descriptor, interpret desc_len
+                        if self.execute_descriptor_entry(ram_regions, 0).is_err() {
+                            self.tasks_error = self.tasks_error.wrapping_add(1);
+                        }
+                    } else {
+                        // scalar descriptors: desc_len = number of descriptors
+                        for index in 0..self.desc_len {
+                            if self.execute_descriptor_entry(ram_regions, index).is_err() {
+                                self.tasks_error = self.tasks_error.wrapping_add(1);
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    self.tasks_error = self.tasks_error.wrapping_add(1);
+                }
             }
         }
 
@@ -533,5 +602,57 @@ mod tests {
         assert_eq!(read_u32(&npu, REG_TASKS_ERROR), 0);
         assert_ne!(read_u32(&npu, REG_STATUS) & status_bits::DONE, 0);
         assert!(npu.has_interrupt());
+    }
+
+    #[test]
+    fn test_npu_vector_add() {
+        use crate::memory::Ram;
+
+        const RAM_BASE: u32 = 0x8000_0000;
+        const N: usize = 4usize;
+        let mut regions: Vec<(Addr, usize, Box<dyn Memory>)> =
+            vec![(Addr::new(RAM_BASE), 0x4000, Box::new(Ram::new(0x4000)))];
+
+        let mut npu = Npu::new();
+
+        let desc_addr = RAM_BASE + 0x100;
+        let op_a_base = RAM_BASE + 0x200;
+        let op_b_base = op_a_base + (N as u32) * 4;
+        let out_base = op_b_base + (N as u32) * 4;
+
+        // Fill inputs
+        let a = [1u32, 2, 3, 4];
+        let b = [10u32, 20, 30, 40];
+        for i in 0..N {
+            Npu::write_guest_u32(&mut regions, (op_a_base + (i as u32) * 4) as u64, a[i]).unwrap();
+            Npu::write_guest_u32(&mut regions, (op_b_base + (i as u32) * 4) as u64, b[i]).unwrap();
+        }
+
+        // Write descriptor (vector-mode add)
+        Npu::write_guest_u32(
+            &mut regions,
+            desc_addr as u64,
+            (NpuOp::Add as u32) | VECTOR_FLAG,
+        )
+        .unwrap();
+        Npu::write_guest_u32(&mut regions, (desc_addr + 4) as u64, op_a_base).unwrap();
+        Npu::write_guest_u32(&mut regions, (desc_addr + 8) as u64, op_b_base).unwrap();
+        Npu::write_guest_u32(&mut regions, (desc_addr + 12) as u64, out_base).unwrap();
+
+        // Configure NPU registers
+        write_u32(&mut npu, REG_DESC_ADDR_LOW, desc_addr);
+        write_u32(&mut npu, REG_DESC_LEN, N as u32); // element_count
+        write_u32(&mut npu, REG_CONTROL, control_bits::IRQ_EN);
+        write_u32(&mut npu, REG_DESC_NOTIFY, 1);
+
+        assert!(npu.has_pending_descriptor_notify());
+
+        npu.process_pending_descriptor_notify(&mut regions).unwrap();
+
+        for i in 0..N {
+            let got =
+                Npu::read_guest_u32(&mut regions, (out_base + (i as u32) * 4) as u64).unwrap();
+            assert_eq!(got, a[i] + b[i]);
+        }
     }
 }
