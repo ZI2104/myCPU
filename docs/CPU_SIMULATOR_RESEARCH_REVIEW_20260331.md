@@ -257,7 +257,7 @@
 
 3. **性能报告停顿分解增强（后端 + 前端）**
 
-- 后端：`src/perf_report.rs`, `src/visualize/snapshot.rs`, `src/cpu/pipeline/mod.rs`
+- 后端：`src/perf/report.rs`, `src/visualize/snapshot.rs`, `src/cpu/pipeline/mod.rs`
    - 新增 load-use / control 的 cycle rate 与 stall share 指标。
 - 前端：`frontend/src/types/snapshot.ts`, `frontend/src/components/PerformanceDashboard.tsx`
    - 新增指标字段与可视化展示。

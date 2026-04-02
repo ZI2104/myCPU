@@ -9,7 +9,7 @@ use mycpu::debug::GdbServer;
 use mycpu::interrupt::{Clint, Plic};
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
-use mycpu::perf_report::PerfReport;
+use mycpu::perf::PerfReport;
 use mycpu::peripheral::{InputDevice, Lpu, Npu, Uart, VirtioBlock};
 use mycpu::types::{Addr, RegIdx, Word};
 use mycpu::visualize::linux_fb_program;

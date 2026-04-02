@@ -25,6 +25,15 @@
 - 汇报材料（PPT/开题报告）：统一放在 `docs/presentations/`。
 - 规划草案与阶段蓝图：放在 `plans/`。
 
+## `src/` 代码目录分层约定
+
+- `src/cpu/`：CPU 核心、执行模型、流水线、CSR。
+- `src/instruction/`：指令解码与执行分发。
+- `src/memory/`：RAM/ROM/Bus 等内存系统。
+- `src/peripheral/` + `src/interrupt/`：设备与中断控制器。
+- `src/visualize/`：可视化后端与快照协议。
+- `src/perf/`：性能统计与报告（已完成从根级 `perf_report.rs` 的迁移）。
+
 ## 产物落位约定
 
 ### 1) Linux/OS 工件
@@ -50,7 +59,28 @@
 ## 推荐清理动作
 
 - 定期执行：`scripts/cleanup_workspace.ps1`
-- 在大规模回归后清理：`target/` 与 `tmp/` 中不再需要的产物
+- 在大规模回归后执行深度瘦身：`scripts/cleanup_workspace.ps1 -PruneBuildCaches`
+
+### 清理档位（建议）
+
+1. **常规清理（安全默认）**
+  - 命令：`scripts/cleanup_workspace.ps1`
+  - 清理内容：测试临时文件、验收日志目录、`target/tmp`。
+
+2. **深度瘦身（可重建缓存）**
+  - 命令：`scripts/cleanup_workspace.ps1 -PruneBuildCaches`
+  - 清理内容：`target/`、`third_party/buildroot-riscv32-virt/output/`、`frontend/node_modules`、`frontend/dist`、`tmp/`。
+
+3. **可选扩展清理**
+  - `-PurgeXv6`：清理本地 xv6 third_party 源码缓存。
+  - `-PurgePhase3Artifacts`：清理 `artifacts/phase3` 本地工件缓存。
+
+## 当前体积热点与精简优先级（2026-04-02）
+
+- `third_party/`（主要是 buildroot output）
+- `target/`（Rust 构建缓存与日志）
+
+优先建议：先执行 `-PruneBuildCaches`，通常可释放绝大多数占用空间，且不会破坏仓库源码结构。
 
 ---
 

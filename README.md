@@ -87,6 +87,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_linux_phase3_acceptance.p
 
 # Windows 清理临时工作区文件（推荐定期执行）
 powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1
+
+# Windows 深度瘦身（删除可重建缓存：target/buildroot output/node_modules）
+powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_workspace.ps1 -PruneBuildCaches
 ```
 
 ## 文档

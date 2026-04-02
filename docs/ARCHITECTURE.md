@@ -1500,7 +1500,7 @@ cargo run --release -- run --perf-report program.elf
 | --------------------------- | ------------------------------------------------------- |
 | `src/cpu/csr/perf.rs`       | HPM CSR 实现 (Counter64, Mcycle, Minstret, Mhpmcounter) |
 | `src/cpu/perf_collector.rs` | 性能事件收集器                                          |
-| `src/perf_report.rs`        | 性能报告格式化输出                                      |
+| `src/perf/report.rs`        | 性能报告格式化输出                                      |
 
 ---
 
