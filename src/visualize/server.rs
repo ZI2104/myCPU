@@ -6,8 +6,10 @@
 use crate::cpu::pipeline::PipelineCpu;
 use crate::cpu::ExecutionModel;
 use crate::error::Result;
+use crate::memory::Ram;
 use crate::peripheral::INPUT_BASE;
 use crate::types::Addr;
+use log::debug;
 use crate::visualize::snapshot::{
     disassemble, Breakpoint, CpuSnapshot, DisassembledInstruction, DisassemblyResponse,
     FramebufferResponse, HistoryRecord, HistoryResponse, MemoryReadResponse,
@@ -516,6 +518,8 @@ enum Command {
     Pause,
     /// Reset CPU
     Reset,
+    /// Set initial PC used by Reset
+    SetInitialPc { addr: u32 },
     /// Set execution speed
     Speed { value: u32 },
     /// Read memory region
@@ -571,6 +575,10 @@ impl Command {
             "run" => Some(Command::Run),
             "pause" => Some(Command::Pause),
             "reset" => Some(Command::Reset),
+            "set_initial_pc" => parts
+                .get(1)
+                .and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+                .map(|addr| Command::SetInitialPc { addr }),
             "speed" => parts
                 .get(1)
                 .and_then(|s| s.parse::<u32>().ok())
@@ -737,12 +745,18 @@ pub struct CommandContext {
     pub speed: Arc<Mutex<u32>>,
     /// WebSocket message sender
     pub tx: WsSender,
+    /// State broadcast sender (so command handlers can broadcast authoritative snapshots)
+    pub state_tx: broadcast::Sender<CpuSnapshot>,
     /// Breakpoints map
     pub breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
     /// Execution history
     pub history: Arc<Mutex<VecDeque<HistoryRecord>>>,
     /// Framebuffer game state
     game_state: Arc<Mutex<GameDemoState>>,
+    /// Initial PC value for reset
+    initial_pc: Arc<Mutex<u32>>,
+    /// Clock lock to serialize clock() with reset operations
+    pub clock_lock: Arc<Mutex<()>>,
 }
 
 impl CommandContext {
@@ -755,15 +769,21 @@ impl CommandContext {
         breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
         history: Arc<Mutex<VecDeque<HistoryRecord>>>,
         game_state: Arc<Mutex<GameDemoState>>,
+        initial_pc: Arc<Mutex<u32>>,
+        state_tx: broadcast::Sender<CpuSnapshot>,
+        clock_lock: Arc<Mutex<()>>,
     ) -> Self {
         Self {
             cpu,
             running,
             speed,
             tx,
+            state_tx,
             breakpoints,
             history,
             game_state,
+            initial_pc,
+            clock_lock,
         }
     }
 
@@ -797,12 +817,17 @@ pub struct VisualizeServer {
     game_state: Arc<Mutex<GameDemoState>>,
     /// Maximum history size
     max_history: usize,
+    /// Initial PC value for reset
+    initial_pc: Arc<Mutex<u32>>,
+    /// Lock used to serialize clock() calls with reset so reset is atomic
+    clock_lock: Arc<Mutex<()>>,
 }
 
 impl VisualizeServer {
     /// Create a new visualization server.
     pub fn new(cpu: PipelineCpu) -> Self {
         let (state_tx, _) = broadcast::channel(16);
+        let initial_pc = cpu.pc().raw();
         Self {
             cpu: Arc::new(Mutex::new(cpu)),
             running: Arc::new(Mutex::new(false)),
@@ -812,6 +837,8 @@ impl VisualizeServer {
             history: Arc::new(Mutex::new(VecDeque::new())),
             game_state: Arc::new(Mutex::new(GameDemoState::default())),
             max_history: 10000,
+            initial_pc: Arc::new(Mutex::new(initial_pc)),
+            clock_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -834,6 +861,7 @@ impl VisualizeServer {
         let max_history = self.max_history;
 
         // Spawn the continuous execution task
+        let clock_lock_for_loop = self.clock_lock.clone();
         tokio::spawn(Self::run_loop(
             cpu.clone(),
             running.clone(),
@@ -842,6 +870,7 @@ impl VisualizeServer {
             breakpoints.clone(),
             history.clone(),
             max_history,
+            clock_lock_for_loop,
         ));
 
         // Accept client connections
@@ -854,6 +883,11 @@ impl VisualizeServer {
             let breakpoints = self.breakpoints.clone();
             let history = self.history.clone();
             let game_state = game_state.clone();
+            let initial_pc = self.initial_pc.clone();
+            // clone a sender specifically for this connection so the outer
+            // `state_tx` isn't moved into the connection closure
+            let state_tx_for_conn = state_tx.clone();
+            let clock_lock_for_conn = self.clock_lock.clone();
 
             tokio::spawn(async move {
                 println!("Client connected from {}", client_addr);
@@ -887,6 +921,9 @@ impl VisualizeServer {
                                     // Parse and execute command
                                     match Command::parse(&cmd) {
                                         Some(command) => {
+                                            // include the broadcast sender so command handlers
+                                            // can publish authoritative snapshots without
+                                            // sending duplicate per-client JSON messages
                                             let mut ctx = CommandContext::new(
                                                 cpu.clone(),
                                                 running.clone(),
@@ -895,6 +932,9 @@ impl VisualizeServer {
                                                 breakpoints.clone(),
                                                 history.clone(),
                                                 game_state.clone(),
+                                                initial_pc.clone(),
+                                                state_tx_for_conn.clone(),
+                                                clock_lock_for_conn.clone(),
                                             );
                                             if Self::execute_command(&mut ctx, command).await.is_err() {
                                                 break;
@@ -951,16 +991,24 @@ impl VisualizeServer {
                 ctx.send_json(json).await;
             }
             Command::Step => {
-                let json = {
+                // Execute one cycle, then broadcast the authoritative snapshot
+                let snapshot = {
+                    // serialize with clock_lock to avoid racing with reset
+                    let _clk = ctx.clock_lock.lock().await;
                     let mut cpu_guard = ctx.cpu.lock().await;
                     let _ = cpu_guard.clock();
-                    let snapshot = cpu_guard.snapshot();
-                    serde_json::to_string(&snapshot).unwrap()
+                    cpu_guard.snapshot()
                 };
-                ctx.send_json(json).await;
+                // Broadcast to all subscribers (including this client) to avoid
+                // sending the same snapshot twice via both broadcast and direct send.
+                let _ = ctx.state_tx.send(snapshot.clone());
             }
             Command::StepN { count } => {
-                let response = {
+                // Execute N cycles, then broadcast final snapshot and send a
+                // small ack to the requesting client.
+                let (executed, final_snapshot) = {
+                    // serialize with clock_lock
+                    let _clk = ctx.clock_lock.lock().await;
                     let mut cpu_guard = ctx.cpu.lock().await;
                     let mut executed = 0u32;
                     let target = count.max(1);
@@ -973,15 +1021,19 @@ impl VisualizeServer {
                         executed += 1;
                     }
 
-                    let snapshot = cpu_guard.snapshot();
-                    serde_json::json!({
-                        "type": "stepn",
-                        "success": true,
-                        "requested": count,
-                        "executed": executed,
-                        "snapshot": snapshot,
-                    })
+                    (executed, cpu_guard.snapshot())
                 };
+
+                // Broadcast the final snapshot
+                let _ = ctx.state_tx.send(final_snapshot.clone());
+
+                // Send an acknowledgment with executed count
+                let response = serde_json::json!({
+                    "type": "stepn",
+                    "success": true,
+                    "requested": count,
+                    "executed": executed,
+                });
                 ctx.send_json(response.to_string()).await;
             }
             Command::Run => {
@@ -999,13 +1051,73 @@ impl VisualizeServer {
                 ctx.send_status("paused").await;
             }
             Command::Reset => {
-                let json = {
+                // Ensure execution is paused before and after reset to avoid a
+                // race where the run loop picks up execution immediately after
+                // resetting the PC. Make reset idempotent and pause execution.
+                {
+                    let mut running_guard = ctx.running.lock().await;
+                    *running_guard = false;
+                }
+
+                let snapshot_val = {
+                    // Ensure no clock() is in-flight: acquire clock_lock then cpu
+                    let _clk = ctx.clock_lock.lock().await;
                     let mut cpu_guard = ctx.cpu.lock().await;
-                    cpu_guard.reset();
-                    let snapshot = cpu_guard.snapshot();
-                    serde_json::to_string(&snapshot).unwrap()
+                    let initial_pc = *ctx.initial_pc.lock().await;
+
+                    // Log PC before reset for diagnostics
+                    let before_pc = cpu_guard.pc();
+                    debug!(
+                        "[visualize] reset requested: before_pc=0x{:08x}, initial_pc=0x{:08x}",
+                        before_pc.raw(),
+                        initial_pc
+                    );
+
+                    // Reset CPU and restore initial PC atomically
+                    cpu_guard.reset_with_pc(crate::types::Addr::new(initial_pc));
+
+                    // Log PC after reset
+                    let after_pc = cpu_guard.pc();
+                    debug!(
+                        "[visualize] reset completed: after_pc=0x{:08x}",
+                        after_pc.raw()
+                    );
+                    cpu_guard.snapshot()
                 };
-                ctx.send_json(json).await;
+                // Notify client that CPU is paused after reset
+                ctx.send_status("paused").await;
+
+                // Broadcast the authoritative snapshot via the central channel.
+                // To avoid the frontend seeing a post-reset fetch that already
+                // advanced the IF PC, publish a modified snapshot that forces
+                // the top-level PC and IF-stage PC to the configured initial PC.
+                let mut modified_snapshot = snapshot_val.clone();
+                let initial_pc = *ctx.initial_pc.lock().await;
+                // Force top-level pc and IF-stage to initial PC so UI shows the
+                // expected fetch state immediately after reset.
+                modified_snapshot.pc = initial_pc;
+                modified_snapshot.pipeline.if_stage =
+                    Some(crate::visualize::snapshot::IfStageInfo {
+                        pc: initial_pc,
+                        instruction: 0,
+                        instruction_str: String::new(),
+                    });
+                // Reset performance counters on the snapshot so frontend cycle
+                // columns restart from C0 after a reset.
+                modified_snapshot.perf.cycles = 0;
+                modified_snapshot.perf.instructions = 0;
+                modified_snapshot.perf.ipc = 0.0;
+                modified_snapshot.perf.stalls = 0;
+                modified_snapshot.perf.load_use_stalls = 0;
+                modified_snapshot.perf.control_hazards = 0;
+
+                let _ = ctx.state_tx.send(modified_snapshot.clone());
+                // Also send the modified snapshot directly to the requesting client
+                // to ensure the UI updates immediately for this client before any
+                // other broadcast (defensive against ordering issues).
+                let _ = ctx
+                    .send_json(serde_json::to_string(&modified_snapshot).unwrap())
+                    .await;
             }
             Command::Speed { value } => {
                 {
@@ -1013,6 +1125,20 @@ impl VisualizeServer {
                     *speed_guard = value;
                 }
                 let response = format!(r#"{{"status":"speed_set","speed":{}}}"#, value);
+                ctx.send_json(response).await;
+            }
+            Command::SetInitialPc { addr } => {
+                // Log and update initial PC used by Reset
+                let response = {
+                    let mut initial_guard = ctx.initial_pc.lock().await;
+                    let old = *initial_guard;
+                    *initial_guard = addr;
+                    debug!(
+                        "[visualize] set_initial_pc: old=0x{:08x} new=0x{:08x}",
+                        old, addr
+                    );
+                    format!(r#"{{"status":"initial_pc_set","addr":"0x{:08x}"}}"#, addr)
+                };
                 ctx.send_json(response).await;
             }
             Command::Memory { addr, size } => {
@@ -1505,6 +1631,7 @@ impl VisualizeServer {
         breakpoints: Arc<Mutex<HashMap<u32, Breakpoint>>>,
         history: Arc<Mutex<VecDeque<HistoryRecord>>>,
         max_history: usize,
+        clock_lock: Arc<Mutex<()>>,
     ) {
         loop {
             let is_running = *running.lock().await;
@@ -1516,7 +1643,7 @@ impl VisualizeServer {
             let current_speed = *speed.lock().await;
 
             // Execute cycle and collect data
-            let (snapshot, new_pc, _should_pause) = {
+            let (snapshot, new_pc, cycles_after) = {
                 let mut cpu_guard = cpu.lock().await;
                 if cpu_guard.is_halted() {
                     let mut running_guard = running.lock().await;
@@ -1524,33 +1651,99 @@ impl VisualizeServer {
                     continue;
                 }
 
-                // Record history before execution
-                let pc = cpu_guard.pc().raw();
-                let cycles = cpu_guard.cycles();
+                // Acquire clock_lock first, then CPU lock to maintain consistent
+                // locking order with Reset/Step handlers. This prevents a race
+                // where run_loop grabs the CPU lock before Reset grabs the
+                // clock_lock and causes either an extra clock or a deadlock.
+                drop(cpu_guard); // release earlier cpu lock obtained above
+                let _clk = clock_lock.lock().await;
+                let mut cpu_guard = cpu.lock().await;
+                if cpu_guard.is_halted() {
+                    let mut running_guard = running.lock().await;
+                    *running_guard = false;
+                    continue;
+                }
 
-                // Read instruction at PC
-                let instr = {
-                    let bus = cpu_guard.bus();
-                    let mut bytes = [0u8; 4];
-                    let mut success = true;
-                    for i in 0..4 {
-                        match bus.read_byte(Addr::new(pc + i)) {
-                            Ok(byte) => bytes[i as usize] = byte.raw(),
-                            Err(_) => {
-                                success = false;
-                                break;
+                // Execute one clock and log result for debugging
+                let before_cycles = cpu_guard.cycles();
+                let clock_res = cpu_guard.clock();
+                match clock_res {
+                    Ok(()) => {
+                        debug!(
+                            "[visualize::run_loop] clock executed: before_cycles={} after_cycles={}",
+                            before_cycles,
+                            cpu_guard.cycles()
+                        );
+                    }
+                    Err(err) => {
+                        // Log the error and pause execution to avoid busy-looping on
+                        // unserviceable memory accesses. Also mark CPU halted so
+                        // subsequent cycles won't attempt to execute.
+                        debug!(
+                            "[visualize::run_loop] clock returned error: {:?} (cycles_before={})",
+                            err, before_cycles
+                        );
+
+                        // If the error is a memory out-of-bounds on a low address
+                        // (likely because no RAM was attached at 0x0), attach a
+                        // small RAM region automatically and try again. This
+                        // helps demo mode where a program runs at low addresses.
+                        if let crate::error::SimError::MemoryOutOfBounds { addr, size: _ } = &err {
+                            if addr.raw() < 0x0010_0000 {
+                                debug!(
+                                    "[visualize::run_loop] auto-attaching RAM at 0x00000000 to satisfy access 0x{:08x}",
+                                    addr.raw()
+                                );
+                                // Attach 64 KiB RAM at address 0 filled with NOPs
+                                let size = 64 * 1024;
+                                let mut data = vec![0u8; size];
+                                // Fill with RISC-V NOP (addi x0,x0,0 = 0x00000013) little-endian
+                                for i in (0..size).step_by(4) {
+                                    data[i] = 0x13;
+                                }
+                                cpu_guard.bus_mut().attach_memory(
+                                    Addr::new(0),
+                                    Ram::from_data(data),
+                                    "Auto RAM",
+                                );
+                                // Continue the loop so next iteration will retry clock
+                                drop(cpu_guard);
+                                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                                continue;
                             }
                         }
-                    }
-                    if success {
-                        Some(u32::from_le_bytes(bytes))
-                    } else {
-                        None
-                    }
-                };
 
-                // Execute
-                let _ = cpu_guard.clock();
+                        // Otherwise, halt and pause execution.
+                        cpu_guard.halt();
+                        let mut running_guard = running.lock().await;
+                        *running_guard = false;
+
+                        // Broadcast a final snapshot so clients see halted state
+                        let snapshot = cpu_guard.snapshot();
+                        let _ = state_tx.send(snapshot);
+
+                        // Sleep briefly to avoid tight error loop.
+                        drop(cpu_guard);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                }
+
+                // After executing, collect snapshot and metrics
+                let new_pc = cpu_guard.pc().raw();
+                let cycles_after = cpu_guard.cycles();
+                let snapshot = cpu_guard.snapshot();
+
+                // Derive instruction info from snapshot IF stage if available
+                let (instr_opt, instr_str_opt) = if let Some(if_stage) = &snapshot.pipeline.if_stage
+                {
+                    (
+                        Some(if_stage.instruction),
+                        if_stage.instruction_str.clone().into(),
+                    )
+                } else {
+                    (None, None)
+                };
 
                 // Record to history (drop bus lock first)
                 {
@@ -1559,19 +1752,16 @@ impl VisualizeServer {
                         history_guard.pop_front();
                     }
                     history_guard.push_back(HistoryRecord {
-                        cycle: cycles,
-                        pc,
-                        instruction: instr,
-                        instruction_str: instr.map(disassemble),
+                        cycle: cycles_after,
+                        pc: new_pc,
+                        instruction: instr_opt,
+                        instruction_str: instr_str_opt,
                         reg_changes: vec![],
                         mem_changes: vec![],
                     });
                 }
 
-                // Get new PC and snapshot
-                let new_pc = cpu_guard.pc().raw();
-                let snapshot = cpu_guard.snapshot();
-                (snapshot, new_pc, false)
+                (snapshot, new_pc, cycles_after)
             };
 
             // Check breakpoints separately
@@ -1585,6 +1775,19 @@ impl VisualizeServer {
             }
 
             // Broadcast state update
+            // Debug log: print cycle and IF stage PC to help diagnose reset timing
+            if let Some(if_stage) = &snapshot.pipeline.if_stage {
+                debug!(
+                    "[visualize::run_loop] broadcast cycles={} top_pc=0x{:08x} if_pc=0x{:08x}",
+                    cycles_after, new_pc, if_stage.pc
+                );
+            } else {
+                debug!(
+                    "[visualize::run_loop] broadcast cycles={} top_pc=0x{:08x} if_pc=NONE",
+                    cycles_after, new_pc
+                );
+            }
+
             let _ = state_tx.send(snapshot);
 
             if current_speed > 0 {
@@ -1627,6 +1830,12 @@ mod tests {
                 format: PixelFormat::Gray8,
             })
         );
+    }
+
+    #[test]
+    fn test_parse_set_initial_pc_command() {
+        let cmd = Command::parse("set_initial_pc 0x80000000");
+        assert_eq!(cmd, Some(Command::SetInitialPc { addr: 0x8000_0000 }));
     }
 
     #[test]
@@ -1770,6 +1979,38 @@ mod tests {
         game.step(0);
         assert!(game.tick > before_tick);
         assert_ne!(game.ball_x, before_ball_x);
+    }
+
+    #[tokio::test]
+    async fn test_initial_pc_update_and_reset_behaviour() {
+        use crate::memory::Bus;
+        use crate::types::Addr;
+
+        // Create CPU with initial PC 0x1000
+        let mut bus = Bus::new();
+        let cpu = PipelineCpu::with_pc(bus, Addr::new(0x1000));
+        let server = VisualizeServer::new(cpu);
+
+        // initial_pc should be 0x1000
+        {
+            let ip = *server.initial_pc.lock().await;
+            assert_eq!(ip, 0x1000);
+        }
+
+        // Update initial_pc to 0x2000
+        {
+            let mut ip_lock = server.initial_pc.lock().await;
+            *ip_lock = 0x2000;
+        }
+
+        // Mutate CPU pc to some other value, then reset using reset_with_pc
+        {
+            let mut cpu_guard = server.cpu.lock().await;
+            cpu_guard.set_pc(Addr::new(0x3000));
+            let initial = *server.initial_pc.lock().await;
+            cpu_guard.reset_with_pc(Addr::new(initial));
+            assert_eq!(cpu_guard.pc().raw(), 0x2000);
+        }
     }
 }
 

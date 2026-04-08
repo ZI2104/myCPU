@@ -21,6 +21,9 @@ pub struct CpuSnapshot {
     pub perf: PerfSnapshot,
     /// Whether the CPU is halted
     pub halted: bool,
+    /// Reset sequence counter - increments on each Reset to help frontend
+    /// detect and prioritize reset-aligned snapshots.
+    pub reset_sequence: u64,
 }
 
 /// Pipeline state snapshot.
@@ -280,6 +283,7 @@ impl CpuSnapshot {
             pipeline: PipelineSnapshot::default(),
             perf: PerfSnapshot::default(),
             halted: false,
+            reset_sequence: 0,
         }
     }
 }

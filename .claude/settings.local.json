@@ -8,5 +8,5 @@
       "Bash(cargo clippy:*)"
     ]
   },
-  "outputStyle": "Explanatory"
+  "outputStyle": "default"
 }

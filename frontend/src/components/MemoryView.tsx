@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { MemoryReadResponse } from '../types/snapshot';
+import { formatHexRaw } from '../utils/format';
 
 interface MemoryViewProps {
   sendCommand: (command: string) => void;
@@ -39,10 +40,6 @@ export const MemoryView: React.FC<MemoryViewProps> = ({ sendCommand, onMemoryDat
     }
   }, [inputValue]);
 
-  const formatHex = (value: number, digits: number): string => {
-    return value.toString(16).toUpperCase().padStart(digits, '0');
-  };
-
   const formatAscii = (bytes: Uint8Array): string => {
     return Array.from(bytes)
       .map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.')
@@ -73,11 +70,11 @@ export const MemoryView: React.FC<MemoryViewProps> = ({ sendCommand, onMemoryDat
 
       rows.push(
         <div key={row} className="memory-row">
-          <span className="memory-addr">0x{formatHex(rowAddr, 8)}</span>
+          <span className="memory-addr">0x{formatHexRaw(rowAddr, 8)}</span>
           <span className="memory-hex">
             {rowData.map((byte, col) => (
               <span key={col} className="byte">
-                {formatHex(byte, 2)}
+                {formatHexRaw(byte, 2)}
               </span>
             ))}
           </span>
@@ -118,7 +115,7 @@ export const MemoryView: React.FC<MemoryViewProps> = ({ sendCommand, onMemoryDat
           <span className="memory-addr">Address</span>
           <span className="memory-hex">
             {Array.from({ length: bytesPerRow }, (_, i) => (
-              <span key={i} className="byte">{formatHex(i, 2)}</span>
+              <span key={i} className="byte">{formatHexRaw(i, 2)}</span>
             ))}
           </span>
           <span className="memory-ascii">ASCII</span>

@@ -24,26 +24,32 @@ body {
 }
 
 .app {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 20px;
+  /* Keep the app at a consistent maximum width across different pages/tabs */
+  /* fill the parent container (#root) completely */
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 16px; /* reduced overall padding to tighten header/spacing */
 }
 
 .app-header {
   text-align: center;
-  margin-bottom: 20px;
-  padding-bottom: 15px;
+  margin-bottom: 12px; /* reduced spacing */
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
 
 .app-header h1 {
-  margin: 0;
+  margin: 0 0 4px 0;
   color: var(--primary-bg);
+  font-size: 20px;
+  line-height: 1.05;
 }
 
 .app-header p {
   color: var(--text-light);
-  margin: 5px 0 0;
+  margin: 4px 0 0 0;
+  font-size: 13px;
 }
 
 /* Control Panel */
@@ -64,19 +70,25 @@ body {
   gap: 8px;
 }
 
+/* Status indicator dot - compact size with connection-state colors */
 .status-indicator {
   width: 12px;
   height: 12px;
+  padding: 0;
+  margin: 0;
   border-radius: 50%;
+  display: inline-block;
+  vertical-align: middle;
+  box-sizing: content-box;
+  flex-shrink: 0;
 }
 
 .status-indicator.connected {
-  background: var(--accent-bg);
-  box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+  background: #4CAF50;
 }
 
 .status-indicator.disconnected {
-  background: var(--warning-bg);
+  background: #FF5722;
 }
 
 .controls {
@@ -121,18 +133,71 @@ body {
 .speed-control {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  flex: 1;
+  margin-left: 20px;
 }
 
 .speed-control input[type="range"] {
-  width: 100px;
+  width: 200px;
+  cursor: pointer;
+}
+
+.speed-edit {
+  width: 60px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  text-align: center;
+}
+
+.speed-edit:focus {
+  outline: none;
+  border-color: var(--secondary-bg);
+}
+
+.speed-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--secondary-bg);
+  background: var(--secondary-bg);
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.speed-btn:hover {
+  background: #3a4a5a;
+}
+
+.speed-value {
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #f0f0f0;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  min-width: 50px;
+  text-align: center;
+}
+
+.speed-value:hover {
+  background: #e0e0e0;
+}
+
+.speed-unit {
+  color: var(--text-light);
+  font-size: 11px;
 }
 
 /* Main Layout */
 .main-content {
   display: grid;
-  grid-template-columns: 280px 1fr 280px;
-  gap: 20px;
+  /* make center column flexible and side panels slightly narrower so center gets more space */
+  grid-template-columns: 280px 1fr 320px;
+  gap: 24px;
 }
 
 .left-panel,
@@ -158,13 +223,13 @@ body {
 
 .pc-display h3 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--text-light);
 }
 
 .pc-value {
   font-family: 'Fira Code', monospace;
-  font-size: 24px;
+  font-size: 32px;
   font-weight: bold;
   color: var(--primary-bg);
 }
@@ -175,71 +240,183 @@ body {
   margin-top: 5px;
 }
 
-/* Pipeline Visualizer */
-.pipeline-visualizer h3 {
-  margin: 0 0 15px;
+/* Pipeline Visualizer - 纵向时序图布局 */
+.pipeline-visualizer {
+  width: 100%;
 }
 
-.pipeline-flow {
+.pipeline-timeline-container {
   display: flex;
-  align-items: stretch;
-  gap: 5px;
-}
-
-.pipeline-stage {
-  flex: 1;
-  min-width: 100px;
-  border: 2px solid var(--border);
+  gap: 4px;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: hidden;
+  padding: 10px;
+  background: #fafafa;
+  overflow-x: auto;
+  min-height: 340px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.pipeline-stage.active {
+/* Ensure timeline columns and labels stretch to the same height so cells align */
+.pipeline-timeline-container {
+  align-items: stretch;
+}
+
+/* Timeline sizing variables - keep these in sync to ensure perfect alignment */
+:root {
+  --timeline-gap: 8px;
+  --timeline-header-height: 36px;
+  --timeline-cell-height: 64px;
+  --timeline-column-width: 120px;
+}
+
+/* 左侧阶段标签列 */
+.timeline-stage-labels {
+  /* Use a grid so rows align exactly with timeline-column rows */
+  display: grid;
+  grid-template-rows: var(--timeline-header-height) repeat(5, var(--timeline-cell-height));
+  gap: var(--timeline-gap);
+  flex-shrink: 0;
+  width: 60px;
+}
+
+.timeline-stage-label {
+  height: var(--timeline-cell-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2d3748;
+  color: white;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.timeline-header-cell {
+  height: var(--timeline-header-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #666;
+  font-weight: 600;
+}
+
+/* 时间轴列 */
+.timeline-columns {
+  display: flex;
+  gap: var(--timeline-gap);
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  /* allow horizontal scrolling when many cycles are present */
+  overflow-x: auto;
+}
+
+.timeline-column {
+  /* Use a grid to match rows exactly to the labels column */
+  display: grid;
+  grid-template-rows: var(--timeline-header-height) repeat(5, var(--timeline-cell-height));
+  gap: var(--timeline-gap);
+  /* Flexible columns: expand to fill available space when few columns, but keep a min width so many columns produce a scrollbar */
+  flex: 1 1 var(--timeline-column-width);
+  min-width: var(--timeline-column-width);
+}
+
+/* 时间轴单元格 */
+.timeline-cell {
+  height: var(--timeline-cell-height);
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  line-height: 1.35;
+  box-sizing: border-box;
+}
+
+.timeline-cell.empty {
+  background: #e8e8e8;
+}
+
+/* 空拍气泡样式：小圆点居中 */
+.timeline-cell .empty-bubble {
+  width: 14px;
+  height: 14px;
+  background: #bdbdbd;
+  border-radius: 50%;
+  margin: 0 auto;
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.08);
+}
+
+.timeline-cell.has-data {
+  background: #2d3748;
+  color: white;
+}
+
+.timeline-cell.highlight {
+  background: #FF5722;
+  box-shadow: 0 0 6px rgba(255, 87, 34, 0.4);
+  color: white;
+}
+
+.cell-pc {
+  font-weight: bold;
+  margin-bottom: 3px;
+  white-space: nowrap;
+}
+
+.cell-detail {
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tab bar and center panel fill adjustments */
+.tab-bar {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.tab-bar button {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  background: #f6f6f6;
+  cursor: pointer;
+}
+
+.tab-bar button.active {
+  background: white;
   border-color: var(--secondary-bg);
 }
 
-.pipeline-stage.highlight {
-  border-color: var(--warning-bg);
-  background: #fff8f0;
+/* Register highlight styles */
+.register-item.highlight-read {
+  box-shadow: inset 0 0 0 2px rgba(66,153,225,0.12);
+  background: rgba(66,153,225,0.04);
 }
 
-.stage-header {
-  background: var(--border);
-  color: white;
-  padding: 5px;
-  text-align: center;
-  font-weight: bold;
+.register-item.modified {
+  background: rgba(76,175,80,0.06);
+  box-shadow: inset 0 0 0 2px rgba(76,175,80,0.06);
 }
 
-.pipeline-stage.active .stage-header {
-  background: var(--secondary-bg);
-}
+/* 流动方向指示 */
+/* removed timeline-flow-indicator styles — legend removed per UX request */
 
-.pipeline-stage.highlight .stage-header {
-  background: var(--warning-bg);
-}
-
-.stage-content {
-  padding: 10px;
-  font-family: 'Fira Code', monospace;
-  font-size: 12px;
-  min-height: 80px;
-}
-
-.bubble {
-  color: var(--text-light);
-  font-style: italic;
-}
-
-.arrow {
-  display: flex;
-  align-items: center;
-  font-size: 20px;
-  color: var(--text-light);
-}
-
+/* 状态标签 */
 .pipeline-status {
-  margin-top: 15px;
+  margin-top: 10px;
   display: flex;
   gap: 10px;
 }
@@ -261,17 +438,16 @@ body {
   color: #c00;
 }
 
-/* Register Panel */
+/* Register Panel - 双列紧凑布局 */
 .register-panel {
   height: fit-content;
-  overflow-y: auto;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .panel-header h3 {
@@ -280,11 +456,11 @@ body {
 }
 
 .display-mode button {
-  padding: 2px 8px;
+  padding: 2px 6px;
   border: 1px solid var(--border);
   background: white;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .display-mode button.active {
@@ -293,6 +469,40 @@ body {
   border-color: var(--secondary-bg);
 }
 
+/* 双列寄存器网格 */
+.register-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+
+.register-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+.register-item.modified {
+  background: #e8f5e9;
+}
+
+.reg-index {
+  color: var(--text-light);
+  min-width: 28px;
+  font-size: 12px;
+}
+
+.reg-value {
+  flex: 1;
+  text-align: right;
+  font-size: 13px;
+}
+
+/* 保留旧的寄存器样式作为备用 */
 .register-list {
   display: flex;
   flex-direction: column;
@@ -301,11 +511,11 @@ body {
 
 .register-row {
   display: grid;
-  grid-template-columns: 30px 60px 1fr;
-  padding: 3px 5px;
+  grid-template-columns: 36px 80px 1fr;
+  padding: 6px 8px;
   font-family: 'Fira Code', monospace;
-  font-size: 11px;
-  border-radius: 3px;
+  font-size: 13px;
+  border-radius: 4px;
 }
 
 .register-row.modified {
@@ -321,21 +531,30 @@ body {
   font-size: 10px;
 }
 
-.reg-value {
-  text-align: right;
+/* Performance Dashboard */
+.perf-dashboard {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-sizing: border-box;
+  max-width: 100%;
+  /* show full details without internal scrolling */
+  overflow: visible;
+  max-height: none;
 }
 
-/* Performance Dashboard */
 .perf-dashboard h3 {
-  margin: 0 0 15px;
+  margin: 0 0 12px;
   font-size: 14px;
+  text-align: center;
 }
 
 .perf-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 15px;
+  margin-bottom: 12px;
 }
 
 .perf-card {
@@ -343,33 +562,65 @@ body {
   padding: 10px;
   border-radius: 6px;
   background: #f0f0f0;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* Summary perf-cards should show compact inline progress rows (label + bar + value) */
+.perf-card .progress-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.perf-card .progress-label {
+  min-width: 0; /* allow label to shrink in tight cards */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.perf-card .progress-bar {
+  flex: 1 1 auto;
+  min-width: 40px;
+}
+
+.perf-card .progress-value {
+  flex: 0 0 48px;
+  text-align: right;
 }
 
 .perf-card .perf-value {
-  font-size: 20px;
+  font-size: 26px;
   font-weight: bold;
   color: var(--primary-bg);
 }
 
 .perf-card .perf-label {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-light);
 }
 
 .progress-item {
   margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .progress-label {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-light);
+  min-width: 140px; /* reserve space for the label so bar + value align */
 }
 
 .progress-bar {
-  height: 4px;
+  height: 8px; /* slightly taller for better visibility when inline */
   background: #e0e0e0;
-  border-radius: 2px;
+  border-radius: 4px;
   overflow: hidden;
+  flex: 1 1 auto;
 }
 
 .progress-fill {
@@ -378,12 +629,55 @@ body {
 }
 
 .progress-value {
-  font-size: 10px;
+  font-size: 12px;
+  width: 48px;
   text-align: right;
+  flex: 0 0 48px;
 }
 
 .perf-details {
   font-size: 11px;
+  /* avoid internal scrollbar so percentages on the right are never covered */
+  overflow: visible;
+  max-height: none;
+  padding-right: 6px; /* leave a bit of breathing room from right edge */
+}
+
+/* For the detailed metrics list, show label on its own line so the progress bar can be wide */
+.perf-details .progress-item {
+  /* label on first row, then progress-bar + value on second row */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.perf-details .progress-label {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-light);
+}
+
+.perf-details .progress-bar {
+  grid-column: 1 / 2;
+  height: 8px;
+  border-radius: 4px;
+  width: 100%;
+}
+
+.perf-details .progress-value {
+  grid-column: 2 / 3;
+  justify-self: end;
+  font-size: 11px;
+}
+
+/* Ensure right-panel doesn't allow its children to overflow */
+.right-panel {
+  box-sizing: border-box;
+  /* allow the right panel to expand so perf details are fully visible */
+  overflow: visible;
 }
 
 .detail-row {
@@ -430,7 +724,8 @@ body {
 
 /* Tab bar for switching views */
 .tab-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   margin-bottom: 10px;
   background: #e0e0e0;
@@ -439,15 +734,22 @@ body {
 }
 
 .tab-bar button {
-  flex: 1;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border: none;
   background: transparent;
   cursor: pointer;
   border-radius: 4px;
   font-weight: 500;
-  color: var(--text);
+  font-size: 13px;
+  color: #333;
   transition: all 0.2s;
+}
+
+/* Ensure all tab buttons occupy equal width visually */
+.tab-bar button {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
 }
 
 .tab-bar button:hover {
@@ -491,12 +793,21 @@ body {
 /* Center panel */
 .center-panel {
   flex: 2;
-  min-width: 400px;
+  /* allow center panel to shrink/grow to fill available space consistently */
+  min-width: 0;
+  width: 100%;
+}
+
+/* Make direct children of center-panel stretch to full width so different tabs look consistent */
+.center-panel > * {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* Memory View */
 .memory-view {
   font-family: 'Fira Code', monospace;
+  width: 100%;
 }
 
 .memory-header {
@@ -545,6 +856,7 @@ body {
   border-radius: 6px;
   padding: 10px;
   overflow-x: auto;
+  width: 100%;
 }
 
 .memory-row {
@@ -577,7 +889,7 @@ body {
 }
 
 .memory-hex .byte {
-  width: 24px;
+  width: 28px;
   text-align: center;
   color: #ce9178;
 }
@@ -598,6 +910,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
 }
 
 .framebuffer-header {
@@ -835,10 +1148,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
 }
 
 .debug-inspector h3 {
-  margin: 0;
+  margin: 0 0 8px 0;
 }
 
 .debug-section {
@@ -874,7 +1188,9 @@ body {
 }
 
 .debug-list {
-  max-height: 220px;
+  /* allow debug lists to grow; limit by viewport if necessary */
+  max-height: none;
+  max-height: 420px;
   overflow: auto;
   border: 1px solid #e5e5e5;
   border-radius: 6px;
@@ -919,18 +1235,23 @@ body {
 .coproc-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .coproc-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 4px;
 }
 
 .coproc-toolbar h2 {
   font-size: 16px;
   margin: 0;
+  padding: 0;
+  line-height: 1.2;
 }
 
 .coproc-toolbar button,
@@ -938,7 +1259,7 @@ body {
   padding: 4px 10px;
   border-radius: 4px;
   border: none;
-  background: var(--secondary-bg);
+  background: #2d3748;
   color: #fff;
   cursor: pointer;
 }
@@ -946,31 +1267,37 @@ body {
 .coproc-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 16px;
 }
 
 .coproc-card {
-  border: 1px solid var(--border);
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
-  padding: 10px;
+  padding: 12px;
   background: #fafafa;
+  overflow: hidden;
 }
 
 .coproc-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e0e0e0;
 }
 
 .coproc-card-header h3 {
   margin: 0;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.2;
 }
 
 .coproc-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 10px;
+  gap: 6px 12px;
 }
 
 .coproc-grid div {
@@ -978,11 +1305,12 @@ body {
   justify-content: space-between;
   gap: 8px;
   font-family: 'Fira Code', monospace;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .coproc-grid span {
-  color: var(--text-light);
+  color: #666;
+  font-size: 10px;
 }
 
 .coproc-error {
@@ -991,40 +1319,45 @@ body {
   border: 1px solid #ffcdd2;
   border-radius: 6px;
   padding: 8px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .coproc-empty {
-  color: var(--text-light);
-  font-size: 12px;
+  color: #666;
+  font-size: 11px;
+  padding: 8px 0;
 }
 
 .coproc-timeline-block {
-  margin-top: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e0e0;
 }
 
 .coproc-timeline-block h4 {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
+  padding: 0;
   font-size: 12px;
   color: #374151;
+  line-height: 1.2;
 }
 
 .coproc-timeline {
   border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  border-radius: 4px;
   background: #fff;
-  max-height: 220px;
+  max-height: 150px;
   overflow: auto;
 }
 
 .coproc-timeline-row {
   display: grid;
-  grid-template-columns: 88px 1fr 1fr 1fr 70px;
-  gap: 8px;
-  padding: 6px 8px;
+  grid-template-columns: 70px 1fr 1fr 1fr 60px;
+  gap: 6px;
+  padding: 4px 6px;
   border-bottom: 1px solid #f3f4f6;
   font-family: 'Fira Code', monospace;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .coproc-timeline-row:last-child {
@@ -1032,6 +1365,7 @@ body {
 }
 
 .coproc-timeline-empty {
-  color: var(--text-light);
-  font-size: 12px;
+  color: #666;
+  font-size: 11px;
+  padding: 8px;
 }

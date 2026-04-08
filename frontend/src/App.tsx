@@ -38,6 +38,9 @@ function App() {
   const [inputState, setInputState] = useState<InputStateResponse | null>(null);
   const [npuState, setNpuState] = useState<NpuStateResponse | null>(null);
   const [lpuState, setLpuState] = useState<LpuStateResponse | null>(null);
+  const [pipelineResetKey, setPipelineResetKey] = useState(0);
+  const [followKey, setFollowKey] = useState(0);
+  const [initialPc, setInitialPc] = useState<number | null>(null);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
   const framebufferHandlersRef = useRef<((data: FramebufferResponse) => void)[]>([]);
 
@@ -57,8 +60,15 @@ function App() {
           framebufferHandlersRef.current.forEach(handler => handler(fbResponse));
         } else if (data.type === 'framebuffer_game') {
           setGameState(data as FramebufferGameResponse);
+        } else if (data && data.pc !== undefined && initialPc === null) {
+          // record the initial PC on first snapshot so reset can restore it
+          setInitialPc(data.pc);
         } else if (data.type === 'input_state') {
           setInputState(data as InputStateResponse);
+        } else if (data.status !== undefined) {
+          // update local running state when server reports status
+          if (data.status === 'paused') setRunning(false);
+          if (data.status === 'running') setRunning(true);
         } else if (data.type === 'npu_state') {
           setNpuState(data as NpuStateResponse);
         } else if (data.type === 'lpu_state') {
@@ -88,11 +98,15 @@ function App() {
 
   const handleStep = useCallback(() => {
     setPreviousSnapshot(snapshot);
+    // request a step and enable auto-follow so UI will scroll to the new cycle
+    setFollowKey(k => k + 1);
     send('step');
   }, [send, snapshot]);
 
   const handleRun = useCallback(() => {
     setRunning(true);
+    // enable auto-follow while running
+    setFollowKey(k => k + 1);
     send('run');
   }, [send]);
 
@@ -103,7 +117,17 @@ function App() {
 
   const handleReset = useCallback(() => {
     setRunning(false);
+    setPipelineResetKey(prev => prev + 1);
+    setFollowKey(k => k + 1);
+    // Ensure backend uses the program's initial PC on reset: set initial PC
+    // to the recorded value (if known) before issuing reset.
+    if (initialPc !== null) {
+      send(`set_initial_pc 0x${initialPc.toString(16)}`);
+    }
+    // send reset and ensure the CPU is paused afterward (some backends auto-resume)
     send('reset');
+    // small safeguard: request pause explicitly to stop auto-run
+    send('pause');
   }, [send]);
 
   const handleSpeedChange = useCallback((newSpeed: number) => {
@@ -156,6 +180,10 @@ function App() {
               <RegisterPanel
                 registers={snapshot.registers}
                 previousRegisters={previousSnapshot?.registers}
+                highlightRegisters={[
+                  snapshot.pipeline?.id_stage?.rs1 ?? -1,
+                  snapshot.pipeline?.id_stage?.rs2 ?? -1
+                ].filter(n => n >= 0)}
               />
             </div>
 
@@ -208,7 +236,7 @@ function App() {
               </div>
 
               {activeTab === 'pipeline' && (
-                <PipelineVisualizer pipeline={snapshot.pipeline} />
+                <PipelineVisualizer pipeline={snapshot.pipeline} resetKey={pipelineResetKey} followKey={followKey} cycle={snapshot.perf.cycles} />
               )}
 
               {activeTab === 'memory' && (

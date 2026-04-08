@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { LpuStateResponse, NpuStateResponse } from '../types/snapshot';
+import { formatHex, formatHex64 } from '../utils/format';
 
 interface CoprocessorPanelProps {
   sendCommand: (command: string) => void;
@@ -73,20 +74,6 @@ function CoprocessorCard({
       )}
     </div>
   );
-}
-
-function formatHex(value?: number) {
-  if (value === undefined) {
-    return '--';
-  }
-  return `0x${value.toString(16).toUpperCase().padStart(8, '0')}`;
-}
-
-function formatHex64(value?: number) {
-  if (value === undefined) {
-    return '--';
-  }
-  return `0x${Math.trunc(value).toString(16).toUpperCase()}`;
 }
 
 // 提取通用的时间线更新逻辑，避免代码重复

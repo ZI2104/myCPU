@@ -23,6 +23,8 @@ pub const DEFAULT_PROGRAM_BASE: u32 = 0x8000_0000;
 /// Number of pixels written by the built-in demo program.
 ///
 /// 640 pixels = 2 scanlines of 320x240, enough to be clearly visible.
+/// The demo now increments the stored color each pixel to produce a
+/// visible gradient/striped pattern instead of a single solid color.
 pub const DEMO_PIXELS: u16 = 640;
 
 /// RGB565 color used by the built-in demo program (blue).
@@ -38,13 +40,24 @@ const DEMO_COLOR_RGB565: i16 = 0x001F;
 /// - final: jal x0, 0 (self loop)
 pub fn demo_program_bytes() -> Vec<u8> {
     let words = [
+        // t0 = framebuffer base
         encode_lui(5, LINUX_FB_ADDR >> 12),
+        // t2 = color
         encode_addi(7, 0, DEMO_COLOR_RGB565),
+        // t3 = pixel counter
         encode_addi(28, 0, DEMO_PIXELS as i16),
+        // loop:
+        // store halfword color -> [t0]
         encode_sh(7, 5, 0),
+        // increment color each pixel to create a pattern
+        encode_addi(7, 7, 1),
+        // t0 += 2 (next pixel)
         encode_addi(5, 5, 2),
+        // t3 -= 1
         encode_addi(28, 28, -1),
-        encode_bne(28, 0, -12),
+        // if t3 != 0 jump back to the store (4 instructions back => -16 bytes)
+        encode_bne(28, 0, -16),
+        // infinite loop
         encode_jal(0, 0),
     ];
 
@@ -118,7 +131,7 @@ mod tests {
     #[test]
     fn test_demo_program_size() {
         let bytes = demo_program_bytes();
-        assert_eq!(bytes.len(), 8 * 4);
+        assert_eq!(bytes.len(), 9 * 4);
     }
 
     #[test]

@@ -428,6 +428,7 @@ impl PipelineCpu {
                 memory_writes: perf.memory_writes,
             },
             halted: self.halted,
+            reset_sequence: 0, // Reset sequence tracking is done in visualize/server.rs
         }
     }
 
@@ -723,6 +724,16 @@ impl ExecutionModel for PipelineCpu {
 
     fn instructions_executed(&self) -> u64 {
         self.instructions_executed
+    }
+}
+
+impl PipelineCpu {
+    /// Reset the CPU and set PC to given start address. This is a convenience
+    /// wrapper to ensure the pipeline reset and fetch stage PC are updated
+    /// atomically from the caller's perspective.
+    pub fn reset_with_pc(&mut self, start_pc: crate::types::Addr) {
+        self.reset();
+        self.set_pc(start_pc);
     }
 }
 

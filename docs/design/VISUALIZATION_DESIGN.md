@@ -299,3 +299,28 @@ myCPU/
 3. 浏览器访问: http://localhost:5173
 4. 加载程序，观察流水线动画
 5. 单步执行，验证状态同步
+
+## 已知问题与修复记录
+
+更多集中记录请参见：`docs/development/ISSUES_AND_FIXES.md`（按问题域组织的长期维护记录）。
+
+### Reset 与 run_loop 的竞态导致 Reset 后 IF-stage PC 显示不正确
+
+现象：在没有加载程序或低地址内存未映射的 demo 模式下，执行 `reset` 后前端有时会显示 IF 阶段已 advance（例如显示 0x001C 而非期望的 0x0018），并且可见周期计数列（Cn）没有从 C0 重新开始；在某些情况下 run_loop 因 MemoryOutOfBounds 不断报错并持续广播错误快照，造成界面卡住或显示混乱。
+
+根因：后端的 `run_loop` 在独占 `cpu.clock()` 的同时可能与外部命令（如 `reset`）并发执行，且当未映射内存被访问时会返回 MemoryOutOfBounds 导致广播仍然继续；同时 Reset 路径最初广播的 snapshot 可能包含已 advance 的 IF-stage 状态，前端按 cycle 去重/合并历史后会保留错误帧。
+
+修复要点（已在实现中）：
+
+- 在 `src/visualize/server.rs` 中使用全局 clock 锁序列化 `run_loop` 与命令处理，避免 Reset 与 `cpu.clock()` 并发。
+- 对 Reset 请求，构造并广播一个 modified snapshot：强制把 top-level `pc` 和 `pipeline.if_stage.pc` 设为记录的 `initial_pc`，并把 perf 计数器（`perf.cycles`/`instructions`/`ipc`/`stalls` 等）清零，以便前端列号从 C0 重新开始并立即看到预期的 IF 状态。
+- 在 `run_loop` 的 `cpu.clock()` 周围增加错误处理：当遇到 `MemoryOutOfBounds`（低地址访问且可在 demo 中自动修复时）自动附加一段 NOP 填充的 RAM 来避免一直报错；对于无法恢复的错误则将 CPU halt 并广播最终 snapshot，避免 busy-loop。
+- 前端继续保持按 `perf.cycles` 去重/合并策略，因此后端发布的 authoritative modified snapshot 将成为 UI 的正确来源。
+
+影响与注意事项：
+
+- 该修复偏向于提高 demo/可视化的健壮性（降低因未装载程序或内存未映射而导致的 UI 错乱）。在生产级别的模拟运行（加载完整 ELF/映射）下，仍建议保证程序/映像正确装载以避免自动附加 RAM 的行为。
+- 如果你在使用过程中仍看到 Reset 后显示不一致，请把 Reset 前后后端日志（包含 `[visualize]` / `[visualize::run_loop]` 日志）以及前端收到的 Reset 前后一条 snapshot JSON 发给维护者以便进一步定位。
+
+文件参考：`src/visualize/server.rs`
+

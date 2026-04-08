@@ -7,6 +7,9 @@ export interface CpuSnapshot {
   pipeline: PipelineSnapshot;
   perf: PerfSnapshot;
   halted: boolean;
+  // Incremented by server on Reset so frontend can detect and prioritize
+  // reset-aligned snapshots. Optional for backward compatibility.
+  reset_sequence?: number;
 }
 
 export interface PipelineSnapshot {
