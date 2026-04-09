@@ -39,6 +39,8 @@ pub struct PerfCollector {
     pub interrupts_taken: u64,
     /// Exceptions taken
     pub exceptions_taken: u64,
+    /// Branch mispredictions (dynamic predictor)
+    pub branch_mispredictions: u64,
 }
 
 impl PerfCollector {
@@ -68,6 +70,7 @@ impl PerfCollector {
             PerfEvent::PipelineFlushes => self.pipeline_flushes += 1,
             PerfEvent::InterruptsTaken => self.interrupts_taken += 1,
             PerfEvent::ExceptionsTaken => self.exceptions_taken += 1,
+            PerfEvent::BranchMispredictions => self.branch_mispredictions += 1,
             PerfEvent::None => {}
         }
     }
@@ -159,6 +162,7 @@ impl PerfCollector {
         self.pipeline_flushes += other.pipeline_flushes;
         self.interrupts_taken += other.interrupts_taken;
         self.exceptions_taken += other.exceptions_taken;
+        self.branch_mispredictions += other.branch_mispredictions;
     }
 }
 

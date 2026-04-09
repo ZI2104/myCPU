@@ -5,6 +5,7 @@
 //! fetch design and the EX/MEM data path.
 
 use crate::cpu::pipeline::control::{ExControlSignals, MemControlSignals, WbControlSignals};
+use crate::cpu::pipeline::predictor::PredictionResult;
 use crate::types::{Addr, RegIdx, Word};
 
 /// Instruction fetch latch between pre-IF and IF stages.
@@ -88,6 +89,8 @@ pub struct IfIdRegister {
     pub instruction: u32,
     /// Whether this register contains valid data (for bubble handling).
     pub valid: bool,
+    /// Branch prediction made for this instruction (if any).
+    pub prediction: Option<PredictionResult>,
 }
 
 impl Default for IfIdRegister {
@@ -96,6 +99,7 @@ impl Default for IfIdRegister {
             pc: Addr::new(0),
             instruction: 0,
             valid: false,
+            prediction: None,
         }
     }
 }
@@ -150,6 +154,10 @@ pub struct IdExRegister {
     /// Branch/jump target address computed in the ID stage.
     pub branch_target: Addr,
 
+    /// Branch prediction made for this instruction (if any).
+    /// Used to detect mispredictions when branch resolves in ID.
+    pub prediction: Option<PredictionResult>,
+
     /// Whether this register contains valid data.
     pub valid: bool,
 }
@@ -169,6 +177,7 @@ impl Default for IdExRegister {
             mem_ctrl: MemControlSignals::default(),
             branch_taken: false,
             branch_target: Addr::new(0),
+            prediction: None,
             valid: false,
         }
     }
@@ -338,6 +347,7 @@ mod tests {
             pc: Addr::new(0x1000),
             instruction: 0x12345678,
             valid: true,
+            ..Default::default()
         };
         reg.flush();
         assert!(!reg.valid);

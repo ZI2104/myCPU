@@ -12,6 +12,7 @@
 mod control;
 mod forward;
 mod hazard;
+pub mod predictor;
 mod registers;
 pub mod stages;
 
@@ -20,14 +21,17 @@ pub use control::{
 };
 pub use forward::{ForwardSource, ForwardUnit};
 pub use hazard::HazardUnit;
+pub use predictor::{
+    MispredictionInfo, PredictionResult, PredictorManager, PredictorStats, PredictorType,
+};
 pub use registers::{
     DataReadLatch, ExMemRegister, IdExRegister, IfIdRegister, InstrFetchLatch, MemWbRegister,
 };
 
 // Re-export for visualization
 use crate::visualize::snapshot::{
-    disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot,
-    PipelineSnapshot, PreIfStageInfo, WbStageInfo,
+    disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo,
+    MemStageInfo, PerfSnapshot, PipelineSnapshot, PredictorSnapshot, PreIfStageInfo, WbStageInfo,
 };
 
 use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
@@ -77,6 +81,9 @@ pub struct PipelineCpu {
     // Hazard and forwarding units
     hazard_unit: HazardUnit,
 
+    // Branch predictor
+    predictor: PredictorManager,
+
     // Saved WB input for snapshot (old mem_wb before clock update)
     wb_input: MemWbRegister,
 
@@ -110,6 +117,7 @@ impl PipelineCpu {
             memory_stage: MemoryStage::new(),
             writeback_stage: WritebackStage::new(),
             hazard_unit: HazardUnit::default(),
+            predictor: PredictorManager::new(PredictorType::None),
             wb_input: MemWbRegister::default(),
             perf: PerfCollector::new(),
             instructions_executed: 0,
@@ -461,6 +469,33 @@ impl PipelineCpu {
                 memory_reads: perf.memory_reads,
                 memory_writes: perf.memory_writes,
             },
+            predictor: {
+                let pstats = self.predictor.stats();
+                let bstats = self.predictor.btb_stats();
+                let pt = self.predictor.predictor_type();
+                Some(PredictorSnapshot {
+                    predictor_type: pt.as_str().to_string(),
+                    predictor_display_name: pt.display_name().to_string(),
+                    predictions: pstats.predictions,
+                    correct: pstats.correct,
+                    mispredictions: pstats.mispredictions,
+                    accuracy: pstats.accuracy(),
+                    btb_lookups: bstats.lookups,
+                    btb_hits: bstats.hits,
+                    btb_misses: bstats.misses,
+                    btb_hit_rate: bstats.hit_rate(),
+                    btb_entries: self
+                        .predictor
+                        .btb_snapshot(20)
+                        .into_iter()
+                        .map(|e| BtbEntrySnapshot {
+                            tag: e.tag,
+                            target: e.target,
+                            is_branch: e.is_branch,
+                        })
+                        .collect(),
+                })
+            },
             halted: self.halted,
             reset_sequence: 0, // Reset sequence tracking is done in visualize/server.rs
         }
@@ -657,26 +692,76 @@ impl PipelineCpu {
         // Track branches (now resolved in ID stage)
         if new_id_ex.valid && new_id_ex.ctrl.branch {
             self.perf.record(PerfEvent::BranchExecuted);
+
+            // Check for misprediction
+            let mispredict = PredictorManager::check_misprediction(
+                &new_id_ex.prediction,
+                new_id_ex.branch_taken,
+                new_id_ex.branch_target,
+            );
+
+            if mispredict.mispredicted {
+                self.perf.record(PerfEvent::BranchMispredictions);
+            }
+
+            // Update predictor with actual outcome
+            self.predictor.update(
+                new_id_ex.pc,
+                new_id_ex.branch_taken,
+                new_id_ex.branch_target,
+                true, // is_branch
+            );
+
             if new_id_ex.branch_taken {
                 self.perf.record(PerfEvent::BranchTaken);
                 self.perf.record(PerfEvent::ControlHazards);
             } else {
                 self.perf.record(PerfEvent::BranchNotTaken);
             }
+        } else if new_id_ex.valid && new_id_ex.ctrl.jump {
+            // Jumps always taken — update BTB with target
+            self.predictor.update(
+                new_id_ex.pc,
+                true, // jumps are always taken
+                new_id_ex.branch_target,
+                false, // is_branch = false (it's a jump)
+            );
         }
 
         // 2f. IF phase - read from instr_latch (populated by previous cycle's pre-IF)
         let new_if_id = self.fetch_stage.fetch(&self.instr_latch);
 
-        // 2g. pre-IF phase - compute nextPC and issue instruction RAM read request.
-        // Uses branch_taken/target from ID stage (new_id_ex) for same-cycle redirect.
+        // 2g. Make prediction for the instruction that just entered IF.
+        // This prediction will be stored in IfIdRegister and verified when it reaches ID.
+        let prediction_for_if = if new_if_id.valid {
+            Some(self.predictor.predict(new_if_id.pc))
+        } else {
+            None
+        };
+
+        // 2h. pre-IF phase - compute nextPC and issue instruction RAM read request.
+        // Priority: ID stage redirect > prediction > sequential
+        let (pred_taken, pred_target) = if new_id_ex.branch_taken {
+            // Hard redirect from ID stage resolution (always wins)
+            (true, new_id_ex.branch_target)
+        } else if let Some(ref pred) = prediction_for_if {
+            // Speculative fetch from predicted target
+            if pred.taken {
+                (true, pred.target.unwrap_or(new_if_id.pc + Addr::new(4)))
+            } else {
+                (false, Addr::new(0))
+            }
+        } else {
+            (false, Addr::new(0))
+        };
+
         let satp_for_if = self.csr.satp;
         let privilege_for_if = self.privilege;
         let new_instr_latch = match self.fetch_stage.pre_fetch(
             &self.bus,
             self.hazard_unit.stall,
-            new_id_ex.branch_target,
-            new_id_ex.branch_taken,
+            pred_target,
+            pred_taken,
             |bus, vaddr| {
                 mmu::translate_addr(
                     bus,
@@ -714,15 +799,24 @@ impl PipelineCpu {
         let id_branch_taken = new_id_ex.branch_taken;
 
         // ID/EX is always updated (flush_id_ex controls if it becomes a bubble)
-        self.id_ex = new_id_ex;
+        // Propagate prediction from IfIdRegister to IdExRegister
+        let mut id_ex_with_prediction = new_id_ex;
+        if !self.hazard_unit.stall {
+            id_ex_with_prediction.prediction = self.if_id.prediction;
+        }
+        self.id_ex = id_ex_with_prediction;
 
         // IF/ID and instr_latch are only updated if not stalled
         if !self.hazard_unit.stall {
-            self.if_id = new_if_id;
+            self.if_id = IfIdRegister {
+                prediction: prediction_for_if,
+                ..new_if_id
+            };
             self.instr_latch = new_instr_latch;
             // On branch redirect, invalidate the wrong-path instruction in IF/ID
             if branch_redirect {
                 self.if_id.valid = false;
+                self.if_id.prediction = None;
             }
         }
 
@@ -806,6 +900,7 @@ impl ExecutionModel for PipelineCpu {
         self.memory_stage.reset();
         self.writeback_stage.reset();
         self.hazard_unit.reset();
+        self.predictor.reset();
         self.wb_input = MemWbRegister::default();
         self.perf.reset();
         self.instructions_executed = 0;
@@ -855,6 +950,22 @@ impl PipelineCpu {
     pub fn reset_with_pc(&mut self, start_pc: crate::types::Addr) {
         self.reset();
         self.set_pc(start_pc);
+    }
+
+    /// Switch to a different branch predictor type.
+    /// The predictor state is reset but the BTB is preserved.
+    pub fn switch_predictor(&mut self, pt: PredictorType) {
+        self.predictor.switch(pt);
+    }
+
+    /// Get the current predictor type.
+    pub fn predictor_type(&self) -> PredictorType {
+        self.predictor.predictor_type()
+    }
+
+    /// Get predictor direction prediction statistics.
+    pub fn predictor_stats(&self) -> PredictorStats {
+        self.predictor.stats()
     }
 }
 

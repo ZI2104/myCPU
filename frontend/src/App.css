@@ -1312,3 +1312,211 @@ body {
   font-size: 11px;
   padding: 8px;
 }
+
+/* ===== Branch Predictor Panel ===== */
+
+.predictor-panel {
+  background: var(--secondary-bg);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.predictor-panel h3 {
+  margin: 0 0 12px 0;
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+.predictor-empty {
+  color: #888;
+  font-size: 12px;
+}
+
+.predictor-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.predictor-selector label {
+  color: #bbb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.predictor-selector select {
+  flex: 1;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.predictor-selector select:hover {
+  border-color: #4CAF50;
+}
+
+.predictor-section {
+  margin-bottom: 10px;
+}
+
+.predictor-card {
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.predictor-card .card-header {
+  color: #bbb;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.accuracy-card .card-value {
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.accuracy-badge {
+  display: inline-block;
+  font-size: 24px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 4px;
+}
+
+.accuracy-badge.good {
+  color: #4CAF50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.accuracy-badge.ok {
+  color: #FF9800;
+  background: rgba(255, 152, 0, 0.1);
+}
+
+.accuracy-badge.poor {
+  color: #f44336;
+  background: rgba(244, 67, 54, 0.1);
+}
+
+.accuracy-badge.na {
+  color: #888;
+  background: rgba(136, 136, 136, 0.1);
+}
+
+.card-detail {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #999;
+}
+
+.detail-separator {
+  color: #555;
+}
+
+.mispredict-count {
+  color: #f44336;
+}
+
+.btb-stats {
+  margin-top: 6px;
+}
+
+.btb-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.btb-stat .stat-label {
+  color: #bbb;
+  font-size: 11px;
+  min-width: 60px;
+}
+
+.btb-stat .progress-bar {
+  flex: 1;
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.btb-stat .progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.btb-stat .progress-fill.good {
+  background-color: #4CAF50;
+}
+
+.btb-stat .progress-fill.ok {
+  background-color: #FF9800;
+}
+
+.btb-stat .progress-fill.poor {
+  background-color: #f44336;
+}
+
+.btb-stat .stat-value {
+  color: #e0e0e0;
+  font-size: 11px;
+  min-width: 50px;
+  text-align: right;
+}
+
+.btb-detail {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.btb-table-wrapper {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.btb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.btb-table th {
+  text-align: left;
+  color: #888;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-bottom: 1px solid #444;
+}
+
+.btb-table td {
+  padding: 3px 6px;
+  color: #ccc;
+  border-bottom: 1px solid #333;
+}
+
+.btb-table td.hex {
+  font-family: 'Consolas', 'Monaco', monospace;
+  color: #88cc88;
+}
+
+.btb-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}

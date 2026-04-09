@@ -9,6 +9,7 @@ import { InputPanel } from './components/InputPanel';
 import { MemoryView } from './components/MemoryView';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PipelineVisualizer } from './components/PipelineVisualizer';
+import { PredictorPanel } from './components/PredictorPanel';
 import { RegisterPanel } from './components/RegisterPanel';
 import { useWebSocket } from './hooks/useWebSocket';
 import type {
@@ -295,6 +296,10 @@ function App() {
 
             <div className="right-panel">
               <PerformanceDashboard perf={snapshot.perf} />
+              <PredictorPanel
+                predictor={snapshot.predictor}
+                onSwitchPredictor={(type: string) => send(`predictor_switch ${type}`)}
+              />
             </div>
           </div>
 

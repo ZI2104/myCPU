@@ -201,6 +201,8 @@ pub enum PerfEvent {
     InterruptsTaken = 13,
     /// Exceptions taken
     ExceptionsTaken = 14,
+    /// Branch mispredictions (dynamic predictor)
+    BranchMispredictions = 15,
 }
 
 impl PerfEvent {
@@ -222,6 +224,7 @@ impl PerfEvent {
             12 => PerfEvent::PipelineFlushes,
             13 => PerfEvent::InterruptsTaken,
             14 => PerfEvent::ExceptionsTaken,
+            15 => PerfEvent::BranchMispredictions,
             _ => PerfEvent::None,
         }
     }

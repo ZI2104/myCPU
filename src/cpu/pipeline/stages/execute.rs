@@ -188,6 +188,7 @@ mod tests {
             mem_ctrl: MemControlSignals::default(),
             branch_taken: false,
             branch_target: Addr::new(0),
+            prediction: None,
             valid: true,
         }
     }

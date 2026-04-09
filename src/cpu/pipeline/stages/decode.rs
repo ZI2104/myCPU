@@ -57,6 +57,7 @@ impl DecodeStage {
                 mem_ctrl: MemControlSignals::default(),
                 branch_taken: false,
                 branch_target: Addr::new(0),
+                prediction: None,
                 valid: false,
             });
         }
@@ -144,6 +145,7 @@ impl DecodeStage {
             mem_ctrl,
             branch_taken,
             branch_target,
+            prediction: None,
             valid: true,
         })
     }
@@ -329,6 +331,7 @@ mod tests {
             pc: Addr::new(0),
             instruction: 0x03208193, // ADDI x3, x1, 50
             valid: true,
+            ..Default::default()
         };
 
         let id_ex = stage
@@ -355,6 +358,7 @@ mod tests {
             pc: Addr::new(0),
             instruction: 0x03208193,
             valid: true,
+            ..Default::default()
         };
 
         let id_ex = stage
@@ -376,6 +380,7 @@ mod tests {
             pc: Addr::new(0),
             instruction: 0x00208463, // BEQ x1, x2, +8
             valid: true,
+            ..Default::default()
         };
 
         let id_ex = stage
@@ -400,6 +405,7 @@ mod tests {
             pc: Addr::new(0x100),
             instruction: 0x00108063, // BEQ x1, x1, +0
             valid: true,
+            ..Default::default()
         };
 
         let id_ex = stage
@@ -422,6 +428,7 @@ mod tests {
             pc: Addr::new(0x100),
             instruction: 0x008000EF, // JAL x1, +8
             valid: true,
+            ..Default::default()
         };
 
         let id_ex = stage
@@ -454,6 +461,7 @@ mod tests {
             pc: Addr::new(0x100),
             instruction: 0x00008463, // BEQ x1, x1, +0 → but we want BEQ x1, x2
             valid: true,
+            ..Default::default()
         };
 
         // Use BEQ x1, x2 encoding: 0000000_00010_00001_000_00000_1100011
@@ -461,6 +469,7 @@ mod tests {
             pc: Addr::new(0x100),
             instruction: 0x00208463, // BEQ x1, x2, +8
             valid: true,
+            ..Default::default()
         };
 
         let id_ex = stage

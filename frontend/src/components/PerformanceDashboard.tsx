@@ -1,13 +1,10 @@
 import React from 'react';
 import type { PerfSnapshot } from '../types/snapshot';
+import { formatNumber } from '../utils/format';
 
 interface PerformanceDashboardProps {
   perf: PerfSnapshot | null;
 }
-
-const formatNumber = (n: number): string => {
-  return Number.isFinite(n) ? n.toLocaleString() : '0';
-};
 
 const safe = (n: number | null | undefined): number =>
   (typeof n === 'number' && Number.isFinite(n) ? n : 0);

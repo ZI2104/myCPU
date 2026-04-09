@@ -101,6 +101,7 @@ impl FetchStage {
             pc: latch.pc,
             instruction: latch.instruction,
             valid: latch.valid,
+            prediction: None,
         }
     }
 
@@ -141,6 +142,7 @@ impl FetchStage {
                 pc: self.pc,
                 instruction: 0,
                 valid: false,
+                prediction: None,
             });
         }
 
@@ -156,6 +158,7 @@ impl FetchStage {
             pc: self.pc,
             instruction: instruction.raw(),
             valid: true,
+            prediction: None,
         };
 
         self.pc = self.pc_plus_4;

@@ -6,10 +6,11 @@ export interface CpuSnapshot {
   privilege: string;
   pipeline: PipelineSnapshot;
   perf: PerfSnapshot;
+  predictor?: PredictorSnapshot | null;
   halted: boolean;
   // Incremented by server on Reset so frontend can detect and prioritize
   // reset-aligned snapshots. Optional for backward compatibility.
-  reset_sequence?: number; // Incremented by server on Reset so frontend can detect and prioritize
+  reset_sequence?: number;
 }
 
 export interface PipelineSnapshot {
@@ -83,6 +84,36 @@ export interface PerfSnapshot {
   memory_reads: number;
   memory_writes: number;
 }
+
+// Branch Predictor
+export interface PredictorSnapshot {
+  predictor_type: string;
+  predictor_display_name: string;
+  predictions: number;
+  correct: number;
+  mispredictions: number;
+  accuracy: number | null;
+  btb_lookups: number;
+  btb_hits: number;
+  btb_misses: number;
+  btb_hit_rate: number | null;
+  btb_entries: BtbEntrySnapshot[];
+}
+
+export interface BtbEntrySnapshot {
+  tag: number;
+  target: number;
+  is_branch: boolean;
+}
+
+// Predictor types for the switch command
+export const PREDICTOR_TYPES = [
+  { value: 'none', label: 'Always Not Taken' },
+  { value: 'one_bit', label: '1-Bit' },
+  { value: 'two_bit', label: '2-Bit Saturating' },
+  { value: 'local', label: 'Local (2-Level)' },
+  { value: 'global', label: 'Global (gshare)' },
+] as const;
 
 // Memory
 export interface MemoryReadResponse {

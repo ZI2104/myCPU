@@ -56,3 +56,12 @@ export function formatDecimal(value: number): string {
   const signed = value | 0; // Convert to signed 32-bit
   return signed.toString();
 }
+
+/**
+ * Format a number with locale-specific thousand separators.
+ * @param value - The number to format
+ * @returns Localized number string
+ */
+export function formatNumber(n: number): string {
+  return Number.isFinite(n) ? n.toLocaleString() : '0';
+}

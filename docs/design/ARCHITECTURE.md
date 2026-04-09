@@ -4,14 +4,14 @@
 
 ### 目标架构: RISC-V RV32I
 
-| 特性       | 说明                         |
-| ---------- | ---------------------------- |
-| 基础指令集 | RV32I (40 条指令)            |
-| 扩展指令集 | M (乘除法), C (压缩, 可选)   |
-| 特权级     | M-mode + S-mode + U-mode     |
+| 特性       | 说明                                |
+| ---------- | ----------------------------------- |
+| 基础指令集 | RV32I (40 条指令)                   |
+| 扩展指令集 | M (乘除法), C (压缩, 可选)          |
+| 特权级     | M-mode + S-mode + U-mode            |
 | 流水线     | 6 级流水线 (pre-IF/IF/ID/EX/MEM/WB) |
-| 地址宽度   | 32 位                        |
-| 内存管理   | Sv32 分页 (可选)             |
+| 地址宽度   | 32 位                               |
+| 内存管理   | Sv32 分页 (可选)                    |
 
 ### 选型理由
 
@@ -123,13 +123,13 @@ flowchart LR
 
 ### 流水线寄存器
 
-| 寄存器 | 内容                           |
-| ------ | ------------------------------ |
-| InstrFetchLatch | 指令 (从同步 RAM 输出)        |
-| ID/EX  | PC, 操作数, 立即数, 控制信号   |
-| EX/MEM | ALU 结果, Store 数据, 控制信号 |
-| DataReadLatch | 内存读取数据 (从同步 RAM 输出) |
-| MEM/WB | 内存数据, ALU 结果, 写回目标   |
+| 寄存器          | 内容                           |
+| --------------- | ------------------------------ |
+| InstrFetchLatch | 指令 (从同步 RAM 输出)         |
+| ID/EX           | PC, 操作数, 立即数, 控制信号   |
+| EX/MEM          | ALU 结果, Store 数据, 控制信号 |
+| DataReadLatch   | 内存读取数据 (从同步 RAM 输出) |
+| MEM/WB          | 内存数据, ALU 结果, 写回目标   |
 
 ### 流水线冒险处理
 
@@ -166,18 +166,74 @@ flowchart TD
 
 #### 控制冒险 - 分支预测
 
-| 策略         | 说明             | 实现复杂度 |
-| ------------ | ---------------- | ---------- |
-| 静态预测     | 总是预测不跳转   | 简单       |
-| BTFN         | 向后跳转预测跳转 | 简单       |
-| 2-bit 预测器 | 基于历史动态预测 | 中等       |
-| BTB          | 分支目标缓存     | 复杂       |
+| 策略              | 说明                            | 实现复杂度 |
+| ----------------- | ------------------------------- | ---------- |
+| Always Not Taken  | 总是预测不跳转 (静态)           | 简单       |
+| 1-Bit             | 记住上次结果                    | 简单       |
+| 2-Bit Saturating  | 4 状态 FSM，需连续 2 次错误翻转 | 中等       |
+| Local (2-Level)   | 每分支 BHR + 共享 PHT          | 中等       |
+| Global (gshare)   | GHR XOR PC 索引 PHT            | 中等       |
+| BTB               | 分支目标缓存 (配合方向预测器)   | 复杂       |
 
-**初始实现**: 静态预测 + 暂停 (简化实现)
+**当前实现**: 5 种方向预测器 + BTB，支持运行时切换，通过前端可视化对比。
+
+##### 预测器实现
+
+所有预测器共享 `BranchPredictor` trait，方向预测 + BTB 目标预测组合：
+
+```
+PredictorManager
+├── Box<dyn BranchPredictor>  // 方向预测 (taken/not-taken)
+└── BranchTargetBuffer        // 目标地址预测 (256 项直接映射)
+```
+
+**方向预测器对比**：
+
+| 预测器         | 存储开销                   | 特点                                     |
+| -------------- | -------------------------- | ---------------------------------------- |
+| Always Not     | 0                          | 基线，无动态预测                         |
+| 1-Bit          | 1024 × 1-bit (BHT)         | 循环首尾各误预测一次                     |
+| 2-Bit          | 1024 × 2-bit (BHT)         | 抵抗单次异常，需连续 2 次错误才翻转      |
+| Local          | 1024 × 10-bit (BHR) + 1024 × 2-bit (PHT) | 捕获每分支行为模式             |
+| Global (gshare)| 10-bit GHR + 1024 × 2-bit (PHT)    | 捕获分支间相关性 (GHR XOR PC 索引) |
+
+**BTB 设计**：
+- 256 项直接映射缓存 (PC[9:2] 索引，PC[31:10] 作为 tag)
+- 每次 taken 分支/跳转更新 BTB 条目
+- 预测 taken 时查询 BTB 获取目标地址
+
+##### 预测流程
+
+```
+Cycle N:
+  IF/ID: 指令 B → predictor.predict(B.pc) → PredictionResult
+  pre-IF: 若预测 taken → 从 BTB 目标取指；否则 PC+4
+  预测结果存入 IfIdRegister.prediction
+
+Cycle N+1:
+  ID: 解码指令 B → 实际分支结果 (branch_taken, branch_target)
+  predictor.resolve(B.pc, actual_taken, actual_target) → 更新预测器
+  若 prediction != actual → 冲刷 IF/ID (1 周期惩罚)
+```
+
+##### WebSocket 命令
+
+| 命令 | 说明 |
+| ---- | ---- |
+| `predictor_switch <type>` | 切换预测器 (none/one_bit/two_bit/local/global) |
+
+##### 前端可视化
+
+`PredictorPanel` 组件显示：
+- 预测器类型选择器 (下拉框切换)
+- 预测准确率 (带颜色编码: 绿>90%, 黄70-90%, 红<70%)
+- BTB 命中率统计
+- BTB 条目表 (tag, target, branch/jump)
 
 ### 新流水线架构 (6 级)
 
 **关键设计变更**：
+
 1. **新增 pre-IF 阶段**：从 5 级扩展到 6 级流水线
 2. **同步 RAM 设计**：所有内存访问都经过同步寄存器
 3. **内存访问延迟**：1 周期延迟（指令和数据内存）
@@ -185,6 +241,7 @@ flowchart TD
 #### pre-IF 阶段设计
 
 pre-IF 是一个"伪阶段"（没有流水线寄存器），主要功能：
+
 - 计算下一条指令地址（nextPC）
 - 向指令内存发起读取请求（使用 nextPC 作为地址）
 - 分支指令目标地址计算
@@ -202,6 +259,7 @@ fn pre_fetch(&self, current_pc: u32, branch_target: Option<u32>) -> u32 {
 #### IF 阶段设计
 
 IF 阶段从 `InstrFetchLatch` 读取指令：
+
 - `InstrFetchLatch` 是同步 RAM 的输出寄存器
 - 数据在请求后 1 个周期可用
 - pre-IF 发起的请求在 IF 阶段获得结果
@@ -217,10 +275,11 @@ fn fetch(&mut self, pc: u32) -> Option<u32> {
 #### 内存访问设计
 
 1. **指令内存**：
+
    - pre-IF 发起请求 → IF 阶段从 `InstrFetchLatch` 读取
    - 1 周期延迟
-
 2. **数据内存**：
+
    - EX 阶段计算地址 → MEM 阶段从 `DataReadLatch` 读取
    - Store 操作在 MEM 阶段直接写入总线
    - 1 周期延迟
@@ -515,14 +574,14 @@ src/peripheral/
 ### Sv32 当前实现边界（里程碑）
 
 - 已完成：
-    - Bare/Sv32 模式分流
-    - 两级页表遍历（根表 + 次级表）
-    - Instruction/Load/Store 权限位检查（X/R/W）
-    - 页故障触发 `InstructionPageFault/LoadPageFault/StorePageFault`
+  - Bare/Sv32 模式分流
+  - 两级页表遍历（根表 + 次级表）
+  - Instruction/Load/Store 权限位检查（X/R/W）
+  - 页故障触发 `InstructionPageFault/LoadPageFault/StorePageFault`
 - 暂未完成：
-    - TLB / ASID 相关优化
-    - A/D 位硬件更新语义
-    - 细粒度权限语义（SUM/MXR）与缺页性能优化
+  - TLB / ASID 相关优化
+  - A/D 位硬件更新语义
+  - 细粒度权限语义（SUM/MXR）与缺页性能优化
 
 ---
 
@@ -1550,6 +1609,7 @@ myCPU 实现了符合 RISC-V 硬件性能监控 (HPM) 规范的 CSR 寄存器。
 | 5       | BranchExecuted      | 执行的分支指令          |
 | 6       | BranchTaken         | 跳转的分支              |
 | 7       | BranchNotTaken      | 未跳转的分支            |
+| 15      | BranchMispredictions| 动态预测器误预测次数    |
 | 8       | MemoryReads         | 内存读取次数            |
 | 9       | MemoryWrites        | 内存写入次数            |
 | 10      | AluOperations       | ALU 操作次数            |

@@ -559,6 +559,8 @@ enum Command {
     GpuState,
     /// Read TPU state snapshot.
     TpuState,
+    /// Switch branch predictor type.
+    PredictorSwitch { predictor_type: String },
 }
 
 impl Command {
@@ -741,6 +743,11 @@ impl Command {
                     None
                 }
             }
+            "predictor_switch" => parts
+                .get(1)
+                .map(|pt| Command::PredictorSwitch {
+                    predictor_type: pt.to_string(),
+                }),
             _ => None,
         }
     }
@@ -1777,6 +1784,29 @@ impl VisualizeServer {
                     }
                 };
 
+                ctx.send_json(response.to_string()).await;
+            }
+
+            Command::PredictorSwitch { predictor_type } => {
+                use crate::cpu::pipeline::PredictorType;
+                let response = match PredictorType::from_str_lossy(&predictor_type) {
+                    Some(pt) => {
+                        let mut cpu_guard = ctx.cpu.lock().await;
+                        cpu_guard.switch_predictor(pt);
+                        let new_type = cpu_guard.predictor_type();
+                        serde_json::json!({
+                            "type": "predictor_switch",
+                            "success": true,
+                            "predictor_type": new_type.as_str(),
+                            "display_name": new_type.display_name(),
+                        })
+                    }
+                    None => serde_json::json!({
+                        "type": "predictor_switch",
+                        "success": false,
+                        "error": format!("Unknown predictor type: {}", predictor_type),
+                    }),
+                };
                 ctx.send_json(response.to_string()).await;
             }
         }

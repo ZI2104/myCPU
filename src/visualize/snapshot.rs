@@ -19,6 +19,8 @@ pub struct CpuSnapshot {
     pub pipeline: PipelineSnapshot,
     /// Performance counters
     pub perf: PerfSnapshot,
+    /// Branch predictor state
+    pub predictor: Option<PredictorSnapshot>,
     /// Whether the CPU is halted
     pub halted: bool,
     /// Reset sequence counter - increments on each Reset to help frontend
@@ -255,6 +257,38 @@ pub struct HistoryResponse {
     pub position: usize,
 }
 
+/// Branch predictor snapshot for visualization.
+#[derive(Debug, Clone, Serialize)]
+pub struct PredictorSnapshot {
+    /// Current predictor type (machine-readable).
+    pub predictor_type: String,
+    /// Current predictor type (human-readable).
+    pub predictor_display_name: String,
+    /// Direction prediction statistics.
+    pub predictions: u64,
+    pub correct: u64,
+    pub mispredictions: u64,
+    pub accuracy: Option<f64>,
+    /// BTB statistics.
+    pub btb_lookups: u64,
+    pub btb_hits: u64,
+    pub btb_misses: u64,
+    pub btb_hit_rate: Option<f64>,
+    /// Sample of valid BTB entries.
+    pub btb_entries: Vec<BtbEntrySnapshot>,
+}
+
+/// A single BTB entry in a snapshot.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtbEntrySnapshot {
+    /// Tag (upper PC bits).
+    pub tag: u32,
+    /// Target address.
+    pub target: u32,
+    /// Whether this is a branch (vs jump).
+    pub is_branch: bool,
+}
+
 /// Performance counters snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct PerfSnapshot {
@@ -295,6 +329,7 @@ impl CpuSnapshot {
             privilege: "Machine".to_string(),
             pipeline: PipelineSnapshot::default(),
             perf: PerfSnapshot::default(),
+            predictor: None,
             halted: false,
             reset_sequence: 0,
         }
