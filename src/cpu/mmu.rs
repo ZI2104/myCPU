@@ -38,7 +38,10 @@ pub fn translate_addr(
 }
 
 fn page_fault(vaddr: Addr, access: MemoryAccessType) -> SimError {
-    SimError::PageFault { addr: vaddr, access }
+    SimError::PageFault {
+        addr: vaddr,
+        access,
+    }
 }
 
 fn is_leaf(pte: u32) -> bool {
@@ -200,8 +203,11 @@ mod tests {
         let va = Addr::new((vpn1 << 22) | (vpn0 << 12));
 
         // Root PTE -> next level
-        bus.write_word(Addr::new(vpn1 * 4 + 0x1000), Word::new((0x2 << 10) | pte_bits::V))
-            .unwrap();
+        bus.write_word(
+            Addr::new(vpn1 * 4 + 0x1000),
+            Word::new((0x2 << 10) | pte_bits::V),
+        )
+        .unwrap();
 
         // Leaf PTE has R but no X
         let leaf_pte = (0x120 << 10) | pte_bits::V | pte_bits::R;

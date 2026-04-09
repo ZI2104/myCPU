@@ -1174,6 +1174,11 @@ impl VisualizeServer {
                         instruction,
                         instruction_str,
                     });
+                modified_snapshot.pipeline.pre_if_stage =
+                    Some(crate::visualize::snapshot::PreIfStageInfo {
+                        next_pc: initial_pc + 4,
+                        fetch_addr: initial_pc,
+                    });
                 // Reset performance counters on the snapshot so frontend cycle
                 // columns restart from C0 after a reset.
                 modified_snapshot.perf.cycles = 0;

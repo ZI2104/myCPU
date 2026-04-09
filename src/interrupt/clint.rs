@@ -140,22 +140,18 @@ impl Clint {
             }
 
             // mtimecmp (offset 0x4000-0x4007, 64-bit, little-endian)
-            o if (MTIMECMP_OFFSET..MTIMECMP_OFFSET + 8).contains(&o) => {
-                match o - MTIMECMP_OFFSET {
-                    0 => Ok((self.mtimecmp & 0xFFFFFFFF) as u32),
-                    4 => Ok((self.mtimecmp >> 32) as u32),
-                    _ => Err(self.alignment_error(o, 4, 4)),
-                }
-            }
+            o if (MTIMECMP_OFFSET..MTIMECMP_OFFSET + 8).contains(&o) => match o - MTIMECMP_OFFSET {
+                0 => Ok((self.mtimecmp & 0xFFFFFFFF) as u32),
+                4 => Ok((self.mtimecmp >> 32) as u32),
+                _ => Err(self.alignment_error(o, 4, 4)),
+            },
 
             // mtime (offset 0xBFF8-0xBFFF, 64-bit, little-endian)
-            o if (MTIME_OFFSET..MTIME_OFFSET + 8).contains(&o) => {
-                match o - MTIME_OFFSET {
-                    0 => Ok((self.mtime & 0xFFFFFFFF) as u32),
-                    4 => Ok((self.mtime >> 32) as u32),
-                    _ => Err(self.alignment_error(o, 4, 4)),
-                }
-            }
+            o if (MTIME_OFFSET..MTIME_OFFSET + 8).contains(&o) => match o - MTIME_OFFSET {
+                0 => Ok((self.mtime & 0xFFFFFFFF) as u32),
+                4 => Ok((self.mtime >> 32) as u32),
+                _ => Err(self.alignment_error(o, 4, 4)),
+            },
 
             _ => Err(SimError::Peripheral(format!(
                 "Invalid CLINT read at offset 0x{:04x}",
@@ -403,13 +399,19 @@ mod tests {
 
         // Write mtimecmp low
         clint
-            .write_word(Addr::new(CLINT_BASE + MTIMECMP_OFFSET), Word::new(0x12345678))
+            .write_word(
+                Addr::new(CLINT_BASE + MTIMECMP_OFFSET),
+                Word::new(0x12345678),
+            )
             .unwrap();
         assert_eq!(clint.mtimecmp() & 0xFFFFFFFF, 0x12345678);
 
         // Write mtimecmp high
         clint
-            .write_word(Addr::new(CLINT_BASE + MTIMECMP_OFFSET + 4), Word::new(0x87654321))
+            .write_word(
+                Addr::new(CLINT_BASE + MTIMECMP_OFFSET + 4),
+                Word::new(0x87654321),
+            )
             .unwrap();
         assert_eq!(clint.mtimecmp(), 0x87654321_12345678);
 
@@ -444,10 +446,14 @@ mod tests {
         let mut clint = Clint::new();
 
         // Write msip byte
-        clint.write_byte(Addr::new(CLINT_BASE), Byte::new(1)).unwrap();
+        clint
+            .write_byte(Addr::new(CLINT_BASE), Byte::new(1))
+            .unwrap();
         assert!(clint.msip());
 
-        clint.write_byte(Addr::new(CLINT_BASE), Byte::new(0)).unwrap();
+        clint
+            .write_byte(Addr::new(CLINT_BASE), Byte::new(0))
+            .unwrap();
         assert!(!clint.msip());
     }
 

@@ -499,7 +499,13 @@ impl Bus {
             }
         }
 
-        if !virtio_pending && !uart_pending && !npu_pending && !lpu_pending && !gpu_pending && !tpu_pending {
+        if !virtio_pending
+            && !uart_pending
+            && !npu_pending
+            && !lpu_pending
+            && !gpu_pending
+            && !tpu_pending
+        {
             return;
         }
 

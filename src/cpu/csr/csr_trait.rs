@@ -54,8 +54,7 @@ pub trait CsrRegister {
 }
 
 /// CSR access width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CsrWidth {
     /// 32-bit CSR (standard for RV32)
     #[default]
@@ -63,7 +62,6 @@ pub enum CsrWidth {
     /// 64-bit CSR (for timers in RV32)
     Xlen64,
 }
-
 
 /// Result of a CSR operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,11 +88,7 @@ pub enum CsrAccessCheck {
 }
 
 /// Check if a CSR address exists and can be accessed.
-pub fn check_csr_access(
-    addr: u16,
-    privilege: PrivilegeLevel,
-    is_write: bool,
-) -> CsrAccessCheck {
+pub fn check_csr_access(addr: u16, privilege: PrivilegeLevel, is_write: bool) -> CsrAccessCheck {
     // Determine minimum privilege level from address
     // CSR address[9:8] determines privilege:
     // 00 = User, 01 = Supervisor, 10 = Hypervisor, 11 = Machine

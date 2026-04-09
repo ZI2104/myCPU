@@ -3,7 +3,7 @@
 //! This module implements the GDB Remote Serial Protocol client
 //! for communicating with QEMU's GDB stub.
 
-use std::io::{Read, Write, BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 
 /// GDB Protocol handler
@@ -59,7 +59,10 @@ impl GdbProtocol {
         self.send_packet("qSupported")?;
 
         let response = self.recv_packet()?;
-        log::info!("GDB server capabilities: {}", String::from_utf8_lossy(&response));
+        log::info!(
+            "GDB server capabilities: {}",
+            String::from_utf8_lossy(&response)
+        );
 
         Ok(())
     }
@@ -86,9 +89,7 @@ impl GdbProtocol {
                 log::trace!("Received ACK");
                 Ok(())
             }
-            Ok(1) if ack[0] == b'-' => {
-                Err("Negative acknowledgment received".to_string())
-            }
+            Ok(1) if ack[0] == b'-' => Err("Negative acknowledgment received".to_string()),
             Ok(_) => {
                 log::warn!("Unexpected acknowledgment: {:?}", ack);
                 Ok(()) // Continue anyway
@@ -100,7 +101,8 @@ impl GdbProtocol {
     /// Receive a packet from GDB server
     pub fn recv_packet(&mut self) -> Result<Vec<u8>, String> {
         let mut buf = [0u8; 4096];
-        let n = self.reader
+        let n = self
+            .reader
             .read(&mut buf)
             .map_err(|e| format!("Read error: {}", e))?;
 
@@ -127,7 +129,11 @@ impl GdbProtocol {
                 let computed: u8 = packet_data.iter().fold(0u8, |a, &b| a.wrapping_add(b));
 
                 if expected != computed {
-                    log::warn!("Checksum mismatch: expected {:02x}, got {:02x}", expected, computed);
+                    log::warn!(
+                        "Checksum mismatch: expected {:02x}, got {:02x}",
+                        expected,
+                        computed
+                    );
                 }
             }
 

@@ -3,7 +3,10 @@
 //! This module provides trap entry/exit handling logic.
 
 use super::csr_trait::CsrRegister;
-use super::machine::{exception_code, interrupt_code, mideleg_bits, medeleg_bits, Mcause, Mepc, Mideleg, Medeleg, Mstatus, Mtval, Mtvec};
+use super::machine::{
+    exception_code, interrupt_code, medeleg_bits, mideleg_bits, Mcause, Medeleg, Mepc, Mideleg,
+    Mstatus, Mtval, Mtvec,
+};
 use super::supervisor::{Scause, Sepc, Sstatus, Stval, Stvec};
 use crate::types::{Addr, PrivilegeLevel};
 
@@ -364,7 +367,7 @@ impl Trap {
         // Calculate trap handler address
         let handler_addr = if self.is_interrupt() {
             match stvec.mode() {
-                0 => stvec.base(), // Direct
+                0 => stvec.base(),                                          // Direct
                 1 => Addr::new(stvec.base().raw() + self.cause_code() * 4), // Vectored
                 _ => stvec.base(), // Default to Direct for unknown modes
             }
@@ -379,8 +382,8 @@ impl Trap {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::machine::TrapVectorMode;
+    use super::*;
 
     #[test]
     fn test_exception_cause_ecall() {

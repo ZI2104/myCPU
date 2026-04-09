@@ -131,10 +131,7 @@ impl KernelType {
     pub fn is_matrix_op(&self) -> bool {
         matches!(
             self,
-            KernelType::MatMul
-                | KernelType::MatAdd
-                | KernelType::MatSub
-                | KernelType::MatTranspose
+            KernelType::MatMul | KernelType::MatAdd | KernelType::MatSub | KernelType::MatTranspose
         )
     }
 
@@ -203,11 +200,7 @@ impl TensorDescriptor {
             }
         }
 
-        let element_count = if ndim > 0 {
-            shape.iter().product()
-        } else {
-            0
-        };
+        let element_count = if ndim > 0 { shape.iter().product() } else { 0 };
 
         Self {
             data_addr,

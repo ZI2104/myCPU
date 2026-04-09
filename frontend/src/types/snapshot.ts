@@ -13,6 +13,7 @@ export interface CpuSnapshot {
 }
 
 export interface PipelineSnapshot {
+  pre_if_stage: PreIfStageInfo | null;
   if_stage: IfStageInfo | null;
   id_stage: IdStageInfo | null;
   ex_stage: ExStageInfo | null;
@@ -20,6 +21,11 @@ export interface PipelineSnapshot {
   wb_stage: WbStageInfo | null;
   stall: boolean;
   flush: boolean;
+}
+
+export interface PreIfStageInfo {
+  next_pc: number;
+  fetch_addr: number;
 }
 
 export interface IfStageInfo {

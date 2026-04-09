@@ -29,6 +29,8 @@ pub struct CpuSnapshot {
 /// Pipeline state snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct PipelineSnapshot {
+    /// pre-IF stage information (synchronous RAM read address)
+    pub pre_if_stage: Option<PreIfStageInfo>,
     /// IF stage information
     pub if_stage: Option<IfStageInfo>,
     /// ID stage information
@@ -43,6 +45,17 @@ pub struct PipelineSnapshot {
     pub stall: bool,
     /// Whether the pipeline is being flushed
     pub flush: bool,
+}
+
+/// pre-IF (Instruction Fetch Request) stage information.
+///
+/// Shows the synchronous RAM read address being presented in the current cycle.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreIfStageInfo {
+    /// The nextPC value being used as the RAM read address
+    pub next_pc: u32,
+    /// The instruction being fetched (if already in latch)
+    pub fetch_addr: u32,
 }
 
 /// IF (Instruction Fetch) stage information.
@@ -297,6 +310,7 @@ impl Default for CpuSnapshot {
 impl Default for PipelineSnapshot {
     fn default() -> Self {
         Self {
+            pre_if_stage: None,
             if_stage: None,
             id_stage: None,
             ex_stage: None,

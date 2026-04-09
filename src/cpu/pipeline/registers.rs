@@ -1,9 +1,81 @@
 //! Pipeline register definitions.
 //!
-//! This module defines the pipeline registers that hold data between stages.
+//! This module defines the pipeline registers that hold data between stages,
+//! as well as the synchronous RAM latches used in the pre-IF/IF two-beat
+//! fetch design and the EX/MEM data path.
 
 use crate::cpu::pipeline::control::{ExControlSignals, MemControlSignals, WbControlSignals};
 use crate::types::{Addr, RegIdx, Word};
+
+/// Instruction fetch latch between pre-IF and IF stages.
+///
+/// Models the synchronous instruction RAM output register. The read address
+/// is presented in the pre-IF phase (combinational), and the instruction
+/// data becomes available in the IF phase (one cycle later).
+#[derive(Debug, Clone)]
+pub struct InstrFetchLatch {
+    /// PC corresponding to the fetched instruction.
+    pub pc: Addr,
+    /// Raw instruction word.
+    pub instruction: u32,
+    /// Whether this latch contains valid data.
+    pub valid: bool,
+}
+
+impl Default for InstrFetchLatch {
+    fn default() -> Self {
+        Self {
+            pc: Addr::new(0),
+            instruction: 0,
+            valid: false,
+        }
+    }
+}
+
+impl InstrFetchLatch {
+    /// Create a new instruction fetch latch with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Data read latch between EX and MEM stages.
+///
+/// Models the synchronous data RAM output register. The read address is
+/// presented when the instruction is in the EX stage, and the data becomes
+/// available when the instruction reaches the MEM stage (one cycle later).
+#[derive(Debug, Clone)]
+pub struct DataReadLatch {
+    /// Physical address used for the read.
+    pub paddr: Addr,
+    /// Raw data read from memory (always word-aligned).
+    pub raw_data: Word,
+    /// Access width (1 = byte, 2 = half, 4 = word).
+    pub width: u32,
+    /// Whether to sign-extend the result.
+    pub sign_extend: bool,
+    /// Whether this latch contains valid data.
+    pub valid: bool,
+}
+
+impl Default for DataReadLatch {
+    fn default() -> Self {
+        Self {
+            paddr: Addr::new(0),
+            raw_data: Word::ZERO,
+            width: 0,
+            sign_extend: false,
+            valid: false,
+        }
+    }
+}
+
+impl DataReadLatch {
+    /// Create a new data read latch with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 /// IF/ID Pipeline Register.
 ///
@@ -73,6 +145,11 @@ pub struct IdExRegister {
     /// Control signals for MEM stage.
     pub mem_ctrl: MemControlSignals,
 
+    /// Whether a branch/jump was resolved as taken in the ID stage.
+    pub branch_taken: bool,
+    /// Branch/jump target address computed in the ID stage.
+    pub branch_target: Addr,
+
     /// Whether this register contains valid data.
     pub valid: bool,
 }
@@ -90,6 +167,8 @@ impl Default for IdExRegister {
             imm: 0,
             ctrl: ExControlSignals::default(),
             mem_ctrl: MemControlSignals::default(),
+            branch_taken: false,
+            branch_target: Addr::new(0),
             valid: false,
         }
     }
@@ -107,6 +186,7 @@ impl IdExRegister {
         self.ctrl.reg_write = false;
         self.mem_ctrl.mem_read = false;
         self.mem_ctrl.mem_write = false;
+        self.branch_taken = false;
     }
 }
 
@@ -241,5 +321,23 @@ mod tests {
         let reg = IdExRegister::default();
         assert!(!reg.valid);
         assert!(!reg.ctrl.reg_write);
+    }
+
+    #[test]
+    fn test_instr_fetch_latch_default() {
+        let latch = InstrFetchLatch::default();
+        assert!(!latch.valid);
+        assert_eq!(latch.pc, Addr::new(0));
+        assert_eq!(latch.instruction, 0);
+    }
+
+    #[test]
+    fn test_data_read_latch_default() {
+        let latch = DataReadLatch::default();
+        assert!(!latch.valid);
+        assert_eq!(latch.paddr, Addr::new(0));
+        assert_eq!(latch.raw_data, Word::ZERO);
+        assert_eq!(latch.width, 0);
+        assert!(!latch.sign_extend);
     }
 }

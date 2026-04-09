@@ -1,7 +1,13 @@
-//! 5-Stage Pipeline Implementation.
+//! Pipeline Implementation with Synchronous RAM.
 //!
-//! This module provides a 5-stage pipelined CPU implementation (IF/ID/EX/MEM/WB)
-//! with hazard detection, forwarding, and branch prediction.
+//! This module provides a pipelined CPU with a pre-IF/IF two-beat instruction
+//! fetch design and synchronous data RAM. The pipeline stages are:
+//! pre-IF → IF → ID → EX → MEM → WB
+//!
+//! The pre-IF stage (combinational, no latch) issues instruction RAM read
+//! requests using nextPC. The IF stage (registered) receives the instruction
+//! data one cycle later. Similarly, data RAM reads are issued in the EX stage
+//! and data is available in the MEM stage.
 
 mod control;
 mod forward;
@@ -10,16 +16,18 @@ mod registers;
 pub mod stages;
 
 pub use control::{
-    AluOp, AluSrc, BranchType, ExControlSignals, MemControlSignals, WbControlSignals,
+    mem_width, AluOp, AluSrc, BranchType, ExControlSignals, MemControlSignals, WbControlSignals,
 };
 pub use forward::{ForwardSource, ForwardUnit};
 pub use hazard::HazardUnit;
-pub use registers::{ExMemRegister, IdExRegister, IfIdRegister, MemWbRegister};
+pub use registers::{
+    DataReadLatch, ExMemRegister, IdExRegister, IfIdRegister, InstrFetchLatch, MemWbRegister,
+};
 
 // Re-export for visualization
 use crate::visualize::snapshot::{
     disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot,
-    PipelineSnapshot, WbStageInfo,
+    PipelineSnapshot, PreIfStageInfo, WbStageInfo,
 };
 
 use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
@@ -35,7 +43,7 @@ use crate::error::{MemoryAccessType, Result, SimError};
 use crate::memory::Bus;
 use crate::types::{Addr, PrivilegeLevel, Word};
 
-/// 5-stage pipelined CPU.
+/// Pipelined CPU with synchronous RAM (pre-IF/IF two-beat fetch).
 #[derive(Debug)]
 pub struct PipelineCpu {
     // Shared resources
@@ -46,6 +54,12 @@ pub struct PipelineCpu {
 
     // PC register
     pc: ProgramCounter,
+
+    // Synchronous RAM latches
+    /// Instruction fetch latch (pre-IF → IF). Models synchronous instruction RAM output.
+    instr_latch: InstrFetchLatch,
+    /// Data read latch (EX → MEM). Models synchronous data RAM output.
+    data_latch: DataReadLatch,
 
     // Pipeline registers
     if_id: IfIdRegister,
@@ -81,6 +95,8 @@ impl PipelineCpu {
             bus,
             privilege: PrivilegeLevel::Machine,
             pc: ProgramCounter::zero(),
+            instr_latch: InstrFetchLatch::default(),
+            data_latch: DataReadLatch::default(),
             if_id: IfIdRegister::default(),
             id_ex: IdExRegister::default(),
             ex_mem: ExMemRegister::default(),
@@ -99,10 +115,13 @@ impl PipelineCpu {
     }
 
     /// Create a new pipelined CPU with the given bus and starting PC.
+    ///
+    /// Pre-fills the instruction fetch latch by reading from the bus at
+    /// `start_pc`, modeling the synchronous RAM already reading at the
+    /// reset vector.
     pub fn with_pc(bus: Bus, start_pc: Addr) -> Self {
         let mut cpu = Self::new(bus);
-        cpu.pc.set(start_pc);
-        cpu.fetch_stage.set_pc(start_pc);
+        cpu.set_pc(start_pc);
         cpu
     }
 
@@ -245,14 +264,16 @@ impl PipelineCpu {
         // Flush the pipeline
         self.flush_pipeline();
 
-        // Jump to trap handler
+        // Jump to trap handler and pre-fill instruction latch
         self.pc.set(handler_addr);
         self.fetch_stage.set_pc(handler_addr);
+        self.prefetch_instr_latch(handler_addr);
     }
 
     /// Flush the entire pipeline.
     fn flush_pipeline(&mut self) {
         // Insert bubbles into all pipeline registers
+        self.instr_latch.valid = false;
         self.if_id.valid = false;
         self.id_ex.valid = false;
         self.ex_mem.valid = false;
@@ -290,9 +311,10 @@ impl PipelineCpu {
         // Flush the pipeline
         self.flush_pipeline();
 
-        // Jump to return PC
+        // Jump to return PC and pre-fill instruction latch
         self.pc.set(return_pc);
         self.fetch_stage.set_pc(return_pc);
+        self.prefetch_instr_latch(return_pc);
 
         Ok(())
     }
@@ -354,6 +376,14 @@ impl PipelineCpu {
             pc: self.pc.get().raw(),
             privilege: format!("{:?}", self.privilege),
             pipeline: PipelineSnapshot {
+                pre_if_stage: Some(PreIfStageInfo {
+                    next_pc: self.fetch_stage.pc().raw(),
+                    fetch_addr: if self.instr_latch.valid {
+                        self.instr_latch.pc.raw()
+                    } else {
+                        0
+                    },
+                }),
                 if_stage: if self.if_id.valid {
                     Some(IfStageInfo {
                         pc: self.if_id.pc.raw(),
@@ -432,10 +462,27 @@ impl PipelineCpu {
         }
     }
 
+    /// Pre-fill instruction fetch latch by reading from bus at the given address.
+    ///
+    /// This models the synchronous RAM already having the address driven during
+    /// reset/trap, so the output register is populated with the correct instruction.
+    fn prefetch_instr_latch(&mut self, addr: Addr) {
+        if let Ok(word) = self.bus.read_word(addr) {
+            self.instr_latch = InstrFetchLatch {
+                pc: addr,
+                instruction: word.raw(),
+                valid: true,
+            };
+        } else {
+            self.instr_latch = InstrFetchLatch::default();
+        }
+    }
+
     /// Execute one clock cycle (advance all pipeline stages).
     ///
-    /// The pipeline executes stages in reverse order (WB -> MEM -> EX -> ID -> IF)
-    /// to avoid overwriting pipeline register data before it's read.
+    /// Stages execute in reverse order (WB → MEM → EX → ID → IF → pre-IF)
+    /// to ensure pipeline register data is read before being overwritten.
+    /// The synchronous RAM latches are updated at the end of the cycle.
     pub fn clock(&mut self) -> Result<()> {
         if self.halted {
             return Err(SimError::Halted);
@@ -454,7 +501,6 @@ impl PipelineCpu {
             self.perf.record(PerfEvent::Cycles);
             self.perf.record(PerfEvent::InterruptsTaken);
             self.perf.record(PerfEvent::PipelineFlushes);
-            // Update CSR counters
             self.csr.perf.tick();
             return Ok(());
         }
@@ -463,13 +509,11 @@ impl PipelineCpu {
         self.hazard_unit
             .update(&self.id_ex, &self.if_id, &self.ex_mem);
 
-        // Record stall events
         if self.hazard_unit.stall {
             self.perf.record(PerfEvent::LoadUseStalls);
         }
 
         // ========== Step 2: Execute stages in reverse order ==========
-        // This prevents overwriting pipeline registers before they're read
 
         // 2a. Write Back stage - write result to register file
         let wb_completed = self.writeback_stage.execute(&self.mem_wb, &mut self.regs)?;
@@ -479,12 +523,12 @@ impl PipelineCpu {
             self.csr.perf.instruction_retired();
         }
 
-        // 2b. Memory stage - perform memory access
-        // Use old ex_mem value, produce new mem_wb
+        // 2b. Memory stage - use data_latch for loads, write bus for stores
         let satp_for_mem = self.csr.satp;
         let privilege_for_mem = self.privilege;
-        let new_mem_wb = match self.memory_stage.execute_with_translate(
+        let new_mem_wb = match self.memory_stage.execute_with_latch(
             &self.ex_mem,
+            &self.data_latch,
             &mut self.bus,
             |bus, vaddr, access| {
                 mmu::translate_addr(bus, &satp_for_mem, privilege_for_mem, vaddr, access)
@@ -515,7 +559,6 @@ impl PipelineCpu {
         }
 
         // 2c. Execute stage - perform ALU operations and branch evaluation
-        // Use old id_ex value and old pipeline registers for forwarding
         let mut new_ex_mem = self.execute_stage.execute(
             &self.id_ex,
             &self.ex_mem,
@@ -523,23 +566,13 @@ impl PipelineCpu {
             self.hazard_unit.flush_id_ex,
         )?;
 
-        // Track ALU operations and branches
+        // Track ALU operations (still uses old id_ex)
         if self.id_ex.valid && self.id_ex.ctrl.alu_op != AluOp::Nop {
             self.perf.record(PerfEvent::AluOperations);
         }
-        if self.id_ex.ctrl.branch {
-            self.perf.record(PerfEvent::BranchExecuted);
-            if new_ex_mem.branch_taken {
-                self.perf.record(PerfEvent::BranchTaken);
-                self.perf.record(PerfEvent::ControlHazards);
-            } else {
-                self.perf.record(PerfEvent::BranchNotTaken);
-            }
-        }
 
-        // 2c-2. Handle CSR instructions and trap returns
+        // Handle CSR instructions and trap returns
         if self.id_ex.ctrl.csr_op {
-            // Execute CSR operation
             let rs1_val = self.id_ex.rs1_val.raw();
             let csr_result = self.csr.execute(
                 self.id_ex.ctrl.csr_op_type,
@@ -547,31 +580,99 @@ impl PipelineCpu {
                 rs1_val,
                 self.privilege,
             )?;
-            // Override ALU result with CSR read value
             new_ex_mem.alu_result = Word::new(csr_result);
             self.perf.record(PerfEvent::CsrAccesses);
         } else if self.id_ex.ctrl.trap_return {
-            // Handle trap return (mret/sret/uret)
             self.execute_trap_return()?;
-            // Flush the pipeline after trap return
             new_ex_mem.valid = false;
             self.perf.record(PerfEvent::PipelineFlushes);
         }
 
-        // 2d. Decode stage - decode instruction and read registers
-        let new_id_ex =
-            self.decode_stage
-                .execute(&self.if_id, &self.regs, self.hazard_unit.flush_id_ex)?;
+        // 2d. Issue data RAM read request based on EX output.
+        // This models the synchronous data RAM: address is presented when the
+        // instruction is in EX, and data becomes available in MEM (next cycle).
+        let satp_for_data = self.csr.satp;
+        let privilege_for_data = self.privilege;
+        let new_data_latch = if new_ex_mem.valid && new_ex_mem.ctrl.mem_read {
+            let vaddr = Addr::new(new_ex_mem.alu_result.raw());
+            match mmu::translate_addr(
+                &self.bus,
+                &satp_for_data,
+                privilege_for_data,
+                vaddr,
+                MemoryAccessType::Load,
+            ) {
+                Ok(paddr) => {
+                    let raw_data = match new_ex_mem.ctrl.mem_width {
+                        control::mem_width::BYTE => {
+                            let byte = self.bus.read_byte(paddr)?;
+                            Word::from_byte_zero(byte.raw())
+                        }
+                        control::mem_width::HALF => {
+                            let half = self.bus.read_half(paddr)?;
+                            Word::from_half_zero(half.raw())
+                        }
+                        _ => self.bus.read_word(paddr)?,
+                    };
+                    DataReadLatch {
+                        paddr,
+                        raw_data,
+                        width: new_ex_mem.ctrl.mem_width,
+                        sign_extend: new_ex_mem.ctrl.mem_sign_extend,
+                        valid: true,
+                    }
+                }
+                Err(SimError::PageFault { addr, access }) => {
+                    self.take_trap(Trap::exception(
+                        Self::page_fault_cause(access),
+                        new_ex_mem.pc,
+                        addr.raw(),
+                    ));
+                    self.cycles += 1;
+                    self.perf.record(PerfEvent::Cycles);
+                    self.perf.record(PerfEvent::PipelineFlushes);
+                    self.csr.perf.tick();
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
+            }
+        } else {
+            DataReadLatch::default()
+        };
 
-        // 2e. Fetch stage - fetch instruction from memory
-        // Handle stall and branch prediction
+        // 2e. Decode stage - decode instruction, read registers,
+        // and resolve branch/jump (early branch resolution in ID).
+        let new_id_ex = self.decode_stage.execute(
+            &self.if_id,
+            &self.regs,
+            &self.ex_mem,
+            &self.mem_wb,
+            self.hazard_unit.flush_id_ex,
+        )?;
+
+        // Track branches (now resolved in ID stage)
+        if new_id_ex.valid && new_id_ex.ctrl.branch {
+            self.perf.record(PerfEvent::BranchExecuted);
+            if new_id_ex.branch_taken {
+                self.perf.record(PerfEvent::BranchTaken);
+                self.perf.record(PerfEvent::ControlHazards);
+            } else {
+                self.perf.record(PerfEvent::BranchNotTaken);
+            }
+        }
+
+        // 2f. IF phase - read from instr_latch (populated by previous cycle's pre-IF)
+        let new_if_id = self.fetch_stage.fetch(&self.instr_latch);
+
+        // 2g. pre-IF phase - compute nextPC and issue instruction RAM read request.
+        // Uses branch_taken/target from ID stage (new_id_ex) for same-cycle redirect.
         let satp_for_if = self.csr.satp;
         let privilege_for_if = self.privilege;
-        let new_if_id = match self.fetch_stage.execute_with_translate(
+        let new_instr_latch = match self.fetch_stage.pre_fetch(
             &self.bus,
             self.hazard_unit.stall,
-            self.ex_mem.branch_target,
-            self.ex_mem.branch_taken,
+            new_id_ex.branch_target,
+            new_id_ex.branch_taken,
             |bus, vaddr| {
                 mmu::translate_addr(
                     bus,
@@ -582,7 +683,7 @@ impl PipelineCpu {
                 )
             },
         ) {
-            Ok(if_id) => if_id,
+            Ok(latch) => latch,
             Err(SimError::PageFault { addr, access }) => {
                 self.take_trap(Trap::exception(
                     Self::page_fault_cause(access),
@@ -598,26 +699,37 @@ impl PipelineCpu {
             Err(err) => return Err(err),
         };
 
-        // ========== Step 3: Update pipeline registers ==========
-        // Update in forward order to maintain correct state
+        // ========== Step 3: Update pipeline registers and latches ==========
         self.mem_wb = new_mem_wb;
         self.ex_mem = new_ex_mem;
+
+        // Control hazard: branch/jump resolved in ID → flush wrong-path IF/ID
+        let branch_redirect = new_id_ex.valid && new_id_ex.branch_taken;
+        let id_branch_taken = new_id_ex.branch_taken;
 
         // ID/EX is always updated (flush_id_ex controls if it becomes a bubble)
         self.id_ex = new_id_ex;
 
-        // IF/ID is only updated if not stalled (stall keeps old instruction in IF/ID)
+        // IF/ID and instr_latch are only updated if not stalled
         if !self.hazard_unit.stall {
             self.if_id = new_if_id;
+            self.instr_latch = new_instr_latch;
+            // On branch redirect, invalidate the wrong-path instruction in IF/ID
+            if branch_redirect {
+                self.if_id.valid = false;
+            }
+        }
+
+        // Data latch: model synchronous RAM "read-hold" behavior.
+        // The RAM Q port holds the last valid read data until a new valid read
+        // command is sampled. Only overwrite when a new load was issued in EX.
+        if new_data_latch.valid {
+            self.data_latch = new_data_latch;
         }
 
         // ========== Step 4: Update PC ==========
-        // PC is updated by fetch stage internally, sync here
-        if self.ex_mem.branch_taken {
-            // Branch was taken - PC already updated in fetch stage
-            self.pc.set(self.fetch_stage.pc());
-        } else if !self.hazard_unit.stall_pc {
-            // Normal case - PC advances with fetch stage
+        // Branch redirect from ID stage or normal PC advancement
+        if id_branch_taken || !self.hazard_unit.stall_pc {
             self.pc.set(self.fetch_stage.pc());
         }
 
@@ -626,10 +738,8 @@ impl PipelineCpu {
         self.perf.record(PerfEvent::Cycles);
         self.csr.perf.tick();
 
-        // Record events to HPM counters (skip if all inhibited)
         if !self.csr.perf.mcountinhibit.hpms() {
             for i in 0..HPM_COUNTER_COUNT {
-                // Skip if this specific counter is inhibited
                 if self.csr.perf.mcountinhibit.hpm(i + HPM_COUNTER_BASE) {
                     continue;
                 }
@@ -639,7 +749,6 @@ impl PipelineCpu {
                     continue;
                 }
 
-                // Check if this event occurred this cycle
                 match event {
                     PerfEvent::Cycles => self.csr.perf.mhpmcounters[i].increment(),
                     PerfEvent::InstructionsRetired if wb_completed => {
@@ -679,6 +788,8 @@ impl ExecutionModel for PipelineCpu {
         self.csr.reset();
         self.pc = ProgramCounter::zero();
         self.privilege = PrivilegeLevel::Machine;
+        self.instr_latch = InstrFetchLatch::default();
+        self.data_latch = DataReadLatch::default();
         self.if_id = IfIdRegister::default();
         self.id_ex = IdExRegister::default();
         self.ex_mem = ExMemRegister::default();
@@ -712,6 +823,9 @@ impl ExecutionModel for PipelineCpu {
     fn set_pc(&mut self, addr: Addr) {
         self.pc.set(addr);
         self.fetch_stage.set_pc(addr);
+        // Pre-fill instruction latch: models synchronous RAM already reading
+        // at the reset vector during hardware reset.
+        self.prefetch_instr_latch(addr);
     }
 
     fn is_halted(&self) -> bool {
@@ -803,6 +917,12 @@ mod tests {
         // Debug: print pipeline state BEFORE each cycle
         for cycle in 0..10 {
             println!("=== Before Cycle {} ===", cycle);
+            println!(
+                "  instr_latch: pc={:08x}, instr={:08x}, valid={}",
+                cpu.instr_latch.pc.raw(),
+                cpu.instr_latch.instruction,
+                cpu.instr_latch.valid
+            );
             println!(
                 "  IF/ID: pc={:08x}, instr={:08x}, valid={}",
                 cpu.if_id.pc.raw(),
@@ -898,6 +1018,40 @@ mod tests {
         assert_eq!(cpu.csr().mcause.code(), interrupt_code::MACHINE_TIMER);
 
         // Pipeline should be flushed when taking trap.
+        assert!(!cpu.if_id.valid);
+        assert!(!cpu.id_ex.valid);
+        assert!(!cpu.ex_mem.valid);
+        assert!(!cpu.mem_wb.valid);
+    }
+
+    #[test]
+    fn test_sync_ram_first_fetch_prefill() {
+        // Verify that with_pc() pre-fills the instruction latch
+        let program = [0x02A00093]; // addi x1, x0, 42
+        let bus = create_test_bus_with_program(&program);
+        let cpu = PipelineCpu::with_pc(bus, Addr::new(0));
+
+        // instr_latch should be pre-filled with instruction at PC=0
+        assert!(cpu.instr_latch.valid);
+        assert_eq!(cpu.instr_latch.pc, Addr::new(0));
+        assert_eq!(cpu.instr_latch.instruction, 0x02A00093);
+    }
+
+    #[test]
+    fn test_sync_ram_flush_invalidates_latch() {
+        let bus = Bus::new();
+        let mut cpu = PipelineCpu::new(bus);
+
+        // Set latch to valid
+        cpu.instr_latch = InstrFetchLatch {
+            pc: Addr::new(0x1000),
+            instruction: 0x12345678,
+            valid: true,
+        };
+
+        cpu.flush_pipeline();
+
+        assert!(!cpu.instr_latch.valid);
         assert!(!cpu.if_id.valid);
         assert!(!cpu.id_ex.valid);
         assert!(!cpu.ex_mem.valid);

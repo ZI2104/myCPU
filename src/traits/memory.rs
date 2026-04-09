@@ -165,10 +165,7 @@ mod tests {
             if idx < self.data.len() {
                 Ok(Byte::new(self.data[idx]))
             } else {
-                Err(crate::error::SimError::MemoryOutOfBounds {
-                    addr,
-                    size: 1,
-                })
+                Err(crate::error::SimError::MemoryOutOfBounds { addr, size: 1 })
             }
         }
 
@@ -178,10 +175,7 @@ mod tests {
                 self.data[idx] = value.raw();
                 Ok(())
             } else {
-                Err(crate::error::SimError::MemoryOutOfBounds {
-                    addr,
-                    size: 1,
-                })
+                Err(crate::error::SimError::MemoryOutOfBounds { addr, size: 1 })
             }
         }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PipelineSnapshot, WbStageInfo } from '../types/snapshot';
+import type { ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PipelineSnapshot, PreIfStageInfo, WbStageInfo } from '../types/snapshot';
 import { formatShortHex } from '../utils/format';
 
 interface PipelineVisualizerProps {
@@ -19,6 +19,15 @@ interface HistoryEntry {
 }
 
 // 获取各阶段的详情信息
+const getPreIfDetail = (stage: PreIfStageInfo | null): { pc: string; detail: string; highlight: boolean } => {
+  if (!stage) return { pc: '', detail: '', highlight: false };
+  return {
+    pc: formatShortHex(stage.next_pc),
+    detail: `→ ${formatShortHex(stage.fetch_addr)}`,
+    highlight: false,
+  };
+};
+
 const getIfDetail = (stage: IfStageInfo | null): { pc: string; detail: string } => {
   if (!stage) return { pc: '', detail: '' };
   // Prefer a pre-decoded instruction string from the backend if available;
@@ -73,6 +82,7 @@ const getWbDetail = (stage: WbStageInfo | null): { pc: string; detail: string } 
 
 // 阶段配置
 const STAGES = [
+  { key: 'preIF' as const, label: 'pre-IF' },
   { key: 'IF' as const, label: 'IF' },
   { key: 'ID' as const, label: 'ID' },
   { key: 'EX' as const, label: 'EX' },
@@ -159,6 +169,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
           placeholders.push({
             pipeline: {
               if_stage: null,
+              pre_if_stage: null,
               id_stage: null,
               ex_stage: null,
               mem_stage: null,
@@ -218,6 +229,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
   const getCellContent = (stageKey: string, entry: HistoryEntry): { pc: string; detail: string; highlight: boolean } => {
     const p = entry.pipeline;
     switch (stageKey) {
+      case 'preIF': return getPreIfDetail(p.pre_if_stage);
       case 'IF': return { ...getIfDetail(p.if_stage), highlight: false };
       case 'ID': return { ...getIdDetail(p.id_stage), highlight: false };
       case 'EX': return { ...getExDetail(p.ex_stage), highlight: p.ex_stage?.branch_taken ?? false };

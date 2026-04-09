@@ -4,7 +4,7 @@
 //! without stalling the pipeline.
 
 use crate::cpu::pipeline::registers::{ExMemRegister, IdExRegister, MemWbRegister};
-use crate::types::Word;
+use crate::types::{RegIdx, Word};
 
 /// Forwarding source selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,19 +44,13 @@ impl ForwardUnit {
         mem_wb: &MemWbRegister,
     ) -> ForwardSource {
         // EX hazard: previous instruction writes to rs1's source
-        if ex_mem.ctrl.reg_write
-            && !ex_mem.rd.is_zero()
-            && ex_mem.rd == id_ex.rs1
-        {
+        if ex_mem.ctrl.reg_write && !ex_mem.rd.is_zero() && ex_mem.rd == id_ex.rs1 {
             return ForwardSource::ExMem;
         }
 
         // MEM hazard: instruction before previous writes to rs1's source
         // Note: We only reach here if EX hazard check failed (early return above)
-        if mem_wb.ctrl.reg_write
-            && !mem_wb.rd.is_zero()
-            && mem_wb.rd == id_ex.rs1
-        {
+        if mem_wb.ctrl.reg_write && !mem_wb.rd.is_zero() && mem_wb.rd == id_ex.rs1 {
             return ForwardSource::MemWb;
         }
 
@@ -70,18 +64,12 @@ impl ForwardUnit {
         mem_wb: &MemWbRegister,
     ) -> ForwardSource {
         // EX hazard
-        if ex_mem.ctrl.reg_write
-            && !ex_mem.rd.is_zero()
-            && ex_mem.rd == id_ex.rs2
-        {
+        if ex_mem.ctrl.reg_write && !ex_mem.rd.is_zero() && ex_mem.rd == id_ex.rs2 {
             return ForwardSource::ExMem;
         }
 
         // MEM hazard
-        if mem_wb.ctrl.reg_write
-            && !mem_wb.rd.is_zero()
-            && mem_wb.rd == id_ex.rs2
-        {
+        if mem_wb.ctrl.reg_write && !mem_wb.rd.is_zero() && mem_wb.rd == id_ex.rs2 {
             return ForwardSource::MemWb;
         }
 
@@ -89,12 +77,7 @@ impl ForwardUnit {
     }
 
     /// Update forwarding control signals.
-    pub fn update(
-        &mut self,
-        id_ex: &IdExRegister,
-        ex_mem: &ExMemRegister,
-        mem_wb: &MemWbRegister,
-    ) {
+    pub fn update(&mut self, id_ex: &IdExRegister, ex_mem: &ExMemRegister, mem_wb: &MemWbRegister) {
         self.forward_rs1 = Self::forward_rs1_source(id_ex, ex_mem, mem_wb);
         self.forward_rs2 = Self::forward_rs2_source(id_ex, ex_mem, mem_wb);
     }
@@ -126,6 +109,51 @@ impl ForwardUnit {
     /// Reset the forwarding unit state.
     pub fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    /// Apply forwarding for the ID stage's branch/jump resolution.
+    ///
+    /// Unlike `apply_forwarding` (which forwards to EX), this method:
+    /// - Reads register indices from the instruction in ID (rs1, rs2)
+    /// - Forwards from `ex_mem` (non-load only) and `mem_wb`
+    /// - Cannot forward from `id_ex` (result not computed yet)
+    pub fn apply_forwarding_for_decode(
+        rs1: RegIdx,
+        rs2: RegIdx,
+        rs1_val: Word,
+        rs2_val: Word,
+        ex_mem: &ExMemRegister,
+        mem_wb: &MemWbRegister,
+    ) -> (Word, Word) {
+        let fwd_rs1 = Self::forward_operand_for_decode(rs1, rs1_val, ex_mem, mem_wb);
+        let fwd_rs2 = Self::forward_operand_for_decode(rs2, rs2_val, ex_mem, mem_wb);
+        (fwd_rs1, fwd_rs2)
+    }
+
+    /// Forward a single operand for the ID stage.
+    ///
+    /// Priority: ex_mem (non-load) > mem_wb > register file.
+    fn forward_operand_for_decode(
+        reg: RegIdx,
+        reg_val: Word,
+        ex_mem: &ExMemRegister,
+        mem_wb: &MemWbRegister,
+    ) -> Word {
+        if reg.is_zero() {
+            return Word::ZERO;
+        }
+        // Priority 1: ex_mem (2 cycles ahead), but NOT if it's a load
+        if ex_mem.ctrl.reg_write && !ex_mem.rd.is_zero() && ex_mem.rd == reg {
+            if !ex_mem.ctrl.mem_read {
+                return ex_mem.alu_result;
+            }
+            // ex_mem is a load — data not available, hazard unit must stall
+        }
+        // Priority 2: mem_wb (3 cycles ahead)
+        if mem_wb.ctrl.reg_write && !mem_wb.rd.is_zero() && mem_wb.rd == reg {
+            return mem_wb.write_data;
+        }
+        reg_val
     }
 }
 
@@ -238,5 +266,141 @@ mod tests {
 
         let source = ForwardUnit::forward_rs1_source(&id_ex, &ex_mem, &mem_wb);
         assert_eq!(source, ForwardSource::None);
+    }
+
+    #[test]
+    fn test_forward_for_decode_ex_mem_alu() {
+        // ex_mem has ALU result for x1 → forward to ID
+        let ex_mem = ExMemRegister {
+            rd: RegIdx::new(1),
+            alu_result: Word::new(42),
+            ctrl: crate::cpu::pipeline::control::MemControlSignals {
+                reg_write: true,
+                mem_read: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mem_wb = MemWbRegister::default();
+
+        let (rs1, _) = ForwardUnit::apply_forwarding_for_decode(
+            RegIdx::new(1),
+            RegIdx::new(0),
+            Word::new(0),
+            Word::new(0),
+            &ex_mem,
+            &mem_wb,
+        );
+        assert_eq!(rs1.raw(), 42);
+    }
+
+    #[test]
+    fn test_forward_for_decode_ex_mem_load_skipped() {
+        // ex_mem is a load → cannot forward (alu_result is address, not data)
+        let ex_mem = ExMemRegister {
+            rd: RegIdx::new(1),
+            alu_result: Word::new(0x1000), // address, not data
+            ctrl: crate::cpu::pipeline::control::MemControlSignals {
+                reg_write: true,
+                mem_read: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mem_wb = MemWbRegister::default();
+
+        let (rs1, _) = ForwardUnit::apply_forwarding_for_decode(
+            RegIdx::new(1),
+            RegIdx::new(0),
+            Word::new(99),
+            Word::new(0), // reg file value
+            &ex_mem,
+            &mem_wb,
+        );
+        assert_eq!(rs1.raw(), 99); // Falls back to reg file value
+    }
+
+    #[test]
+    fn test_forward_for_decode_mem_wb() {
+        // mem_wb has the data → forward to ID
+        let ex_mem = ExMemRegister::default();
+        let mem_wb = MemWbRegister {
+            rd: RegIdx::new(2),
+            write_data: Word::new(77),
+            ctrl: crate::cpu::pipeline::control::WbControlSignals {
+                reg_write: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (_, rs2) = ForwardUnit::apply_forwarding_for_decode(
+            RegIdx::new(0),
+            RegIdx::new(2),
+            Word::new(0),
+            Word::new(0),
+            &ex_mem,
+            &mem_wb,
+        );
+        assert_eq!(rs2.raw(), 77);
+    }
+
+    #[test]
+    fn test_forward_for_decode_ex_mem_priority() {
+        // Both ex_mem and mem_wb write to x1 → ex_mem wins
+        let ex_mem = ExMemRegister {
+            rd: RegIdx::new(1),
+            alu_result: Word::new(10),
+            ctrl: crate::cpu::pipeline::control::MemControlSignals {
+                reg_write: true,
+                mem_read: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mem_wb = MemWbRegister {
+            rd: RegIdx::new(1),
+            write_data: Word::new(20),
+            ctrl: crate::cpu::pipeline::control::WbControlSignals {
+                reg_write: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (rs1, _) = ForwardUnit::apply_forwarding_for_decode(
+            RegIdx::new(1),
+            RegIdx::new(0),
+            Word::new(0),
+            Word::new(0),
+            &ex_mem,
+            &mem_wb,
+        );
+        assert_eq!(rs1.raw(), 10); // ex_mem wins
+    }
+
+    #[test]
+    fn test_forward_for_decode_x0_not_forwarded() {
+        let ex_mem = ExMemRegister {
+            rd: RegIdx::new(0), // writing to x0
+            alu_result: Word::new(42),
+            ctrl: crate::cpu::pipeline::control::MemControlSignals {
+                reg_write: true,
+                mem_read: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mem_wb = MemWbRegister::default();
+
+        let (rs1, _) = ForwardUnit::apply_forwarding_for_decode(
+            RegIdx::new(0),
+            RegIdx::new(0),
+            Word::ZERO,
+            Word::ZERO,
+            &ex_mem,
+            &mem_wb,
+        );
+        assert_eq!(rs1.raw(), 0); // x0 always 0
     }
 }

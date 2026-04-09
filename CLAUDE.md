@@ -3,7 +3,7 @@
 ## 项目概述
 
 myCPU 是一个 Rust 实现的 RISC-V RV32I 指令集模拟器，目标是实现：
-- 5 级流水线 (IF/ID/EX/MEM/WB)
+- 6 级流水线 (pre-IF/IF/ID/EX/MEM/WB)
 - M/S/U 三级特权模式
 - 完整外设支持 (UART, Timer, PLIC)
 - GDB 调试接口
@@ -39,12 +39,68 @@ src/
 │   └── state.rs     # CpuState 快照 (DiffTest)
 ├── instruction/     # 指令译码和执行 (Phase 2)
 ├── pipeline/        # 流水线实现 (Phase 3)
+│   ├── pre_if.rs    # pre-IF 阶段 (预取指)
+│   ├── fetch.rs     # IF 阶段 (取指)
+│   ├── decode.rs    # ID 阶段 (译码)
+│   ├── execute.rs   # EX 阶段 (执行)
+│   ├── memory.rs    # MEM 阶段 (内存访问)
+│   ├── writeback.rs # WB 阶段 (写回)
+│   ├── hazard.rs    # 冒险检测与处理
+│   └── forward.rs   # 前递逻辑
 ├── csr/             # CSR 寄存器 (Phase 4)
 ├── exception/       # 异常处理 (Phase 4)
 ├── peripheral/      # 外设 (Phase 5)
 ├── loader/          # ELF 加载器 (Phase 5)
 └── debug/           # 调试接口 (Phase 5)
 ```
+
+## 流水线架构
+
+### 6 级流水线设计 (pre-IF/IF/ID/EX/MEM/WB)
+
+**关键特性**：
+- pre-IF 阶段：伪阶段（组合逻辑），计算 nextPC，发起指令内存读请求
+- 同步 RAM 设计：所有内存访问通过 latch，1 周期延迟，支持读保持（Q 端保持上次有效读数据直到新请求）
+- pre-IF → IF：指令通过 `InstrFetchLatch` 传递
+- EX → MEM：数据通过 `DataReadLatch` 传递
+- ID 阶段早期分支解析：分支/跳转在 ID 阶段完成条件判断和目标计算，pre-IF 同周期重定向
+- 分支惩罚：1 周期（分支在 ID 解析，仅冲刷 IF 中的错路指令）
+
+#### 流水线寄存器
+
+| 寄存器 | 内容说明 |
+| ------ | -------- |
+| `InstrFetchLatch` | 指令内存输出寄存器（1 周期延迟，读保持） |
+| `ID/EX` | PC, 操作数, 立即数, 控制信号, branch_taken, branch_target |
+| `EX/MEM` | ALU 结果, Store 数据, 控制信号 |
+| `DataReadLatch` | 数据内存读取结果（1 周期延迟，读保持） |
+| `MEM/WB` | 内存数据, ALU 结果, 写回目标 |
+
+#### 内存访问时序
+
+```text
+指令内存访问：
+pre-IF: PC计算 → 发起读请求
+   IF: 从InstrFetchLatch读取指令（延迟1周期）
+
+数据内存访问：
+  EX: 计算地址 → 发起读请求
+ MEM: 从DataReadLatch读取数据（延迟1周期）
+     Store直接写入总线
+```
+
+#### 重置行为
+
+- `reset()` 或 `set_pc()` 时，`instr_latch` 预填充
+- 模拟硬件复位状态（RAM 已在读）
+- 确保第一条指令立即可用
+
+#### HazardUnit 与前递
+
+- Load-Use 检测逻辑不变
+- **新增**：ID 阶段前递（`apply_forwarding_for_decode`）从 ex_mem/mem_wb 前递操作数到 ID
+- **新增**：分支数据冒险 stall（id_ex 写入分支源寄存器 / ex_mem load 写入分支源寄存器）
+- 控制冒险冲刷移到 `clock()` 中（使用 `new_id_ex.branch_taken`）
 
 ## 编码规范
 
@@ -115,6 +171,31 @@ pub fn read_word(&self, addr: Addr) -> Result<Word> {
 }
 ```
 
+### 同步内存访问
+- **所有内存访问必须通过 latch**：实现 1 周期延迟
+- **指令内存**：pre-IF 发起请求，IF 阶段从 `InstrFetchLatch` 读取
+- **数据内存**：EX 阶段发起请求，MEM 阶段从 `DataReadLatch` 读取
+- **Store 操作**：MEM 阶段直接写入总线（无需 latch）
+- **读保持**：latch 在无新读请求时保持上次有效数据，模拟同步 RAM Q 端保持行为
+
+```rust
+// 指令内存访问模式
+pub fn fetch_instruction(&mut self, addr: Addr) -> Option<u32> {
+    // pre-IF 阶段：发起请求
+    self.memory.request_read(addr);
+    // IF 阶段：从 latch 读取
+    self.instr_latch.read()
+}
+
+// 数据内存访问模式
+pub fn read_data(&mut self, addr: Addr) -> Result<Word> {
+    // EX 阶段：发起请求
+    self.memory.request_read(addr);
+    // MEM 阶段：从 latch 读取
+    self.data_latch.read().ok_or(SimError::MemoryNotReady)
+}
+```
+
 ### 测试
 - 每个模块包含 `#[cfg(test)]` 单元测试
 - 目标覆盖率: 80%+
@@ -155,6 +236,8 @@ cargo fmt
 | `KernelType` enum  | GPU/TPU 内核类型 |
 | `Cpu`              | CPU 核心结构      |
 | `CpuState`         | CPU 状态快照      |
+| `InstrFetchLatch`  | 指令读取 latch    |
+| `DataReadLatch`    | 数据读取 latch    |
 
 ## 文档位置
 

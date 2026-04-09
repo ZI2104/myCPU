@@ -85,14 +85,14 @@ fn test_gpu_simple_cnn_forward_pass() {
     write_tensor_desc(&mut ram, desc_conv_out as u64, conv_out_addr, 16, [1, 4, 4]);
 
     gpu_write_reg(&mut gpu, 0x08, KernelType::Conv2d as u32); // KERNEL_TYPE
-    gpu_write_reg(&mut gpu, 0x10, desc_in);                    // INPUT0_DESC_LOW
-    gpu_write_reg(&mut gpu, 0x18, desc_f);                     // INPUT1_DESC_LOW
-    gpu_write_reg(&mut gpu, 0x30, desc_conv_out);              // OUTPUT0_DESC_LOW
-    gpu_write_reg(&mut gpu, 0x40, (3 << 16) | 3);             // CONV_KERNEL_SIZE 3x3
-    gpu_write_reg(&mut gpu, 0x44, (1 << 16) | 1);             // CONV_STRIDE 1x1
-    gpu_write_reg(&mut gpu, 0x48, (1 << 16) | 1);             // CONV_PADDING 1x1
-    gpu_write_reg(&mut gpu, 0x4C, (4 << 16) | 4);             // CONV_INPUT_DIMS 4x4
-    gpu_write_reg(&mut gpu, 0x90, (1 << 16) | 1);             // CONV_CHANNELS 1in/1out
+    gpu_write_reg(&mut gpu, 0x10, desc_in); // INPUT0_DESC_LOW
+    gpu_write_reg(&mut gpu, 0x18, desc_f); // INPUT1_DESC_LOW
+    gpu_write_reg(&mut gpu, 0x30, desc_conv_out); // OUTPUT0_DESC_LOW
+    gpu_write_reg(&mut gpu, 0x40, (3 << 16) | 3); // CONV_KERNEL_SIZE 3x3
+    gpu_write_reg(&mut gpu, 0x44, (1 << 16) | 1); // CONV_STRIDE 1x1
+    gpu_write_reg(&mut gpu, 0x48, (1 << 16) | 1); // CONV_PADDING 1x1
+    gpu_write_reg(&mut gpu, 0x4C, (4 << 16) | 4); // CONV_INPUT_DIMS 4x4
+    gpu_write_reg(&mut gpu, 0x90, (1 << 16) | 1); // CONV_CHANNELS 1in/1out
 
     gpu.execute_with_memory(&mut ram);
 
@@ -115,14 +115,16 @@ fn test_gpu_simple_cnn_forward_pass() {
     write_f32_array(
         &mut ram,
         conv_out_addr as u64,
-        &[-2.0, 1.0, -3.0, 4.0, 0.5, -0.5, 2.0, -1.0, 3.0, -4.0, 1.5, 0.0, -1.0, 2.5, -0.5, 3.0],
+        &[
+            -2.0, 1.0, -3.0, 4.0, 0.5, -0.5, 2.0, -1.0, 3.0, -4.0, 1.5, 0.0, -1.0, 2.5, -0.5, 3.0,
+        ],
     );
 
     write_tensor_desc(&mut ram, desc_relu_out as u64, relu_out_addr, 16, [4, 4, 0]);
 
     gpu_write_reg(&mut gpu, 0x08, KernelType::Relu as u32);
     gpu_write_reg(&mut gpu, 0x10, desc_conv_out); // reuse conv_out addr as input desc
-    // Update input desc data to point at conv_out_addr
+                                                  // Update input desc data to point at conv_out_addr
     write_guest_u32(&mut ram, desc_conv_out as u64, conv_out_addr);
     gpu_write_reg(&mut gpu, 0x30, desc_relu_out);
 
@@ -147,9 +149,9 @@ fn test_gpu_simple_cnn_forward_pass() {
     gpu_write_reg(&mut gpu, 0x30, desc_pool_out);
     gpu_write_reg(&mut gpu, 0x40, (2 << 16) | 2); // 2x2 kernel
     gpu_write_reg(&mut gpu, 0x44, (2 << 16) | 2); // stride 2x2
-    gpu_write_reg(&mut gpu, 0x48, 0);               // no padding
-    gpu_write_reg(&mut gpu, 0x4C, (4 << 16) | 4);  // input 4x4
-    gpu_write_reg(&mut gpu, 0x90, 1 << 16);         // 1 channel
+    gpu_write_reg(&mut gpu, 0x48, 0); // no padding
+    gpu_write_reg(&mut gpu, 0x4C, (4 << 16) | 4); // input 4x4
+    gpu_write_reg(&mut gpu, 0x90, 1 << 16); // 1 channel
 
     gpu.execute_with_memory(&mut ram);
 
@@ -168,7 +170,11 @@ fn test_gpu_simple_cnn_forward_pass() {
     let desc_w = RAM_BASE + 0x3C0;
     let desc_fc_out = RAM_BASE + 0x3E0;
 
-    write_f32_array(&mut ram, weight_addr as u64, &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+    write_f32_array(
+        &mut ram,
+        weight_addr as u64,
+        &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+    );
 
     write_tensor_desc(&mut ram, desc_flat as u64, pool_out_addr, 4, [1, 4, 0]);
     write_tensor_desc(&mut ram, desc_w as u64, weight_addr, 8, [2, 4, 0]);
@@ -197,7 +203,13 @@ fn test_gpu_simple_cnn_forward_pass() {
     let desc_softmax_out = RAM_BASE + 0x420;
 
     write_tensor_desc(&mut ram, desc_fc_in as u64, fc_out_addr, 2, [2, 0, 0]);
-    write_tensor_desc(&mut ram, desc_softmax_out as u64, softmax_out_addr, 2, [2, 0, 0]);
+    write_tensor_desc(
+        &mut ram,
+        desc_softmax_out as u64,
+        softmax_out_addr,
+        2,
+        [2, 0, 0],
+    );
 
     gpu_write_reg(&mut gpu, 0x08, KernelType::Softmax as u32);
     gpu_write_reg(&mut gpu, 0x10, desc_fc_in);
@@ -249,19 +261,28 @@ fn test_tpu_int8_matmul_e2e() {
     // Configure TPU via MMIO registers
     // MATRIX_A_ADDR (0x10), MATRIX_A_ROWS (0x18), MATRIX_A_COLS (0x1C)
     tpu.write(Addr::new(0x10), (a_addr & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x11), ((a_addr >> 8) & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x12), ((a_addr >> 16) & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x13), ((a_addr >> 24) & 0xFF) as u8).unwrap();
+    tpu.write(Addr::new(0x11), ((a_addr >> 8) & 0xFF) as u8)
+        .unwrap();
+    tpu.write(Addr::new(0x12), ((a_addr >> 16) & 0xFF) as u8)
+        .unwrap();
+    tpu.write(Addr::new(0x13), ((a_addr >> 24) & 0xFF) as u8)
+        .unwrap();
 
     tpu.write(Addr::new(0x20), (b_addr & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x21), ((b_addr >> 8) & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x22), ((b_addr >> 16) & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x23), ((b_addr >> 24) & 0xFF) as u8).unwrap();
+    tpu.write(Addr::new(0x21), ((b_addr >> 8) & 0xFF) as u8)
+        .unwrap();
+    tpu.write(Addr::new(0x22), ((b_addr >> 16) & 0xFF) as u8)
+        .unwrap();
+    tpu.write(Addr::new(0x23), ((b_addr >> 24) & 0xFF) as u8)
+        .unwrap();
 
     tpu.write(Addr::new(0x30), (c_addr & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x31), ((c_addr >> 8) & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x32), ((c_addr >> 16) & 0xFF) as u8).unwrap();
-    tpu.write(Addr::new(0x33), ((c_addr >> 24) & 0xFF) as u8).unwrap();
+    tpu.write(Addr::new(0x31), ((c_addr >> 8) & 0xFF) as u8)
+        .unwrap();
+    tpu.write(Addr::new(0x32), ((c_addr >> 16) & 0xFF) as u8)
+        .unwrap();
+    tpu.write(Addr::new(0x33), ((c_addr >> 24) & 0xFF) as u8)
+        .unwrap();
 
     // M=2, K=2, N=2
     // MATRIX_A_ROWS (0x18) = M=2, MATRIX_A_COLS (0x1C) = K=2
@@ -333,9 +354,9 @@ fn test_gpu_tpu_pipeline() {
     gpu_write_reg(&mut gpu, 0x30, desc_feat);
     gpu_write_reg(&mut gpu, 0x40, (1 << 16) | 1); // 1x1 kernel
     gpu_write_reg(&mut gpu, 0x44, (1 << 16) | 1); // stride 1
-    gpu_write_reg(&mut gpu, 0x48, 0);               // no padding
-    gpu_write_reg(&mut gpu, 0x4C, (2 << 16) | 2);  // input 2x2
-    gpu_write_reg(&mut gpu, 0x90, (1 << 16) | 1);  // 1ch in, 1ch out
+    gpu_write_reg(&mut gpu, 0x48, 0); // no padding
+    gpu_write_reg(&mut gpu, 0x4C, (2 << 16) | 2); // input 2x2
+    gpu_write_reg(&mut gpu, 0x90, (1 << 16) | 1); // 1ch in, 1ch out
 
     gpu.execute_with_memory(&mut ram);
 

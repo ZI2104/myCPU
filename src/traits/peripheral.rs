@@ -165,10 +165,7 @@ mod tests {
         assert!(!periph.contains(Addr::new(0x0FFF)));
         assert!(!periph.contains(Addr::new(0x1010)));
 
-        assert_eq!(
-            periph.to_offset(Addr::new(0x1005)),
-            Some(Addr::new(0x0005))
-        );
+        assert_eq!(periph.to_offset(Addr::new(0x1005)), Some(Addr::new(0x0005)));
         assert_eq!(periph.to_offset(Addr::new(0x2000)), None);
     }
 }

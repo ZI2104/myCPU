@@ -7,5 +7,5 @@
 pub mod clint;
 pub mod plic;
 
-pub use clint::{Clint, CLINT_BASE, CLINT_SIZE, MTIMECMP_OFFSET, MTIME_OFFSET, MSIP_OFFSET};
-pub use plic::{Plic, PLIC_BASE, PLIC_SIZE, MAX_SOURCES};
+pub use clint::{Clint, CLINT_BASE, CLINT_SIZE, MSIP_OFFSET, MTIMECMP_OFFSET, MTIME_OFFSET};
+pub use plic::{Plic, MAX_SOURCES, PLIC_BASE, PLIC_SIZE};

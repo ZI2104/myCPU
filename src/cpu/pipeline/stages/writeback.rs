@@ -4,8 +4,8 @@
 
 use crate::cpu::pipeline::registers::MemWbRegister;
 use crate::cpu::Registers;
-use crate::types::RegIdx;
 use crate::error::Result;
+use crate::types::RegIdx;
 
 /// Write Back stage.
 #[derive(Debug, Clone, Default)]
@@ -32,11 +32,7 @@ impl WritebackStage {
     ///
     /// # Returns
     /// Whether an instruction completed.
-    pub fn execute(
-        &mut self,
-        mem_wb: &MemWbRegister,
-        regs: &mut Registers,
-    ) -> Result<bool> {
+    pub fn execute(&mut self, mem_wb: &MemWbRegister, regs: &mut Registers) -> Result<bool> {
         self.write_value = mem_wb.write_data;
         self.write_rd = mem_wb.rd;
         self.did_write = false;

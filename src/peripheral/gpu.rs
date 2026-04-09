@@ -6,7 +6,10 @@
 
 use crate::error::{Result, SimError};
 use crate::peripheral::dma;
-use crate::traits::{Accelerator, AcceleratorPerfCounters, AcceleratorType, KernelType, Memory, Peripheral, Precision};
+use crate::traits::{
+    Accelerator, AcceleratorPerfCounters, AcceleratorType, KernelType, Memory, Peripheral,
+    Precision,
+};
 use crate::types::Addr;
 use std::any::Any;
 use std::collections::VecDeque;
@@ -39,10 +42,10 @@ mod regs {
 
     // Conv2d / Pool2d parameters
     pub const CONV_KERNEL_SIZE: u32 = 0x40; // (kernel_h << 16) | kernel_w
-    pub const CONV_STRIDE: u32 = 0x44;      // (stride_h << 16) | stride_w
-    pub const CONV_PADDING: u32 = 0x48;      // (pad_h << 16) | pad_w
-    pub const CONV_INPUT_DIMS: u32 = 0x4C;  // (in_h << 16) | in_w
-    pub const CONV_CHANNELS: u32 = 0x90;    // (in_channels << 16) | out_channels
+    pub const CONV_STRIDE: u32 = 0x44; // (stride_h << 16) | stride_w
+    pub const CONV_PADDING: u32 = 0x48; // (pad_h << 16) | pad_w
+    pub const CONV_INPUT_DIMS: u32 = 0x4C; // (in_h << 16) | in_w
+    pub const CONV_CHANNELS: u32 = 0x90; // (in_channels << 16) | out_channels
 
     // Command queue
     pub const CMD_QUEUE_BASE_LOW: u32 = 0x50;
@@ -191,10 +194,10 @@ impl Gpu {
             cmd_queue_len: 0,
             pending_notify: false,
             conv_kernel_size: 0x0001_0001, // 1x1 default
-            conv_stride: 0x0001_0001,       // stride 1x1
+            conv_stride: 0x0001_0001,      // stride 1x1
             conv_padding: 0,
             conv_input_dims: 0,
-            conv_channels: 0x0001_0001,     // 1 in, 1 out
+            conv_channels: 0x0001_0001, // 1 in, 1 out
             kernels_executed: 0,
             cycles: 0,
             ops_count: 0,
@@ -254,10 +257,7 @@ impl Gpu {
     }
 
     /// Execute current kernel with memory access (called by bus).
-    pub fn execute_with_memory(
-        &mut self,
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-    ) {
+    pub fn execute_with_memory(&mut self, ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>) {
         self.pending_start = false;
         self.execute_once_with_memory(ram_regions);
     }
@@ -330,40 +330,51 @@ impl Gpu {
             regs::KERNEL_TYPE => self.kernel_type = value,
             regs::PRECISION => self.precision = value,
             regs::INPUT0_DESC_LOW => {
-                self.input_desc_addrs[0] = (self.input_desc_addrs[0] & 0xFFFF_FFFF_0000_0000) | value as u64;
+                self.input_desc_addrs[0] =
+                    (self.input_desc_addrs[0] & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::INPUT0_DESC_HIGH => {
-                self.input_desc_addrs[0] = (self.input_desc_addrs[0] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.input_desc_addrs[0] =
+                    (self.input_desc_addrs[0] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::INPUT1_DESC_LOW => {
-                self.input_desc_addrs[1] = (self.input_desc_addrs[1] & 0xFFFF_FFFF_0000_0000) | value as u64;
+                self.input_desc_addrs[1] =
+                    (self.input_desc_addrs[1] & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::INPUT1_DESC_HIGH => {
-                self.input_desc_addrs[1] = (self.input_desc_addrs[1] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.input_desc_addrs[1] =
+                    (self.input_desc_addrs[1] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::INPUT2_DESC_LOW => {
-                self.input_desc_addrs[2] = (self.input_desc_addrs[2] & 0xFFFF_FFFF_0000_0000) | value as u64;
+                self.input_desc_addrs[2] =
+                    (self.input_desc_addrs[2] & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::INPUT2_DESC_HIGH => {
-                self.input_desc_addrs[2] = (self.input_desc_addrs[2] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.input_desc_addrs[2] =
+                    (self.input_desc_addrs[2] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::OUTPUT0_DESC_LOW => {
-                self.output_desc_addrs[0] = (self.output_desc_addrs[0] & 0xFFFF_FFFF_0000_0000) | value as u64;
+                self.output_desc_addrs[0] =
+                    (self.output_desc_addrs[0] & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::OUTPUT0_DESC_HIGH => {
-                self.output_desc_addrs[0] = (self.output_desc_addrs[0] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.output_desc_addrs[0] =
+                    (self.output_desc_addrs[0] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::OUTPUT1_DESC_LOW => {
-                self.output_desc_addrs[1] = (self.output_desc_addrs[1] & 0xFFFF_FFFF_0000_0000) | value as u64;
+                self.output_desc_addrs[1] =
+                    (self.output_desc_addrs[1] & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::OUTPUT1_DESC_HIGH => {
-                self.output_desc_addrs[1] = (self.output_desc_addrs[1] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.output_desc_addrs[1] =
+                    (self.output_desc_addrs[1] & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::CMD_QUEUE_BASE_LOW => {
                 self.cmd_queue_addr = (self.cmd_queue_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::CMD_QUEUE_BASE_HIGH => {
-                self.cmd_queue_addr = (self.cmd_queue_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.cmd_queue_addr =
+                    (self.cmd_queue_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::CMD_QUEUE_LEN => self.cmd_queue_len = value,
             regs::CMD_QUEUE_NOTIFY => {
@@ -416,7 +427,11 @@ impl Gpu {
     fn write_guest_u32(ram: &mut dma::RamRegions, addr: u64, value: u32) -> Result<()> {
         dma::write_u32(ram, addr, value)
     }
-    fn read_guest_f32_slice(ram: &mut dma::RamRegions, addr: u64, count: usize) -> Result<Vec<f32>> {
+    fn read_guest_f32_slice(
+        ram: &mut dma::RamRegions,
+        addr: u64,
+        count: usize,
+    ) -> Result<Vec<f32>> {
         dma::read_f32_slice(ram, addr, count)
     }
     fn write_guest_f32_slice(ram: &mut dma::RamRegions, addr: u64, data: &[f32]) -> Result<()> {
@@ -493,7 +508,9 @@ impl Gpu {
 
     /// LeakyReLU: x if x >= 0, else alpha * x
     fn kernel_leaky_relu_fp32(data: &[f32], alpha: f32) -> Vec<f32> {
-        data.iter().map(|&x| if x >= 0.0 { x } else { alpha * x }).collect()
+        data.iter()
+            .map(|&x| if x >= 0.0 { x } else { alpha * x })
+            .collect()
     }
 
     /// ReLU6: min(max(0, x), 6)
@@ -539,13 +556,16 @@ impl Gpu {
                                 let ih = oh * stride_h + fh;
                                 let iw = ow * stride_w + fw;
                                 // Apply padding (out-of-bounds = 0)
-                                if ih >= pad_h && iw >= pad_w
-                                    && ih < in_h + pad_h && iw < in_w + pad_w
+                                if ih >= pad_h
+                                    && iw >= pad_w
+                                    && ih < in_h + pad_h
+                                    && iw < in_w + pad_w
                                 {
                                     let real_ih = ih - pad_h;
                                     let real_iw = iw - pad_w;
                                     let in_val = input[ci * in_h * in_w + real_ih * in_w + real_iw];
-                                    let f_val = filter[co * c_in * kh * kw + ci * kh * kw + fh * kw + fw];
+                                    let f_val =
+                                        filter[co * c_in * kh * kw + ci * kh * kw + fh * kw + fw];
                                     sum += in_val * f_val;
                                 }
                             }
@@ -585,8 +605,7 @@ impl Gpu {
                         for fw in 0..kw {
                             let ih = oh * stride_h + fh;
                             let iw = ow * stride_w + fw;
-                            if ih >= pad_h && iw >= pad_w
-                                && ih < in_h + pad_h && iw < in_w + pad_w
+                            if ih >= pad_h && iw >= pad_w && ih < in_h + pad_h && iw < in_w + pad_w
                             {
                                 let real_ih = ih - pad_h;
                                 let real_iw = iw - pad_w;
@@ -630,8 +649,7 @@ impl Gpu {
                         for fw in 0..kw {
                             let ih = oh * stride_h + fh;
                             let iw = ow * stride_w + fw;
-                            if ih >= pad_h && iw >= pad_w
-                                && ih < in_h + pad_h && iw < in_w + pad_w
+                            if ih >= pad_h && iw >= pad_w && ih < in_h + pad_h && iw < in_w + pad_w
                             {
                                 let real_ih = ih - pad_h;
                                 let real_iw = iw - pad_w;
@@ -651,10 +669,7 @@ impl Gpu {
     // ── Execute path ───────────────────────────────────────────────────
 
     /// Execute the current kernel using register-configured tensor descriptors.
-    fn execute_once_with_memory(
-        &mut self,
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-    ) {
+    fn execute_once_with_memory(&mut self, ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>) {
         self.status |= status_bits::BUSY;
         self.status &= !(status_bits::DONE | status_bits::ERROR);
 
@@ -724,9 +739,12 @@ impl Gpu {
         &mut self,
         ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
     ) -> Result<u64> {
-        let (a_addr, _a_cnt, a_shape) = Self::read_tensor_desc(ram_regions, self.input_desc_addrs[0])?;
-        let (b_addr, _b_cnt, b_shape) = Self::read_tensor_desc(ram_regions, self.input_desc_addrs[1])?;
-        let (c_addr, _c_cnt, _c_shape) = Self::read_tensor_desc(ram_regions, self.output_desc_addrs[0])?;
+        let (a_addr, _a_cnt, a_shape) =
+            Self::read_tensor_desc(ram_regions, self.input_desc_addrs[0])?;
+        let (b_addr, _b_cnt, b_shape) =
+            Self::read_tensor_desc(ram_regions, self.input_desc_addrs[1])?;
+        let (c_addr, _c_cnt, _c_shape) =
+            Self::read_tensor_desc(ram_regions, self.output_desc_addrs[0])?;
 
         let m = a_shape[0] as usize;
         let k = a_shape[1] as usize;
@@ -751,9 +769,12 @@ impl Gpu {
         &mut self,
         ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
     ) -> Result<u64> {
-        let (a_addr, _a_cnt, a_shape) = Self::read_tensor_desc(ram_regions, self.input_desc_addrs[0])?;
-        let (b_addr, _b_cnt, b_shape) = Self::read_tensor_desc(ram_regions, self.input_desc_addrs[1])?;
-        let (c_addr, _c_cnt, _c_shape) = Self::read_tensor_desc(ram_regions, self.output_desc_addrs[0])?;
+        let (a_addr, _a_cnt, a_shape) =
+            Self::read_tensor_desc(ram_regions, self.input_desc_addrs[0])?;
+        let (b_addr, _b_cnt, b_shape) =
+            Self::read_tensor_desc(ram_regions, self.input_desc_addrs[1])?;
+        let (c_addr, _c_cnt, _c_shape) =
+            Self::read_tensor_desc(ram_regions, self.output_desc_addrs[0])?;
 
         let m = a_shape[0] as usize;
         let k = a_shape[1] as usize;
@@ -909,7 +930,8 @@ impl Gpu {
 
         // Use input1 descriptor as scalar if available, else use conv_padding as f32
         let scalar = if self.input_desc_addrs[1] != 0 {
-            let (s_addr, _s_cnt, _) = Self::read_tensor_desc(ram_regions, self.input_desc_addrs[1])?;
+            let (s_addr, _s_cnt, _) =
+                Self::read_tensor_desc(ram_regions, self.input_desc_addrs[1])?;
             let s_bits = Self::read_guest_u32(ram_regions, s_addr)?;
             f32::from_bits(s_bits)
         } else {
@@ -942,8 +964,14 @@ impl Gpu {
         let c_in = ((self.conv_channels >> 16) & 0xFFFF) as usize;
         let c_out = (self.conv_channels & 0xFFFF) as usize;
 
-        if kh == 0 || kw == 0 || stride_h == 0 || stride_w == 0
-            || in_h == 0 || in_w == 0 || c_in == 0 || c_out == 0
+        if kh == 0
+            || kw == 0
+            || stride_h == 0
+            || stride_w == 0
+            || in_h == 0
+            || in_w == 0
+            || c_in == 0
+            || c_out == 0
         {
             self.error_code = 3; // invalid conv params
             return Ok(0);
@@ -956,15 +984,15 @@ impl Gpu {
         let input = Self::read_guest_f32_slice(ram_regions, input_addr, c_in * in_h * in_w)?;
         let filter = Self::read_guest_f32_slice(ram_regions, filter_addr, c_out * c_in * kh * kw)?;
         let output = Self::kernel_conv2d_fp32(
-            &input, &filter, c_in, c_out, in_h, in_w,
-            kh, kw, stride_h, stride_w, pad_h, pad_w,
+            &input, &filter, c_in, c_out, in_h, in_w, kh, kw, stride_h, stride_w, pad_h, pad_w,
         );
         Self::write_guest_f32_slice(ram_regions, output_addr, &output)?;
 
         let out_h = (in_h + 2 * pad_h - kh) / stride_h + 1;
         let out_w = (in_w + 2 * pad_w - kw) / stride_w + 1;
         let ops = (c_out * out_h * out_w * c_in * kh * kw * 2) as u64;
-        let bytes = ((c_in * in_h * in_w) + (c_out * c_in * kh * kw) + (c_out * out_h * out_w)) as u64 * 4;
+        let bytes =
+            ((c_in * in_h * in_w) + (c_out * c_in * kh * kw) + (c_out * out_h * out_w)) as u64 * 4;
         self.bytes_transferred = self.bytes_transferred.wrapping_add(bytes);
         self.cycles = self.cycles.wrapping_add(ops / 2);
         Ok(ops)
@@ -986,8 +1014,13 @@ impl Gpu {
         let in_w = (self.conv_input_dims & 0xFFFF) as usize;
         let channels = ((self.conv_channels >> 16) & 0xFFFF) as usize;
 
-        if kh == 0 || kw == 0 || stride_h == 0 || stride_w == 0
-            || in_h == 0 || in_w == 0 || channels == 0
+        if kh == 0
+            || kw == 0
+            || stride_h == 0
+            || stride_w == 0
+            || in_h == 0
+            || in_w == 0
+            || channels == 0
         {
             self.error_code = 3;
             return Ok(0);
@@ -999,13 +1032,11 @@ impl Gpu {
         let input = Self::read_guest_f32_slice(ram_regions, input_addr, channels * in_h * in_w)?;
         let output = if is_max {
             Self::kernel_pool2d_max_fp32(
-                &input, channels, in_h, in_w,
-                kh, kw, stride_h, stride_w, pad_h, pad_w,
+                &input, channels, in_h, in_w, kh, kw, stride_h, stride_w, pad_h, pad_w,
             )
         } else {
             Self::kernel_pool2d_avg_fp32(
-                &input, channels, in_h, in_w,
-                kh, kw, stride_h, stride_w, pad_h, pad_w,
+                &input, channels, in_h, in_w, kh, kw, stride_h, stride_w, pad_h, pad_w,
             )
         };
         Self::write_guest_f32_slice(ram_regions, output_addr, &output)?;
@@ -1262,7 +1293,11 @@ mod tests {
     fn test_gpu_execute_with_memory_start() {
         let mut gpu = Gpu::new();
         let mut ram = make_ram();
-        write_u32(&mut gpu, regs::CONTROL, control_bits::START | control_bits::IRQ_EN);
+        write_u32(
+            &mut gpu,
+            regs::CONTROL,
+            control_bits::START | control_bits::IRQ_EN,
+        );
         gpu.execute_with_memory(&mut ram);
         assert!(!gpu.has_pending_start());
         let status = read_u32(&gpu, regs::STATUS);
@@ -1301,7 +1336,11 @@ mod tests {
     }
 
     /// Helper: read f32 array from guest RAM.
-    fn read_f32_array(ram: &mut Vec<(Addr, usize, Box<dyn Memory>)>, base: u64, count: usize) -> Vec<f32> {
+    fn read_f32_array(
+        ram: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        base: u64,
+        count: usize,
+    ) -> Vec<f32> {
         dma::read_f32_slice(ram, base, count).unwrap()
     }
 
@@ -1519,11 +1558,23 @@ mod tests {
         let out = read_f32_array(&mut ram, output_addr as u64, 9);
         // With all-1 input and all-1 3x3 kernel with pad=1:
         // corners see 4 values, edges see 6, center sees 9
-        assert!((out[4] - 9.0).abs() < 1e-4, "center should be 9, got {}", out[4]);
+        assert!(
+            (out[4] - 9.0).abs() < 1e-4,
+            "center should be 9, got {}",
+            out[4]
+        );
         // Corners: (0,0) sees (0,0)(0,1)(1,0)(1,1) = 4
-        assert!((out[0] - 4.0).abs() < 1e-4, "corner should be 4, got {}", out[0]);
+        assert!(
+            (out[0] - 4.0).abs() < 1e-4,
+            "corner should be 4, got {}",
+            out[0]
+        );
         // Top edge (0,1): sees 6 values
-        assert!((out[1] - 6.0).abs() < 1e-4, "edge should be 6, got {}", out[1]);
+        assert!(
+            (out[1] - 6.0).abs() < 1e-4,
+            "edge should be 6, got {}",
+            out[1]
+        );
     }
 
     #[test]
@@ -1542,7 +1593,11 @@ mod tests {
         let desc_f = RAM_BASE + 0x220;
         let desc_out = RAM_BASE + 0x240;
 
-        write_f32_array(&mut ram, input_addr as u64, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        write_f32_array(
+            &mut ram,
+            input_addr as u64,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        );
         write_f32_array(&mut ram, filter_addr as u64, &[10.0, 1.0]);
 
         write_tensor_desc(&mut ram, desc_in as u64, input_addr, 8, [2, 2, 2]);
@@ -1586,7 +1641,10 @@ mod tests {
         write_f32_array(
             &mut ram,
             input_addr as u64,
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+            &[
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+                16.0,
+            ],
         );
 
         write_tensor_desc(&mut ram, desc_in as u64, input_addr, 16, [1, 4, 4]);
@@ -1724,7 +1782,11 @@ mod tests {
         assert!((c[1] - 0.0).abs() < 1e-5);
         assert!((c[2] - 3.0).abs() < 1e-5);
         assert!((c[3] - 6.0).abs() < 1e-5);
-        assert!((c[4] - 6.0).abs() < 1e-5, "relu6(10) should clamp to 6, got {}", c[4]);
+        assert!(
+            (c[4] - 6.0).abs() < 1e-5,
+            "relu6(10) should clamp to 6, got {}",
+            c[4]
+        );
     }
 
     #[test]
@@ -1777,7 +1839,10 @@ mod tests {
         write_f32_array(
             &mut ram,
             input_addr as u64,
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+            &[
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+                16.0,
+            ],
         );
         // Filter: [[1,0],[0,0]] → picks top-left element only
         write_f32_array(&mut ram, filter_addr as u64, &[1.0, 0.0, 0.0, 0.0]);

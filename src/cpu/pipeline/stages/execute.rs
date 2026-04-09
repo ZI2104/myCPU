@@ -69,8 +69,11 @@ impl ExecuteStage {
         // Debug output after forwarding
         #[cfg(test)]
         {
-            println!("    ExecuteStage after forwarding: rs1_val={}, rs2_val={}",
-                rs1_val.raw(), rs2_val.raw());
+            println!(
+                "    ExecuteStage after forwarding: rs1_val={}, rs2_val={}",
+                rs1_val.raw(),
+                rs2_val.raw()
+            );
         }
 
         // Determine ALU operands
@@ -88,33 +91,19 @@ impl ExecuteStage {
         // Debug output for ALU
         #[cfg(test)]
         {
-            println!("    ExecuteStage ALU: alu_op={:?}, operand1={}, operand2={}, result={}",
-                id_ex.ctrl.alu_op, operand1.raw(), operand2.raw(), alu_result.raw());
+            println!(
+                "    ExecuteStage ALU: alu_op={:?}, operand1={}, operand2={}, result={}",
+                id_ex.ctrl.alu_op,
+                operand1.raw(),
+                operand2.raw(),
+                alu_result.raw()
+            );
         }
 
-        // Evaluate branch condition
-        let (branch_taken, branch_target) = if id_ex.ctrl.branch {
-            let taken = self.evaluate_branch(
-                id_ex.ctrl.branch_type,
-                rs1_val,
-                rs2_val,
-            );
-            let target = id_ex.pc + Addr::new(id_ex.imm as u32);
-            (taken, target)
-        } else if id_ex.ctrl.jump {
-            // JAL: target = PC + imm, JALR: target = (rs1 + imm) & ~1
-            if id_ex.ctrl.alu_src == crate::cpu::pipeline::control::AluSrc::Immediate {
-                // JALR: use ALU result as target
-                let target = alu_result.raw() & !1;
-                (true, Addr::new(target))
-            } else {
-                // JAL
-                let target = id_ex.pc + Addr::new(id_ex.imm as u32);
-                (true, target)
-            }
-        } else {
-            (false, Addr::new(0))
-        };
+        // Branch/jump decision already resolved in ID stage.
+        // Pass through id_ex.branch_taken and id_ex.branch_target.
+        let branch_taken = id_ex.branch_taken;
+        let branch_target = id_ex.branch_target;
 
         self.branch_taken = branch_taken;
         self.branch_target = branch_target;
@@ -147,29 +136,12 @@ impl ExecuteStage {
                 let shift = b.raw() & 0x1F;
                 Word::new((a.as_signed() >> shift) as u32)
             }
-            AluOp::Slt => {
-                Word::new(if a.as_signed() < b.as_signed() { 1 } else { 0 })
-            }
-            AluOp::Sltu => {
-                Word::new(if a.raw() < b.raw() { 1 } else { 0 })
-            }
+            AluOp::Slt => Word::new(if a.as_signed() < b.as_signed() { 1 } else { 0 }),
+            AluOp::Sltu => Word::new(if a.raw() < b.raw() { 1 } else { 0 }),
             AluOp::Lui => b, // Immediate is already in b
             AluOp::Pass => a,
             AluOp::Nop => Word::ZERO,
             AluOp::Csr => a, // For CSR instructions, pass rs1 value through
-        }
-    }
-
-    /// Evaluate branch condition.
-    fn evaluate_branch(&self, branch_type: BranchType, rs1: Word, rs2: Word) -> bool {
-        match branch_type {
-            BranchType::Beq => rs1.raw() == rs2.raw(),
-            BranchType::Bne => rs1.raw() != rs2.raw(),
-            BranchType::Blt => rs1.as_signed() < rs2.as_signed(),
-            BranchType::Bge => rs1.as_signed() >= rs2.as_signed(),
-            BranchType::Bltu => rs1.raw() < rs2.raw(),
-            BranchType::Bgeu => rs1.raw() >= rs2.raw(),
-            BranchType::None => false,
         }
     }
 
@@ -182,10 +154,16 @@ impl ExecuteStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::pipeline::control::{AluSrc, ExControlSignals};
     use crate::cpu::csr::CsrOp;
+    use crate::cpu::pipeline::control::{AluSrc, ExControlSignals};
 
-    fn create_id_ex_for_alu(alu_op: AluOp, rs1: u32, rs2: u32, imm: i32, alu_src: AluSrc) -> IdExRegister {
+    fn create_id_ex_for_alu(
+        alu_op: AluOp,
+        rs1: u32,
+        rs2: u32,
+        imm: i32,
+        alu_src: AluSrc,
+    ) -> IdExRegister {
         IdExRegister {
             pc: Addr::new(0),
             pc_plus_4: Addr::new(4),
@@ -208,6 +186,8 @@ mod tests {
                 trap_return: false,
             },
             mem_ctrl: MemControlSignals::default(),
+            branch_taken: false,
+            branch_target: Addr::new(0),
             valid: true,
         }
     }
@@ -217,7 +197,14 @@ mod tests {
         let mut stage = ExecuteStage::new();
         let id_ex = create_id_ex_for_alu(AluOp::Add, 100, 50, 0, AluSrc::Register);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(ex_mem.alu_result.raw(), 150);
     }
@@ -227,7 +214,14 @@ mod tests {
         let mut stage = ExecuteStage::new();
         let id_ex = create_id_ex_for_alu(AluOp::Sub, 100, 30, 0, AluSrc::Register);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(ex_mem.alu_result.raw(), 70);
     }
@@ -237,7 +231,14 @@ mod tests {
         let mut stage = ExecuteStage::new();
         let id_ex = create_id_ex_for_alu(AluOp::Add, 100, 0, 50, AluSrc::Immediate);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(ex_mem.alu_result.raw(), 150);
     }
@@ -247,7 +248,14 @@ mod tests {
         let mut stage = ExecuteStage::new();
         let id_ex = create_id_ex_for_alu(AluOp::And, 0xFF, 0x0F, 0, AluSrc::Register);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(ex_mem.alu_result.raw(), 0x0F);
     }
@@ -258,12 +266,26 @@ mod tests {
 
         // 5 < 10 = true
         let id_ex = create_id_ex_for_alu(AluOp::Slt, 5, 10, 0, AluSrc::Register);
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
         assert_eq!(ex_mem.alu_result.raw(), 1);
 
         // 10 < 5 = false
         let id_ex = create_id_ex_for_alu(AluOp::Slt, 10, 5, 0, AluSrc::Register);
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
         assert_eq!(ex_mem.alu_result.raw(), 0);
     }
 
@@ -273,8 +295,18 @@ mod tests {
         let mut id_ex = create_id_ex_for_alu(AluOp::Sub, 100, 100, 8, AluSrc::Register);
         id_ex.ctrl.branch = true;
         id_ex.ctrl.branch_type = BranchType::Beq;
+        // Branch decision is now made in ID stage
+        id_ex.branch_taken = true;
+        id_ex.branch_target = Addr::new(8);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
 
         assert!(ex_mem.branch_taken);
         assert_eq!(ex_mem.branch_target, Addr::new(8));
@@ -286,8 +318,18 @@ mod tests {
         let mut id_ex = create_id_ex_for_alu(AluOp::Sub, 100, 200, 8, AluSrc::Register);
         id_ex.ctrl.branch = true;
         id_ex.ctrl.branch_type = BranchType::Bne;
+        // Branch decision is now made in ID stage
+        id_ex.branch_taken = true;
+        id_ex.branch_target = Addr::new(8);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), false).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                false,
+            )
+            .unwrap();
 
         assert!(ex_mem.branch_taken);
     }
@@ -297,7 +339,14 @@ mod tests {
         let mut stage = ExecuteStage::new();
         let id_ex = create_id_ex_for_alu(AluOp::Add, 100, 50, 0, AluSrc::Register);
 
-        let ex_mem = stage.execute(&id_ex, &ExMemRegister::default(), &MemWbRegister::default(), true).unwrap();
+        let ex_mem = stage
+            .execute(
+                &id_ex,
+                &ExMemRegister::default(),
+                &MemWbRegister::default(),
+                true,
+            )
+            .unwrap();
 
         assert!(!ex_mem.valid);
     }

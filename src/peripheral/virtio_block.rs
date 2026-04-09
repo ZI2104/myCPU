@@ -1009,10 +1009,7 @@ impl Peripheral for VirtioBlock {
         self
     }
 
-    fn try_execute_pending(
-        &mut self,
-        ram_regions: &mut dma::RamRegions,
-    ) -> Result<bool> {
+    fn try_execute_pending(&mut self, ram_regions: &mut dma::RamRegions) -> Result<bool> {
         if !self.has_pending_descriptor_notify() {
             return Ok(false);
         }

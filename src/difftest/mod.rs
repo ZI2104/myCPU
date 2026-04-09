@@ -138,13 +138,15 @@ impl DiffTest {
 
     /// Connect to QEMU's GDB server
     pub fn connect(addr: &str) -> Result<Self> {
-        let stream = TcpStream::connect(addr)
-            .map_err(|e| SimError::IoError(format!("Failed to connect to QEMU at {}: {}", addr, e)))?;
+        let stream = TcpStream::connect(addr).map_err(|e| {
+            SimError::IoError(format!("Failed to connect to QEMU at {}: {}", addr, e))
+        })?;
 
         let mut protocol = GdbProtocol::new(stream);
 
         // Wait for initial acknowledgment
-        protocol.handshake()
+        protocol
+            .handshake()
             .map_err(|e| SimError::IoError(format!("Handshake failed: {}", e)))?;
 
         log::info!("Connected to QEMU GDB server at {}", addr);
@@ -184,14 +186,18 @@ impl DiffTest {
         let mut state = CpuState::new();
 
         // Read PC
-        let pc = self.protocol.read_register(0x21) // 0x21 = PC in GDB
+        let pc = self
+            .protocol
+            .read_register(0x21) // 0x21 = PC in GDB
             .map_err(|e| SimError::IoError(format!("Read PC failed: {}", e)))?;
         state.pc = Addr::new(pc);
 
         // Read general-purpose registers (x0-x31)
         for i in 0..32 {
             let reg_idx = i as u8;
-            state.regs[i] = self.protocol.read_register(reg_idx)
+            state.regs[i] = self
+                .protocol
+                .read_register(reg_idx)
                 .map_err(|e| SimError::IoError(format!("Read reg {} failed: {}", i, e)))?;
         }
 
@@ -200,13 +206,17 @@ impl DiffTest {
 
     /// Single step QEMU
     pub fn step_qemu(&mut self) -> Result<()> {
-        self.protocol.step()
+        self.protocol
+            .step()
             .map_err(|e| SimError::IoError(format!("Step failed: {}", e)))?;
         Ok(())
     }
 
     /// Step QEMU and compare states
-    pub fn step_and_compare(&mut self, mycpu_state: &CpuState) -> std::result::Result<(), DiffTestError> {
+    pub fn step_and_compare(
+        &mut self,
+        mycpu_state: &CpuState,
+    ) -> std::result::Result<(), DiffTestError> {
         // Step QEMU
         if let Err(e) = self.protocol.step() {
             return Err(DiffTestError {
@@ -216,7 +226,7 @@ impl DiffTest {
                 pc: self.last_pc,
                 differing_reg: None,
                 description: format!("QEMU step failed: {}", e),
-                    recent_history: self.recent_history(),
+                recent_history: self.recent_history(),
             });
         }
 
@@ -325,16 +335,14 @@ impl DiffTest {
         if mycpu.privilege != qemu.privilege {
             return format!(
                 "Privilege mismatch: myCPU={:?}, QEMU={:?}",
-                mycpu.privilege,
-                qemu.privilege
+                mycpu.privilege, qemu.privilege
             );
         }
 
         if mycpu.instructions_executed != qemu.instructions_executed {
             return format!(
                 "Instruction counter mismatch: myCPU={}, QEMU={}",
-                mycpu.instructions_executed,
-                qemu.instructions_executed
+                mycpu.instructions_executed, qemu.instructions_executed
             );
         }
 
@@ -351,14 +359,16 @@ impl DiffTest {
 
     /// Continue QEMU execution
     pub fn continue_qemu(&mut self) -> Result<()> {
-        self.protocol.continue_exec()
+        self.protocol
+            .continue_exec()
             .map_err(|e| SimError::IoError(format!("Continue failed: {}", e)))?;
         Ok(())
     }
 
     /// Close connection
     pub fn close(mut self) -> Result<()> {
-        self.protocol.disconnect()
+        self.protocol
+            .disconnect()
             .map_err(|e| SimError::IoError(format!("Disconnect failed: {}", e)))?;
         Ok(())
     }

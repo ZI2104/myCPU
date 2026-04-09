@@ -6,7 +6,10 @@
 
 use crate::error::{Result, SimError};
 use crate::peripheral::dma;
-use crate::traits::{Accelerator, AcceleratorPerfCounters, AcceleratorType, KernelType, Memory, Peripheral, Precision};
+use crate::traits::{
+    Accelerator, AcceleratorPerfCounters, AcceleratorType, KernelType, Memory, Peripheral,
+    Precision,
+};
 use crate::types::Addr;
 use std::any::Any;
 use std::collections::VecDeque;
@@ -277,10 +280,7 @@ impl Tpu {
     }
 
     /// Execute current kernel with memory access (called by bus).
-    pub fn execute_with_memory(
-        &mut self,
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-    ) {
+    pub fn execute_with_memory(&mut self, ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>) {
         self.pending_start = false;
         self.execute_once_with_memory(ram_regions);
     }
@@ -355,7 +355,8 @@ impl Tpu {
                 self.matrix_a_addr = (self.matrix_a_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::MATRIX_A_ADDR_HIGH => {
-                self.matrix_a_addr = (self.matrix_a_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.matrix_a_addr =
+                    (self.matrix_a_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::MATRIX_A_ROWS => self.matrix_a_rows = value,
             regs::MATRIX_A_COLS => self.matrix_a_cols = value,
@@ -363,7 +364,8 @@ impl Tpu {
                 self.matrix_b_addr = (self.matrix_b_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::MATRIX_B_ADDR_HIGH => {
-                self.matrix_b_addr = (self.matrix_b_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.matrix_b_addr =
+                    (self.matrix_b_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::MATRIX_B_ROWS => self.matrix_b_rows = value,
             regs::MATRIX_B_COLS => self.matrix_b_cols = value,
@@ -371,7 +373,8 @@ impl Tpu {
                 self.matrix_c_addr = (self.matrix_c_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::MATRIX_C_ADDR_HIGH => {
-                self.matrix_c_addr = (self.matrix_c_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.matrix_c_addr =
+                    (self.matrix_c_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::INPUT_SCALE => self.input_scale = value,
             regs::INPUT_ZERO_POINT => self.input_zero_point = value as i32,
@@ -385,7 +388,8 @@ impl Tpu {
                 self.cmd_queue_addr = (self.cmd_queue_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
             }
             regs::CMD_QUEUE_BASE_HIGH => {
-                self.cmd_queue_addr = (self.cmd_queue_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                self.cmd_queue_addr =
+                    (self.cmd_queue_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
             }
             regs::CMD_QUEUE_LEN => self.cmd_queue_len = value,
             regs::CMD_QUEUE_NOTIFY => {
@@ -451,7 +455,11 @@ impl Tpu {
         output_zero_point: i32,
     ) -> Vec<i32> {
         let mut c = vec![0i32; m * n];
-        let inv_out_scale = if output_scale != 0.0 { 1.0 / output_scale } else { 1.0 };
+        let inv_out_scale = if output_scale != 0.0 {
+            1.0 / output_scale
+        } else {
+            1.0
+        };
 
         for i in 0..m {
             for j in 0..n {
@@ -508,10 +516,7 @@ impl Tpu {
         }
     }
 
-    fn execute_once_with_memory(
-        &mut self,
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-    ) {
+    fn execute_once_with_memory(&mut self, ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>) {
         self.status |= status_bits::BUSY;
         self.status &= !(status_bits::DONE | status_bits::ERROR);
 
@@ -564,9 +569,15 @@ impl Tpu {
         let b = dma::read_i8_slice(ram_regions, self.matrix_b_addr, k * n)?;
 
         let c = Self::kernel_matmul_int8(
-            &a, &b, m, n, k,
-            input_scale, self.input_zero_point,
-            output_scale, self.output_zero_point,
+            &a,
+            &b,
+            m,
+            n,
+            k,
+            input_scale,
+            self.input_zero_point,
+            output_scale,
+            self.output_zero_point,
         );
 
         // Write i32 results
@@ -623,7 +634,11 @@ impl Tpu {
         let data = dma::read_i8_slice(ram_regions, self.matrix_a_addr, count)?;
         let dequantized = Self::kernel_dequantize(&data, scale, self.output_zero_point);
         for (i, &v) in dequantized.iter().enumerate() {
-            Self::write_guest_u32(ram_regions, self.matrix_c_addr + (i as u64) * 4, v.to_bits())?;
+            Self::write_guest_u32(
+                ram_regions,
+                self.matrix_c_addr + (i as u64) * 4,
+                v.to_bits(),
+            )?;
         }
 
         self.cycles = self.cycles.wrapping_add(count as u64);
@@ -926,7 +941,11 @@ mod tests {
         write_u32(&mut tpu, regs::OUTPUT_SCALE, 1.0f32.to_bits());
         write_u32(&mut tpu, regs::INPUT_ZERO_POINT, 0);
         write_u32(&mut tpu, regs::OUTPUT_ZERO_POINT, 0);
-        write_u32(&mut tpu, regs::CONTROL, control_bits::START | control_bits::IRQ_EN);
+        write_u32(
+            &mut tpu,
+            regs::CONTROL,
+            control_bits::START | control_bits::IRQ_EN,
+        );
 
         // Write i8 matrices: A=[[1,2],[3,4]], B=[[5,6],[7,8]]
         let a_addr = RAM_BASE + 0x100;

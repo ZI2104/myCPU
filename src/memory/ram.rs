@@ -150,8 +150,7 @@ mod tests {
         assert_eq!(ram.read_byte(Addr::new(0)).unwrap().raw(), 0x42);
 
         // Write and read word
-        ram.write_word(Addr::new(4), Word::new(0xDEADBEEF))
-            .unwrap();
+        ram.write_word(Addr::new(4), Word::new(0xDEADBEEF)).unwrap();
         assert_eq!(ram.read_word(Addr::new(4)).unwrap().raw(), 0xDEADBEEF);
     }
 
@@ -185,11 +184,7 @@ mod tests {
         assert!(ram.contains(Addr::new(0x3FF))); // 1023 = last byte
         assert!(!ram.contains(Addr::new(0x400))); // 1024 = out of bounds
 
-        ram.write_byte(Addr::new(0x100), Byte::new(0x42))
-            .unwrap();
-        assert_eq!(
-            ram.read_byte(Addr::new(0x100)).unwrap().raw(),
-            0x42
-        );
+        ram.write_byte(Addr::new(0x100), Byte::new(0x42)).unwrap();
+        assert_eq!(ram.read_byte(Addr::new(0x100)).unwrap().raw(), 0x42);
     }
 }

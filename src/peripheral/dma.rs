@@ -67,11 +67,7 @@ pub fn write_u32(ram_regions: &mut RamRegions, addr: u64, value: u32) -> Result<
 }
 
 /// Read a contiguous block of f32 from guest RAM.
-pub fn read_f32_slice(
-    ram_regions: &mut RamRegions,
-    addr: u64,
-    count: usize,
-) -> Result<Vec<f32>> {
+pub fn read_f32_slice(ram_regions: &mut RamRegions, addr: u64, count: usize) -> Result<Vec<f32>> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let bits = read_u32(ram_regions, addr + (i as u64) * 4)?;
@@ -81,11 +77,7 @@ pub fn read_f32_slice(
 }
 
 /// Write a contiguous block of f32 into guest RAM.
-pub fn write_f32_slice(
-    ram_regions: &mut RamRegions,
-    addr: u64,
-    data: &[f32],
-) -> Result<()> {
+pub fn write_f32_slice(ram_regions: &mut RamRegions, addr: u64, data: &[f32]) -> Result<()> {
     for (i, &v) in data.iter().enumerate() {
         write_u32(ram_regions, addr + (i as u64) * 4, v.to_bits())?;
     }
@@ -93,11 +85,7 @@ pub fn write_f32_slice(
 }
 
 /// Read a contiguous block of i8 from guest RAM.
-pub fn read_i8_slice(
-    ram_regions: &mut RamRegions,
-    addr: u64,
-    count: usize,
-) -> Result<Vec<i8>> {
+pub fn read_i8_slice(ram_regions: &mut RamRegions, addr: u64, count: usize) -> Result<Vec<i8>> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         out.push(read_u8(ram_regions, addr + i as u64)? as i8);
@@ -106,11 +94,7 @@ pub fn read_i8_slice(
 }
 
 /// Write a contiguous block of i8 into guest RAM.
-pub fn write_i8_slice(
-    ram_regions: &mut RamRegions,
-    addr: u64,
-    data: &[i8],
-) -> Result<()> {
+pub fn write_i8_slice(ram_regions: &mut RamRegions, addr: u64, data: &[i8]) -> Result<()> {
     for (i, &v) in data.iter().enumerate() {
         write_u8(ram_regions, addr + i as u64, v as u8)?;
     }

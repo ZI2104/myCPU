@@ -9,7 +9,7 @@
 | 基础指令集 | RV32I (40 条指令)            |
 | 扩展指令集 | M (乘除法), C (压缩, 可选)   |
 | 特权级     | M-mode + S-mode + U-mode     |
-| 流水线     | 5 级流水线 (IF/ID/EX/MEM/WB) |
+| 流水线     | 6 级流水线 (pre-IF/IF/ID/EX/MEM/WB) |
 | 地址宽度   | 32 位                        |
 | 内存管理   | Sv32 分页 (可选)             |
 
@@ -70,16 +70,21 @@ graph TB
 
 ---
 
-## 三、5 级流水线设计
+## 三、6 级流水线设计
 
 ### 流水线阶段
 
 ```mermaid
 flowchart LR
-    subgraph IF["IF - 取指"]
+    subgraph pre_IF["pre-IF - 预取指"]
         PC["PC"]
+        NextPC["NextPC<br/>计算"]
+        IMEM_REQ["指令内存<br/>读请求"]
+    end
+
+    subgraph IF["IF - 取指"]
         IMEM["Instruction<br/>Memory"]
-        IR["Instruction<br/>Register"]
+        IR["Instruction<br/>Register<br/>InstrFetchLatch"]
     end
 
     subgraph ID["ID - 译码"]
@@ -97,6 +102,7 @@ flowchart LR
     subgraph MEM["MEM - 内存访问"]
         DMEM["Data<br/>Memory"]
         LS["Load/Store<br/>Unit"]
+        DL["Data Read<br/>Latch"]
     end
 
     subgraph WB["WB - 写回"]
@@ -104,11 +110,14 @@ flowchart LR
         WR["Write Back<br/>to RF"]
     end
 
+    NextPC --> IMEM_REQ
+    IMEM_REQ --> IMEM
+    IMEM --> IR
     IR --> DEC
     CTL --> ALU
     ALU --> DMEM
     DMEM --> MUX
-
+    DMEM --> DL
     FWD -.->|Forward Path| RF
 ```
 
@@ -116,9 +125,10 @@ flowchart LR
 
 | 寄存器 | 内容                           |
 | ------ | ------------------------------ |
-| IF/ID  | PC+4, 指令                     |
+| InstrFetchLatch | 指令 (从同步 RAM 输出)        |
 | ID/EX  | PC, 操作数, 立即数, 控制信号   |
 | EX/MEM | ALU 结果, Store 数据, 控制信号 |
+| DataReadLatch | 内存读取数据 (从同步 RAM 输出) |
 | MEM/WB | 内存数据, ALU 结果, 写回目标   |
 
 ### 流水线冒险处理
@@ -164,6 +174,115 @@ flowchart TD
 | BTB          | 分支目标缓存     | 复杂       |
 
 **初始实现**: 静态预测 + 暂停 (简化实现)
+
+### 新流水线架构 (6 级)
+
+**关键设计变更**：
+1. **新增 pre-IF 阶段**：从 5 级扩展到 6 级流水线
+2. **同步 RAM 设计**：所有内存访问都经过同步寄存器
+3. **内存访问延迟**：1 周期延迟（指令和数据内存）
+
+#### pre-IF 阶段设计
+
+pre-IF 是一个"伪阶段"（没有流水线寄存器），主要功能：
+- 计算下一条指令地址（nextPC）
+- 向指令内存发起读取请求（使用 nextPC 作为地址）
+- 分支指令目标地址计算
+
+```rust
+// pre_fetch() - 组合逻辑，无状态
+fn pre_fetch(&self, current_pc: u32, branch_target: Option<u32>) -> u32 {
+    match branch_target {
+        Some(target) => target,  // 分支跳转目标
+        None => current_pc + 4, // 顺序执行
+    }
+}
+```
+
+#### IF 阶段设计
+
+IF 阶段从 `InstrFetchLatch` 读取指令：
+- `InstrFetchLatch` 是同步 RAM 的输出寄存器
+- 数据在请求后 1 个周期可用
+- pre-IF 发起的请求在 IF 阶段获得结果
+
+```rust
+// fetch() - 从同步 RAM 读取
+fn fetch(&mut self, pc: u32) -> Option<u32> {
+    // pre-IF 已经发起请求，这里读取 latch
+    self.instr_latch.read()
+}
+```
+
+#### 内存访问设计
+
+1. **指令内存**：
+   - pre-IF 发起请求 → IF 阶段从 `InstrFetchLatch` 读取
+   - 1 周期延迟
+
+2. **数据内存**：
+   - EX 阶段计算地址 → MEM 阶段从 `DataReadLatch` 读取
+   - Store 操作在 MEM 阶段直接写入总线
+   - 1 周期延迟
+
+#### 同步 RAM 读保持（Read-Hold）
+
+同步 RAM 的 Q 端具有**读保持**特性：从采样到上一个有效读命令的时钟沿开始，Q 端将保持该次读操作对应的数据，直至采样到下一个有效读命令。
+
+- **`InstrFetchLatch`**：stall 期间不更新 latch（pre-IF 不发起新请求），保持上一次有效读数据
+- **`DataReadLatch`**：只在 EX 阶段发起 load 请求时（`new_data_latch.valid == true`）更新 latch，非 load 指令不覆盖，保持上一次有效读数据
+
+#### 新增数据结构
+
+```rust
+// 指令读取 latch (pre-IF → IF)
+pub struct InstrFetchLatch {
+    data: Option<u32>,  // 指令数据
+    valid: bool,       // 数据有效标志
+}
+
+// 数据读取 latch (EX → MEM)
+pub struct DataReadLatch {
+    data: Option<u32>,  // 数据内存读取结果
+    valid: bool,       // 数据有效标志
+}
+```
+
+#### 分支惩罚优化：ID 阶段早期分支解析
+
+**分支/跳转指令在 ID（译码）阶段即完成条件判断和目标地址计算**，而非在 EX 阶段。这使 pre-IF 在同一周期内即可重定向取指。
+
+- **原设计**（分支在 EX）：3 周期分支惩罚
+- **新设计**（分支在 ID）：**1 周期**分支惩罚
+
+关键设计决策：
+
+1. **ID 阶段前递**：从 `ex_mem`（非 load）和 `mem_wb` 前递操作数到 ID 阶段，用于分支条件判断
+2. **新增 stall 场景**：
+   - `id_ex` 写入分支源寄存器 → stall 1 周期
+   - `ex_mem` 是 load 且写入分支源寄存器 → stall 1 周期
+3. **冲刷范围**：仅冲刷 `if_id`（分支指令本身需通过 EX 计算 JAL/JALR 链接地址）
+4. **trap_return 不走 ID 分支解析**：目标来自 CSR，由 `mod.rs` 直接处理
+
+时序对比：
+
+```text
+分支在 EX（3 周期惩罚）：
+  T:   分支在 EX，计算 branch_taken → ex_mem 更新
+  T+1: pre-IF 重定向到目标
+  T+2: IF 读到目标指令
+  T+3: 目标到达 ID → 浪费 3 周期
+
+分支在 ID（1 周期惩罚）：
+  T:   分支在 ID，决定 branch_taken + pre-IF 同周期重定向
+  T+1: IF 读到目标指令；分支通过 EX
+  T+2: 目标到达 ID → 浪费 1 周期
+```
+
+#### 流水线方法变更
+
+- `FetchStage` 拆分为 `pre_fetch()` 和 `fetch()` 两个方法
+- `MemoryStage` 新增 `execute_with_latch()` 方法处理数据读取 latch
 
 ---
 
