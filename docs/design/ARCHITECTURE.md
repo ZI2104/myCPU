@@ -328,7 +328,7 @@ src/interrupt/
 └── trap.rs          # 陷阱处理
 ```
 
-### 4.1 NPU/LPU MMIO 协处理器（新增）
+### 4.1 NPU/LPU MMIO 协处理器
 
 ```
 src/peripheral/
@@ -340,6 +340,24 @@ src/peripheral/
 - LPU 基地址：`0x2000_1000`
 - 统一寄存器风格：`CONTROL/STATUS/OP_A/OP_B/RESULT/OPCODE/CYCLES`
 - 中断模型：计算完成后置位 `IRQ_PENDING`，CPU 可通过总线轮询并确认
+
+### 4.2 GPU/TPU 模拟加速器
+
+```
+src/peripheral/
+├── gpu.rs           # GPU: MatMul/Conv2d/Pool2d/激活函数 (FP32+INT8)
+├── tpu.rs           # TPU: INT8 量化矩阵乘 + 量化/反量化
+src/traits/
+└── accelerator.rs   # Accelerator trait + KernelType/Precision/TensorDescriptor
+```
+
+- GPU 基地址：`0x2001_0000`（4 KB MMIO），IRQ 源：PLIC #13
+- TPU 基地址：`0x2002_0000`（4 KB MMIO），IRQ 源：PLIC #14
+- GPU 支持 15 种内核：MatMul、Conv2d、Pool2dMax/Avg、VectorAdd/Mul/Dot/Scale、Relu/Relu6/LeakyRelu/Sigmoid/Tanh/Softmax
+- TPU 专注 INT8 量化矩阵乘，支持 per-tensor 量化参数
+- 共享内存模型：加速器通过 DMA 风格直接访问 guest RAM（无独立 VRAM）
+- `pending_start` 机制：寄存器写入 START 位 → Bus 检测 → 调用 `execute_with_memory` 并传入 RAM 区域
+- 详细 API 见 `docs/guides/GPU_TPU_API.md`
 
 ### 5. 外设模块
 
@@ -366,9 +384,12 @@ src/peripheral/
 0x0200_0000 ─ 0x0200_FFFF  CLINT (Core Local Interruptor)
 0x0C00_0000 ─ 0x0FFF_FFFF  PLIC (Platform Level Interrupt Controller)
 0x1000_1000 ─ 0x1000_1FFF  UART (Serial Port)
-0x2000_0000 ─ 0x2000_00FF  NPU (MMIO Coprocessor)
-0x2000_1000 ─ 0x2000_10FF  LPU (MMIO Coprocessor)
-0x2001_0000 ─ 0x2FFF_FFFF  VirtIO Devices
+0x1000_2000 ─ 0x1000_2FFF  Input Device (MMIO)
+0x2000_0000 ─ 0x2000_0FFF  NPU (MMIO Coprocessor)
+0x2000_1000 ─ 0x2000_1FFF  LPU (MMIO Coprocessor)
+0x2001_0000 ─ 0x2001_0FFF  GPU (Simulated Accelerator, PLIC #13)
+0x2002_0000 ─ 0x2002_0FFF  TPU (Simulated Accelerator, PLIC #14)
+0x3000_0000 ─ 0x3FFF_FFFF  VirtIO Devices
 0x8000_0000 ─ 0xFFFF_FFFF  Reserved / Expansion
 ```
 
@@ -1341,6 +1362,8 @@ graph TB
         CsrBank["CsrBank"]
         Uart["UART"]
         Timer["Timer"]
+        GpuDev["GPU"]
+        TpuDev["TPU"]
     end
 
     subgraph Infrastructure["基础设施"]
@@ -1354,6 +1377,8 @@ graph TB
     CsrReg --> CsrBank
     Periph --> Uart
     Periph --> Timer
+    Periph --> GpuDev
+    Periph --> TpuDev
 
     Bus --> Periph
     DiffTest --> ExecModel

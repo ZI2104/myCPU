@@ -24,6 +24,9 @@ cargo test
 # 运行可选的 NPU ELF 集成测试（需显式开启）
 # Unix/WSL:
 RUN_ELF_INTEGRATION=1 MYCPU_NPU_DEBUG=1 cargo test --test npu_elf_integration -- --nocapture
+
+# 运行 GPU/TPU 集成测试
+cargo test --test gpu_tpu_integration
 ```
 
 3. 调试与可视化

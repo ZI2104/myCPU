@@ -17,11 +17,13 @@ import type {
     DisassemblyResponse,
     FramebufferGameResponse,
     FramebufferResponse,
+    GpuStateResponse,
     HistoryResponse,
     InputStateResponse,
     LpuStateResponse,
     MemoryReadResponse,
     NpuStateResponse,
+    TpuStateResponse,
 } from './types/snapshot';
 
 const WS_URL = 'ws://127.0.0.1:8080';
@@ -38,6 +40,8 @@ function App() {
   const [inputState, setInputState] = useState<InputStateResponse | null>(null);
   const [npuState, setNpuState] = useState<NpuStateResponse | null>(null);
   const [lpuState, setLpuState] = useState<LpuStateResponse | null>(null);
+  const [gpuState, setGpuState] = useState<GpuStateResponse | null>(null);
+  const [tpuState, setTpuState] = useState<TpuStateResponse | null>(null);
   const [pipelineResetKey, setPipelineResetKey] = useState(0);
   const [followKey, setFollowKey] = useState(0);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
@@ -69,6 +73,10 @@ function App() {
           setNpuState(data as NpuStateResponse);
         } else if (data.type === 'lpu_state') {
           setLpuState(data as LpuStateResponse);
+        } else if (data.type === 'gpu_state') {
+          setGpuState(data as GpuStateResponse);
+        } else if (data.type === 'tpu_state') {
+          setTpuState(data as TpuStateResponse);
         } else if (data.base_addr !== undefined && Array.isArray(data.instructions)) {
           setDisassembly(data as DisassemblyResponse);
         } else if (Array.isArray(data.records) && data.total !== undefined) {
@@ -279,6 +287,8 @@ function App() {
                   sendCommand={send}
                   npuState={npuState}
                   lpuState={lpuState}
+                  gpuState={gpuState}
+                  tpuState={tpuState}
                 />
               )}
             </div>

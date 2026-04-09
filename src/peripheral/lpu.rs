@@ -1,7 +1,7 @@
 //! LPU MMIO coprocessor (logic processing unit skeleton).
 
 use crate::error::{Result, SimError};
-use crate::traits::Memory;
+use crate::peripheral::dma;
 use crate::traits::Peripheral;
 use crate::types::Addr;
 
@@ -234,77 +234,25 @@ impl Lpu {
         }
     }
 
-    fn guest_addr(raw: u64) -> Result<Addr> {
-        if raw > u32::MAX as u64 {
-            return Err(SimError::Peripheral(
-                "lpu guest address out of rv32 range".to_string(),
-            ));
-        }
-        Ok(Addr::new(raw as u32))
+    fn read_guest_u8(ram: &mut dma::RamRegions, addr: u64) -> Result<u8> {
+        dma::read_u8(ram, addr)
     }
 
-    fn read_guest_u8(
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-        addr: u64,
-    ) -> Result<u8> {
-        let addr = Self::guest_addr(addr)?;
-        let target = addr.raw() as usize;
-
-        for (base, size, memory) in ram_regions.iter_mut() {
-            let base_addr = base.raw() as usize;
-            if target >= base_addr && target < base_addr + *size {
-                let relative = Addr::new((target - base_addr) as u32);
-                return memory.read_byte(relative).map(|b| b.raw());
-            }
-        }
-
-        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+    fn write_guest_u8(ram: &mut dma::RamRegions, addr: u64, value: u8) -> Result<()> {
+        dma::write_u8(ram, addr, value)
     }
 
-    fn write_guest_u8(
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-        addr: u64,
-        value: u8,
-    ) -> Result<()> {
-        let addr = Self::guest_addr(addr)?;
-        let target = addr.raw() as usize;
-
-        for (base, size, memory) in ram_regions.iter_mut() {
-            let base_addr = base.raw() as usize;
-            if target >= base_addr && target < base_addr + *size {
-                let relative = Addr::new((target - base_addr) as u32);
-                return memory.write_byte(relative, crate::types::Byte::new(value));
-            }
-        }
-
-        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+    fn read_guest_u32(ram: &mut dma::RamRegions, addr: u64) -> Result<u32> {
+        dma::read_u32(ram, addr)
     }
 
-    fn read_guest_u32(
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-        addr: u64,
-    ) -> Result<u32> {
-        let mut value = 0u32;
-        for i in 0..4 {
-            value |= (Self::read_guest_u8(ram_regions, addr + i)? as u32) << (i * 8);
-        }
-        Ok(value)
-    }
-
-    fn write_guest_u32(
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
-        addr: u64,
-        value: u32,
-    ) -> Result<()> {
-        for i in 0..4 {
-            Self::write_guest_u8(ram_regions, addr + i, ((value >> (i * 8)) & 0xFF) as u8)?;
-        }
-        Ok(())
+    fn write_guest_u32(ram: &mut dma::RamRegions, addr: u64, value: u32) -> Result<()> {
+        dma::write_u32(ram, addr, value)
     }
 
     fn execute_descriptor_entry(
         &mut self,
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        ram_regions: &mut dma::RamRegions,
         index: u32,
     ) -> Result<()> {
         let desc_base = self.desc_addr + (index as u64) * LPU_DESC_STRIDE;
@@ -331,7 +279,7 @@ impl Lpu {
 
     pub fn process_pending_descriptor_notify(
         &mut self,
-        ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+        ram_regions: &mut dma::RamRegions,
     ) -> Result<()> {
         if !self.pending_desc_notify {
             return Ok(());
@@ -419,6 +367,17 @@ impl Peripheral for Lpu {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+
+    fn try_execute_pending(
+        &mut self,
+        ram_regions: &mut dma::RamRegions,
+    ) -> Result<bool> {
+        if !self.pending_desc_notify {
+            return Ok(false);
+        }
+        self.process_pending_descriptor_notify(ram_regions)?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -487,7 +446,7 @@ mod tests {
         use crate::memory::Ram;
 
         const RAM_BASE: u32 = 0x8000_0000;
-        let mut regions: Vec<(Addr, usize, Box<dyn Memory>)> =
+        let mut regions: dma::RamRegions =
             vec![(Addr::new(RAM_BASE), 0x4000, Box::new(Ram::new(0x4000)))];
 
         let mut lpu = Lpu::new();

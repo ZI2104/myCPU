@@ -83,7 +83,7 @@ body {
   vertical-align: middle;
   box-sizing: border-box;
   flex-shrink: 0;
-  box-shadow: 0 0 4px rgba(0, 0, 0. 1px);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.25);
 }
 
 .status-indicator.connected {
@@ -220,30 +220,7 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* PC Display */
-.pc-display {
-  text-align: center;
-  margin-bottom: 20px;
-}
 
-.pc-display h3 {
-  margin: 0 0 10px;
-  font-size: 16px;
-  color: var(--text-light);
-}
-
-.pc-value {
-  font-family: 'Fira Code', monospace;
-  font-size: 32px;
-  font-weight: bold;
-  color: var(--primary-bg);
-}
-
-.privilege {
-  font-size: 12px;
-  color: var(--text-light);
-  margin-top: 5px;
-}
 
 /* Pipeline Visualizer - 纵向时序图布局 */
 .pipeline-visualizer {
@@ -384,25 +361,39 @@ body {
   text-overflow: ellipsis;
 }
 
-/* Tab bar and center panel fill adjustments */
+/* Tab bar for switching views */
 .tab-bar {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-bottom: 10px;
+  background: #e0e0e0;
+  padding: 4px;
+  border-radius: 6px;
 }
 
 .tab-bar button {
   padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid #ddd;
-  background: #f6f6f6;
+  border: none;
+  background: transparent;
   cursor: pointer;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 13px;
+  color: #333;
+  transition: all 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.tab-bar button:hover {
+  background: #d0d0d0;
 }
 
 .tab-bar button.active {
   background: white;
-  border-color: var(--secondary-bg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
 /* Register highlight styles */
@@ -727,45 +718,6 @@ body {
   font-weight: bold;
 }
 
-/* Tab bar for switching views */
-.tab-bar {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 4px;
-  margin-bottom: 10px;
-  background: #e0e0e0;
-  padding: 4px;
-  border-radius: 6px;
-}
-
-.tab-bar button {
-  padding: 8px 12px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  border-radius: 4px;
-  font-weight: 500;
-  font-size: 13px;
-  color: #333;
-  transition: all 0.2s;
-}
-
-/* Ensure all tab buttons occupy equal width visually */
-.tab-bar button {
-  width: 100%;
-  box-sizing: border-box;
-  text-align: center;
-}
-
-.tab-bar button:hover {
-  background: #d0d0d0;
-}
-
-.tab-bar button.active {
-  background: white;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
 /* PC Display */
 .pc-display {
   text-align: center;
@@ -793,20 +745,6 @@ body {
   font-size: 12px;
   color: var(--text-light);
   margin-top: 5px;
-}
-
-/* Center panel */
-.center-panel {
-  flex: 2;
-  /* allow center panel to shrink/grow to fill available space consistently */
-  min-width: 0;
-  width: 100%;
-}
-
-/* Make direct children of center-panel stretch to full width so different tabs look consistent */
-.center-panel > * {
-  width: 100%;
-  box-sizing: border-box;
 }
 
 /* Memory View */
@@ -1193,8 +1131,7 @@ body {
 }
 
 .debug-list {
-  /* allow debug lists to grow; limit by viewport if necessary */
-  max-height: none;
+  /* limit by viewport if necessary */
   max-height: 420px;
   overflow: auto;
   border: 1px solid #e5e5e5;

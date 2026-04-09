@@ -555,6 +555,10 @@ enum Command {
     NpuState,
     /// Read LPU state snapshot.
     LpuState,
+    /// Read GPU state snapshot.
+    GpuState,
+    /// Read TPU state snapshot.
+    TpuState,
 }
 
 impl Command {
@@ -717,6 +721,22 @@ impl Command {
                 let action = parts.get(1).map(|value| value.to_ascii_lowercase());
                 if action.as_deref() == Some("state") || action.as_deref() == Some("status") {
                     Some(Command::LpuState)
+                } else {
+                    None
+                }
+            }
+            "gpu" => {
+                let action = parts.get(1).map(|value| value.to_ascii_lowercase());
+                if action.as_deref() == Some("state") || action.as_deref() == Some("status") {
+                    Some(Command::GpuState)
+                } else {
+                    None
+                }
+            }
+            "tpu" => {
+                let action = parts.get(1).map(|value| value.to_ascii_lowercase());
+                if action.as_deref() == Some("state") || action.as_deref() == Some("status") {
+                    Some(Command::TpuState)
                 } else {
                     None
                 }
@@ -1676,6 +1696,77 @@ impl VisualizeServer {
 
                 ctx.send_json(response.to_string()).await;
             }
+            Command::GpuState => {
+                let response = {
+                    let cpu_guard = ctx.cpu.lock().await;
+                    if let Some(state) = cpu_guard.bus().get_gpu_snapshot() {
+                        serde_json::json!({
+                            "type": "gpu_state",
+                            "success": true,
+                            "control": state.control,
+                            "status": state.status,
+                            "kernel_type": state.kernel_type,
+                            "precision": state.precision,
+                            "kernels_executed": state.kernels_executed,
+                            "cycles": state.cycles,
+                            "ops_count": state.ops_count,
+                            "bytes_transferred": state.bytes_transferred,
+                            "tasks_done": state.tasks_done,
+                            "tasks_error": state.tasks_error,
+                            "error_code": state.error_code,
+                            "work_queue_len": state.work_queue_len,
+                            "conv_kernel_size": state.conv_kernel_size,
+                            "conv_stride": state.conv_stride,
+                            "conv_padding": state.conv_padding,
+                            "conv_input_dims": state.conv_input_dims,
+                            "conv_channels": state.conv_channels,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "type": "gpu_state",
+                            "success": false,
+                            "error": "GPU peripheral not attached",
+                        })
+                    }
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
+            Command::TpuState => {
+                let response = {
+                    let cpu_guard = ctx.cpu.lock().await;
+                    if let Some(state) = cpu_guard.bus().get_tpu_snapshot() {
+                        serde_json::json!({
+                            "type": "tpu_state",
+                            "success": true,
+                            "control": state.control,
+                            "status": state.status,
+                            "kernel_type": state.kernel_type,
+                            "m": state.m,
+                            "n": state.n,
+                            "k": state.k,
+                            "matrices_computed": state.matrices_computed,
+                            "cycles": state.cycles,
+                            "ops_count": state.ops_count,
+                            "tasks_done": state.tasks_done,
+                            "tasks_error": state.tasks_error,
+                            "error_code": state.error_code,
+                            "input_scale": state.input_scale,
+                            "output_scale": state.output_scale,
+                            "input_zero_point": state.input_zero_point,
+                            "output_zero_point": state.output_zero_point,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "type": "tpu_state",
+                            "success": false,
+                            "error": "TPU peripheral not attached",
+                        })
+                    }
+                };
+
+                ctx.send_json(response.to_string()).await;
+            }
         }
 
         Ok(())
@@ -1988,8 +2079,14 @@ mod tests {
         assert_eq!(Command::parse("npu status"), Some(Command::NpuState));
         assert_eq!(Command::parse("lpu state"), Some(Command::LpuState));
         assert_eq!(Command::parse("lpu status"), Some(Command::LpuState));
+        assert_eq!(Command::parse("gpu state"), Some(Command::GpuState));
+        assert_eq!(Command::parse("gpu status"), Some(Command::GpuState));
+        assert_eq!(Command::parse("tpu state"), Some(Command::TpuState));
+        assert_eq!(Command::parse("tpu status"), Some(Command::TpuState));
         assert_eq!(Command::parse("npu"), None);
         assert_eq!(Command::parse("lpu"), None);
+        assert_eq!(Command::parse("gpu"), None);
+        assert_eq!(Command::parse("tpu"), None);
     }
 
     #[test]

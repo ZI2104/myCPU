@@ -25,6 +25,8 @@ Phase 4: 特权+异常+输入/渲染 ✅
     ↓
 Phase 5: NPU/LPU ✅
     ↓
+Phase 5.2: GPU/TPU 模拟加速器 ✅
+    ↓
 Phase 6: 一键编排验收 ✅
     ↓
 Phase 7: CI/发布工程化（规划）
@@ -45,7 +47,6 @@ Phase 7: CI/发布工程化（规划）
 >
 > 说明：本节用于对齐“xv6 → Linux → 游戏 → NPU/LPU”路线，状态分为：
 >
->
 > - ✅ 已完成
 > - 🟡 部分完成
 > - ⏳ 未完成
@@ -58,11 +59,13 @@ Phase 7: CI/发布工程化（规划）
 | Phase 3 | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | 🟡 部分完成 | Buildroot Linux 进入 init/userland                    | 模拟器侧链路能力已齐全（SBI/FDT/bootargs/payload）；默认仓库不内置完整 Linux 工件，需通过脚本准备 OpenSBI/Buildroot 工件后完成终验                                        |
 | Phase 4 | Linux 用户态 SDL/FB 游戏演示                               | ✅ 已完成   | 简化 2D 游戏跑通 + 输入设备 + Overlay                 | `fb_game` 游戏流程控制（init/step/run/reset）+ 输入面板 + Framebuffer Overlay 已落地；host/guest 自动验收脚本通过，库测 274/274 与前端构建通过                            |
 | Phase 5 | NPU/LPU 模拟（MMIO 优先）                                  | ✅ 已完成   | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU 已补齐 DESC_ADDR/描述符 DMA/Bus 桥接、可视化状态面板、CUSTOM-0 自定义指令 fast-path 与任务时间线                                                                  |
+| Phase 5.2 | GPU/TPU 模拟加速器                                       | ✅ 已完成   | Conv2d/Pool2d/INT8量化 + 可视化 + 集成测试            | GPU (15 内核) + TPU (INT8 量化) 已实现，304 库测试 + 3 集成测试通过，前端 GPU/TPU 面板已落地，API 文档已完成                                                                      |
 | Phase 6 | 亮点封装发布（脚本化演示+回归矩阵）                        | ✅ 已完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 在具备 Linux 工件并启用 `-EnableLinux` 的条件下，`run_phase6_showcase_pipeline.ps1` 全链路通过：xv6、Linux、Phase4 host/guest、NPU/LPU 回归与前端构建均 PASS              |
 
 > 最新进展（2026-04-01）：在补齐 PLIC S 态窗口与 `SIP` 机器态 `SSIP` 语义后，进一步完成 RV32C 兼容修复与 VirtIO 描述符传输长度修复（避免 512B 截断导致用户程序加载不完整）。UART 注入升级为 prompt 逐命令自适应分片注入，并与会话状态机断言结合，`scripts/run_xv6_shell_smoke.ps1` 在 200M 长窗口下 `echo/ls/cat/grep/wc` 命令矩阵稳定通过（5/5）。此外，`run` 子命令已支持 Linux 启动上下文注入（`--linux-boot`、`--linux-hartid`、`--linux-dtb*`、`--linux-bootargs*`）、`--linux-sbi/--linux-sbi-addr/--linux-payload-addr` 双镜像加载，以及 `--linux-auto-dtb` 自动 FDT 生成，链路级实跑验收通过；并已新增 MMIO 输入外设（`0x10002000`）+ 可视化输入命令（`input ...`）+ 前端 `InputPanel`。当前已补齐 `GameFlowPanel`（`fb_game` 流程控制）、`Framebuffer` Overlay HUD（FPS/IPC/Stalls/Tick/Score/InputBits），并增强 `scripts/run_phase4_input_framebuffer_acceptance.ps1` 的 host/guest 断言（`fb_game state` 与 `stepn executed`）。针对 Phase 3，新增 `scripts/setup_phase3_artifacts.ps1`（自动下载 OpenSBI）、`scripts/build_phase3_buildroot_artifacts.ps1`（Buildroot qemu_riscv32_virt 工件产出）与 `run_linux_phase3_acceptance.ps1` 工件自动探测/前置校验（ELF payload 拦截），可在缺失 Linux Image 时给出明确阻塞诊断。`cargo test --lib` 当前 `274/274` 通过，前端 `npm run build` 通过。
 > 复验同步（2026-04-01）：已基于当前工作区状态再次执行 Phase 4 host/guest 双模式验收，结果均 PASS；并复跑 `cargo test --lib`（274/274）与前端 `npm run build`，结果均通过。
 > 本轮同步校验（2026-04-02）：再次执行 `cargo test --lib`，结果 `274 passed, 0 failed`；工作区最近一次 `cargo test --test npu_elf_integration -- --nocapture` 退出码为 `0`。
+> GPU/TPU 同步校验（2026-04-09）：新增 GPU/TPU 模拟加速器（Phase 5.2），`cargo test --lib` 通过（304 passed, 0 failed），`cargo test --test gpu_tpu_integration` 通过（3 passed, 0 failed），前端 `npm run build` 通过。
 
 ### 执行约定（从本次开始）
 
@@ -75,7 +78,7 @@ Phase 7: CI/发布工程化（规划）
 
 ## 调研结论并入（来自 `CPU_SIMULATOR_RESEARCH_REVIEW_20260331.md`）
 
-> 更新时间：2026-04-03  
+> 更新时间：2026-04-03
 > 目的：把调研报告中的“对标结论 + 风险优先级 + 改进路线”合并到主线路线图，避免信息分散。
 
 ### 对标项目启示（NEMU / QEMU / Spike）
@@ -112,23 +115,23 @@ Phase 7: CI/发布工程化（规划）
 
 ### 任务清单
 
-- [x] 项目初始化 (Cargo 配置)
-- [x] 基础 trait 定义
-  - [x] `Memory` trait (read/write)
-  - [x] `Peripheral` trait
-- [x] 内存模块
-  - [x] RAM 实现
-  - [x] ROM 实现
-  - [x] 总线 (Bus) 实现
-- [x] CPU 寄存器组
-  - [x] 通用寄存器 x0-x31
-  - [x] PC 寄存器
-- [x] 主循环框架
-  - [x] 单周期执行循环
-  - [x] 时钟计数
-- [x] 错误处理
-  - [x] SimError 类型定义
-  - [x] Result 类型别名
+- [X] 项目初始化 (Cargo 配置)
+- [X] 基础 trait 定义
+  - [X] `Memory` trait (read/write)
+  - [X] `Peripheral` trait
+- [X] 内存模块
+  - [X] RAM 实现
+  - [X] ROM 实现
+  - [X] 总线 (Bus) 实现
+- [X] CPU 寄存器组
+  - [X] 通用寄存器 x0-x31
+  - [X] PC 寄存器
+- [X] 主循环框架
+  - [X] 单周期执行循环
+  - [X] 时钟计数
+- [X] 错误处理
+  - [X] SimError 类型定义
+  - [X] Result 类型别名
 
 ### 产出
 
@@ -145,65 +148,61 @@ Phase 7: CI/发布工程化（规划）
 
 ### RV32I 指令清单
 
-- [x] AND  - 与
-- [x] OR   - 或
-- [x] XOR  - 异或
-- [x] SLL  - 逻辑左移
-- [x] SRL  - 逻辑右移
-- [x] SRA  - 算术右移
-
-- [x] SLT  - 有符号小于比较
-- [x] SLTU - 无符号小于比较
+- [X] AND  - 与
+- [X] OR   - 或
+- [X] XOR  - 异或
+- [X] SLL  - 逻辑左移
+- [X] SRL  - 逻辑右移
+- [X] SRA  - 算术右移
+- [X] SLT  - 有符号小于比较
+- [X] SLTU - 无符号小于比较
 
 #### I-type (14 条)
 
-- [x] ADDI  - 加立即数
-- [x] ANDI  - 与立即数
-- [x] ORI   - 或立即数
-- [x] XORI  - 异或立即数
-- [x] SLTI  - 有符号小于比较立即数
-- [x] SLTIU - 无符号小于比较立即数
-- [x] SLLI  - 逻辑左移立即数
-- [x] SRLI  - 逻辑右移立即数
-- [x] SRAI  - 算术右移立即数
-- [x] LB    - 加载字节
-- [x] LH    - 加载半字
-
-- [x] LW    - 加载字
-- [x] LBU   - 加载无符号字节
-- [x] LHU   - 加载无符号半字
+- [X] ADDI  - 加立即数
+- [X] ANDI  - 与立即数
+- [X] ORI   - 或立即数
+- [X] XORI  - 异或立即数
+- [X] SLTI  - 有符号小于比较立即数
+- [X] SLTIU - 无符号小于比较立即数
+- [X] SLLI  - 逻辑左移立即数
+- [X] SRLI  - 逻辑右移立即数
+- [X] SRAI  - 算术右移立即数
+- [X] LB    - 加载字节
+- [X] LH    - 加载半字
+- [X] LW    - 加载字
+- [X] LBU   - 加载无符号字节
+- [X] LHU   - 加载无符号半字
 
 #### S-type (3 条)
 
-- [x] SB - 存储字节
-- [x] SH - 存储半字
-- [x] SW - 存储字
+- [X] SB - 存储字节
+- [X] SH - 存储半字
+- [X] SW - 存储字
 
 #### B-type (6 条)
 
-- [x] BEQ  - 相等跳转
-
-- [x] BNE  - 不等跳转
-- [x] BLT  - 有符号小于跳转
-- [x] BGE  - 有符号大于等于跳转
-- [x] BLTU - 无符号小于跳转
-
-- [x] BGEU - 无符号大于等于跳转
+- [X] BEQ  - 相等跳转
+- [X] BNE  - 不等跳转
+- [X] BLT  - 有符号小于跳转
+- [X] BGE  - 有符号大于等于跳转
+- [X] BLTU - 无符号小于跳转
+- [X] BGEU - 无符号大于等于跳转
 
 #### U-type (2 条)
 
-- [x] LUI   - 加载高位立即数
-- [x] AUIPC - PC 加高位立即数
+- [X] LUI   - 加载高位立即数
+- [X] AUIPC - PC 加高位立即数
 
 #### J-type (2 条)
 
-- [x] JAL  - 跳转并链接
-- [x] JALR - 跳转并链接寄存器
+- [X] JAL  - 跳转并链接
+- [X] JALR - 跳转并链接寄存器
 
 #### System (3 条)
 
-- [x] EBREAK - 断点
-- [x] FENCE - 内存屏障
+- [X] EBREAK - 断点
+- [X] FENCE - 内存屏障
 
 ### 产出
 
@@ -220,23 +219,23 @@ Phase 7: CI/发布工程化（规划）
 
 ### 任务清单
 
-- [x] 流水线寄存器
-  - [x] IF/ID 寄存器
-  - [x] ID/EX 寄存器
-  - [x] EX/MEM 寄存器
-  - [x] MEM/WB 寄存器
-- [x] 各阶段实现
-  - [x] IF (Instruction Fetch)
-  - [x] ID (Instruction Decode)
-  - [x] EX (Execute)
-  - [x] MEM (Memory Access)
-  - [x] WB (Write Back)
-- [x] 冒险处理
-  - [x] 数据冒险检测
-  - [x] 前递逻辑 (EX/MEM, MEM/WB)
-  - [x] Load-Use 暂停
-  - [x] 控制冒险 - 静态预测 (Predict Not Taken)
-  - [x] 分支冲刷
+- [X] 流水线寄存器
+  - [X] IF/ID 寄存器
+  - [X] ID/EX 寄存器
+  - [X] EX/MEM 寄存器
+  - [X] MEM/WB 寄存器
+- [X] 各阶段实现
+  - [X] IF (Instruction Fetch)
+  - [X] ID (Instruction Decode)
+  - [X] EX (Execute)
+  - [X] MEM (Memory Access)
+  - [X] WB (Write Back)
+- [X] 冒险处理
+  - [X] 数据冒险检测
+  - [X] 前递逻辑 (EX/MEM, MEM/WB)
+  - [X] Load-Use 暂停
+  - [X] 控制冒险 - 静态预测 (Predict Not Taken)
+  - [X] 分支冲刷
 
 ### 产出
 
@@ -251,32 +250,31 @@ Phase 7: CI/发布工程化（规划）
 
 ### 任务清单
 
-- [x] CSR 寄存器
-  - [x] M-mode: mstatus, mtvec, mepc, mcause, mie, mip, mscratch, misa, mtval, mideleg, medeleg
-  - [x] S-mode: sstatus, stvec, sepc, scause, sie, sip, sscratch, stval
-  - [x] U-mode: ustatus, utvec, uepc, ucause
-  - [x] CSR 访问指令 (csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci)
-- [x] 特权级切换
-  - [x] ecall 指令 (单周期 CPU)
-  - [x] mret 指令 (单周期 CPU + 流水线)
-  - [x] sret/uret 指令 (框架已实现)
-  - [x] 特权级检查 (CSR 访问权限)
-  - [x] 流水线 CPU 中的 CSR 指令支持
-- [x] 异常处理
-  - [x] 异常入口 (xtvec) - 单周期 CPU + 流水线
-  - [x] 上下文保存/恢复 - 单周期 CPU + 流水线
-
-  - [x] 异常返回 - 单周期 CPU + 流水线 (mret)
-- [x] 中断系统 - CLINT
-  - [x] CLINT 实现 (mtime, mtimecmp, msip)
-  - [x] InterruptSource trait
-  - [x] 中断同步到 MIP (单周期 CPU + 流水线)
-  - [x] 中断优先级处理
-- [x] 中断系统 - PLIC
-  - [x] PLIC 实现 (外部中断控制器)
-  - [x] PLIC 与 Bus 集成
-  - [x] PLIC 与 CPU 集成 (MEIP/SEIP)
-  - [x] 中断委托 (M → S) via mideleg/medeleg
+- [X] CSR 寄存器
+  - [X] M-mode: mstatus, mtvec, mepc, mcause, mie, mip, mscratch, misa, mtval, mideleg, medeleg
+  - [X] S-mode: sstatus, stvec, sepc, scause, sie, sip, sscratch, stval
+  - [X] U-mode: ustatus, utvec, uepc, ucause
+  - [X] CSR 访问指令 (csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci)
+- [X] 特权级切换
+  - [X] ecall 指令 (单周期 CPU)
+  - [X] mret 指令 (单周期 CPU + 流水线)
+  - [X] sret/uret 指令 (框架已实现)
+  - [X] 特权级检查 (CSR 访问权限)
+  - [X] 流水线 CPU 中的 CSR 指令支持
+- [X] 异常处理
+  - [X] 异常入口 (xtvec) - 单周期 CPU + 流水线
+  - [X] 上下文保存/恢复 - 单周期 CPU + 流水线
+  - [X] 异常返回 - 单周期 CPU + 流水线 (mret)
+- [X] 中断系统 - CLINT
+  - [X] CLINT 实现 (mtime, mtimecmp, msip)
+  - [X] InterruptSource trait
+  - [X] 中断同步到 MIP (单周期 CPU + 流水线)
+  - [X] 中断优先级处理
+- [X] 中断系统 - PLIC
+  - [X] PLIC 实现 (外部中断控制器)
+  - [X] PLIC 与 Bus 集成
+  - [X] PLIC 与 CPU 集成 (MEIP/SEIP)
+  - [X] 中断委托 (M → S) via mideleg/medeleg
 
 ### 产出
 
@@ -284,9 +282,7 @@ Phase 7: CI/发布工程化（规划）
 - ✅ CLINT 测试通过 (7 个测试)
 - ✅ PLIC 测试通过 (8 个测试)
 - ✅ 单周期 CPU 支持完整中断和异常处理
-
 - ✅ 流水线 CPU 支持 CSR 指令和 mret
-
 - ✅ 中断委托机制实现 (M-mode → S-mode)
 
 ---
@@ -299,35 +295,34 @@ Phase 7: CI/发布工程化（规划）
 
 ### 任务清单
 
-- [x] UART (NS16550A 兼容)
-  - [x] 发送/接收寄存器 (THR/RBR)
-  - [x] 状态寄存器 (LSR)
-  - [x] 中断支持 (IER/IIR)
-  - [x] FIFO Control Register (FCR)
-  - [x] Line Control Register (LCR)
-  - [x] Modem Control Register (MCR)
-  - [x] Scratch Register (SCR)
-  - [x] Divisor Latch (DLL/DLM)
-- [x] Timer (已在 Phase 4 实现于 CLINT)
-  - [x] mtime 寄存器
-  - [x] mtimecmp 寄存器
-  - [x] 时钟中断
-- [x] ELF 加载器
-  - [x] 解析 ELF 头 (使用 goblin crate)
-
-  - [x] 加载程序段
-  - [x] 设置入口点
-  - [x] BSS 段零填充
-- [x] GDB Remote Protocol (核心)
-  - [x] TCP Server 基础框架
-  - [x] 基础命令: ?, g, G, m, M, c, s
-  - [x] 断点支持: Z0, z0
-  - [x] 查询命令: qSupported, qAttached
-  - [x] VSCode 集成配置 (.vscode/launch.json)
-- [x] DiffTest 框架
-  - [x] QEMU GDB Stub 集成
-  - [x] 状态对比逻辑
-  - [x] 错误报告与日志
+- [X] UART (NS16550A 兼容)
+  - [X] 发送/接收寄存器 (THR/RBR)
+  - [X] 状态寄存器 (LSR)
+  - [X] 中断支持 (IER/IIR)
+  - [X] FIFO Control Register (FCR)
+  - [X] Line Control Register (LCR)
+  - [X] Modem Control Register (MCR)
+  - [X] Scratch Register (SCR)
+  - [X] Divisor Latch (DLL/DLM)
+- [X] Timer (已在 Phase 4 实现于 CLINT)
+  - [X] mtime 寄存器
+  - [X] mtimecmp 寄存器
+  - [X] 时钟中断
+- [X] ELF 加载器
+  - [X] 解析 ELF 头 (使用 goblin crate)
+  - [X] 加载程序段
+  - [X] 设置入口点
+  - [X] BSS 段零填充
+- [X] GDB Remote Protocol (核心)
+  - [X] TCP Server 基础框架
+  - [X] 基础命令: ?, g, G, m, M, c, s
+  - [X] 断点支持: Z0, z0
+  - [X] 查询命令: qSupported, qAttached
+  - [X] VSCode 集成配置 (.vscode/launch.json)
+- [X] DiffTest 框架
+  - [X] QEMU GDB Stub 集成
+  - [X] 状态对比逻辑
+  - [X] 错误报告与日志
 
 ### 产出
 
@@ -346,33 +341,35 @@ Phase 7: CI/发布工程化（规划）
 
 ### P0: 性能监控 ✅ 完成
 
-- [x] RISC-V HPM CSR 寄存器
-  - [x] mcycle/mcycleh (周期计数器)
-  - [x] minstret/minstreth (指令计数器)
-  - [x] mhpmcounter3-31 (可编程计数器)
-  - [x] mhpmevent3-31 (事件选择器)
-  - [x] mcountinhibit (计数器禁止)
-- [x] 性能事件收集器 (PerfCollector)
-  - [x] 周期计数 (Cycles)
-  - [x] 指令退休计数 (InstructionsRetired)
-  - [x] Load-Use 暂停计数
+- [X] RISC-V HPM CSR 寄存器
 
-  - [x] 控制冒险计数
-  - [x] 分支统计 (Taken/NotTaken)
-  - [x] 内存访问统计
-- [x] 流水线性能集成
-  - [x] 单周期 CPU 集成
-  - [x] 流水线 CPU 集成
-  - [x] CSR HPM 计数器更新
-- [x] 性能报告生成
-  - [x] IPC/CPI 计算
+  - [X] mcycle/mcycleh (周期计数器)
+  - [X] minstret/minstreth (指令计数器)
+  - [X] mhpmcounter3-31 (可编程计数器)
+  - [X] mhpmevent3-31 (事件选择器)
+  - [X] mcountinhibit (计数器禁止)
+- [X] 性能事件收集器 (PerfCollector)
 
-  - [x] 暂停率统计
-  - [x] 分支预测准确率
-  - [x] 格式化输出
-- [x] CLI 集成
+  - [X] 周期计数 (Cycles)
+  - [X] 指令退休计数 (InstructionsRetired)
+  - [X] Load-Use 暂停计数
+  - [X] 控制冒险计数
+  - [X] 分支统计 (Taken/NotTaken)
+  - [X] 内存访问统计
+- [X] 流水线性能集成
 
-  - [x] --perf-report 选项
+  - [X] 单周期 CPU 集成
+  - [X] 流水线 CPU 集成
+  - [X] CSR HPM 计数器更新
+- [X] 性能报告生成
+
+  - [X] IPC/CPI 计算
+  - [X] 暂停率统计
+  - [X] 分支预测准确率
+  - [X] 格式化输出
+- [X] CLI 集成
+
+  - [X] --perf-report 选项
 
 ### 产出
 
@@ -386,8 +383,8 @@ Phase 7: CI/发布工程化（规划）
 
 ### P1: M 扩展 (乘除法) (可选)
 
-- [x] MUL, MULH, MULHSU, MULHU
-- [x] DIV, DIVU, REM, REMU
+- [X] MUL, MULH, MULHSU, MULHU
+- [X] DIV, DIVU, REM, REMU
 
 ### P2: C 扩展 (压缩指令) (可选)
 
@@ -396,11 +393,10 @@ Phase 7: CI/发布工程化（规划）
 
 ### P3: Sv32 分页 (可选)
 
-- [x] 页表结构（SATP CSR + Sv32 两级页表遍历骨架）
+- [X] 页表结构（SATP CSR + Sv32 两级页表遍历骨架）
 - [ ] TLB 缓存
-
-- [x] 地址翻译入口（单周期 CPU：取指/Load/Store）
-- [x] 页错误异常（Instruction/Load/Store Page Fault）
+- [X] 地址翻译入口（单周期 CPU：取指/Load/Store）
+- [X] 页错误异常（Instruction/Load/Store Page Fault）
 
 #### P3 当前里程碑验收（2026-03-31）
 
@@ -426,16 +422,16 @@ Phase 7: CI/发布工程化（规划）
 
 ### P5: NPU/LPU 协处理器 (MMIO 路径)（已完成）
 
-- [x] NPU MMIO 外设骨架（`0x2000_0000`）
-- [x] LPU MMIO 外设骨架（`0x2000_1000`）
-- [x] 启动命令默认挂载到系统总线（CLI 运行/调试/可视化）
-- [x] 中断查询与确认接口（`has_interrupt` / `acknowledge_interrupt`）
-- [x] 单元测试覆盖基础算子和中断行为
-- [x] DESC_ADDR + 描述符批处理（任务队列）
-- [x] Bus 侧 DMA 桥接触发（notify -> RAM 访存执行）
-- [x] 可视化前端寄存器面板（NPU/LPU state）
-- [x] 自定义指令加速路径（CUSTOM-0，CPU -> NPU/LPU）
-- [x] 任务时间线（notify/done/error）
+- [X] NPU MMIO 外设骨架（`0x2000_0000`）
+- [X] LPU MMIO 外设骨架（`0x2000_1000`）
+- [X] 启动命令默认挂载到系统总线（CLI 运行/调试/可视化）
+- [X] 中断查询与确认接口（`has_interrupt` / `acknowledge_interrupt`）
+- [X] 单元测试覆盖基础算子和中断行为
+- [X] DESC_ADDR + 描述符批处理（任务队列）
+- [X] Bus 侧 DMA 桥接触发（notify -> RAM 访存执行）
+- [X] 可视化前端寄存器面板（NPU/LPU state）
+- [X] 自定义指令加速路径（CUSTOM-0，CPU -> NPU/LPU）
+- [X] 任务时间线（notify/done/error）
 
 #### P5 里程碑验收（时间线）
 
@@ -512,6 +508,40 @@ Phase 7: CI/发布工程化（规划）
 - 当前边界：
   - Phase 5 主链路能力已闭环，后续以性能优化与可观测性增强为主。
 
+### P5.2: GPU/TPU 模拟加速器 ✅ 完成
+
+> 新增时间：2026-04-08 ~ 2026-04-09
+
+- [X] Accelerator trait 抽象（KernelType/Precision/TensorDescriptor）
+- [X] GPU MMIO 外设（`0x2001_0000`，4KB，PLIC #13）
+- [X] TPU MMIO 外设（`0x2002_0000`，4KB，PLIC #14）
+- [X] GPU 基础内核：MatMul (FP32/INT8)、VectorAdd/Mul/Dot、Relu/Sigmoid/Softmax
+- [X] TPU 量化内核：INT8 矩阵乘、量化/反量化/重量化
+- [X] GPU Conv2d（直接卷积，多通道/padding/stride）
+- [X] GPU Pool2d（MaxPool、AvgPool）
+- [X] GPU 额外激活：Tanh、LeakyRelu、Relu6、VectorScale
+- [X] 命令队列模式（批量提交）
+- [X] pending_start DMA 桥接（Bus 检测 → execute_with_memory）
+- [X] 可视化后端 gpu state / tpu state 命令
+- [X] 前端 CoprocessorPanel GPU/TPU 状态面板
+- [X] 集成测试：CNN 前向传播、TPU INT8 端到端、GPU+TPU 流水线
+- [X] 软件 API 文档：`docs/guides/GPU_TPU_API.md`
+
+#### P5.2 里程碑验收（2026-04-09）
+
+- 新增文件：
+  - `src/traits/accelerator.rs`
+  - `src/peripheral/gpu.rs`
+  - `src/peripheral/tpu.rs`
+  - `tests/gpu_tpu_integration.rs`
+  - `docs/guides/GPU_TPU_API.md`
+- 验收测试：
+  - `cargo test --lib` 通过（304 passed, 0 failed）
+  - `cargo test --test gpu_tpu_integration` 通过（3 passed, 0 failed）
+  - `frontend` 构建通过（`npm run build`）
+- GPU 支持内核：MatMul、MatAdd、VectorAdd、VectorMul、VectorDot、VectorScale、Relu、Relu6、LeakyRelu、Sigmoid、Tanh、Softmax、Conv2d、Pool2dMax、Pool2dAvg
+- TPU 支持内核：INT8 量化矩阵乘（per-tensor 量化参数）
+
 ### P5.1: Hybrid Offload（规划中）
 
 > 来源：`docs/HYBRID_OFFLOAD.md`（草案，2026-04-03 并入路线图）
@@ -535,13 +565,13 @@ Phase 7: CI/发布工程化（规划）
 
 ### P6: Linux + SDL/Framebuffer 演示链路（已完成）
 
-- [x] 可视化后端支持 `framebuffer/fb` 命令（读取内存并转换 RGBA）
-- [x] 前端新增 Framebuffer 面板（地址/分辨率/像素格式可配置）
-- [x] 支持 `gray8/rgb565/rgb888` 三种源格式渲染
-- [x] 演示帧生成命令 `fb_demo <pong|checker|gradient>`（一键生成可视化画面）
-- [x] Windows 一键演示脚本 `scripts/run_framebuffer_demo.ps1`
-- [x] 接入 Linux 用户态程序输出到约定帧缓冲地址
-- [x] 串联 SDL/小游戏演示脚本与一键验收
+- [X] 可视化后端支持 `framebuffer/fb` 命令（读取内存并转换 RGBA）
+- [X] 前端新增 Framebuffer 面板（地址/分辨率/像素格式可配置）
+- [X] 支持 `gray8/rgb565/rgb888` 三种源格式渲染
+- [X] 演示帧生成命令 `fb_demo <pong|checker|gradient>`（一键生成可视化画面）
+- [X] Windows 一键演示脚本 `scripts/run_framebuffer_demo.ps1`
+- [X] 接入 Linux 用户态程序输出到约定帧缓冲地址
+- [X] 串联 SDL/小游戏演示脚本与一键验收
 
 #### P6 里程碑验收（时间线）
 

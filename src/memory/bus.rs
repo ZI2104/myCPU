@@ -4,7 +4,10 @@
 //! and routes memory accesses to the appropriate components.
 
 use crate::error::{check_alignment, Result, SimError};
-use crate::peripheral::{InputDevice, Lpu, LpuSnapshot, Npu, NpuSnapshot, Uart, VirtioBlock};
+use crate::peripheral::{
+    Gpu, GpuSnapshot, InputDevice, Lpu, LpuSnapshot, Npu, NpuSnapshot, Tpu, TpuSnapshot, Uart,
+    VirtioBlock,
+};
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
 use std::fmt;
@@ -59,6 +62,8 @@ impl Bus {
     const UART_IRQ_SOURCE: usize = 10;
     const NPU_IRQ_SOURCE: usize = 11;
     const LPU_IRQ_SOURCE: usize = 12;
+    const GPU_IRQ_SOURCE: usize = 13;
+    const TPU_IRQ_SOURCE: usize = 14;
 
     /// Create a new empty system bus.
     pub fn new() -> Self {
@@ -138,23 +143,11 @@ impl Bus {
                 let offset = target - base_addr;
                 peripheral.write(Addr::new(offset as u32), value.raw())?;
 
-                if let Some(virtio_block) = peripheral.as_any_mut().downcast_mut::<VirtioBlock>() {
-                    if virtio_block.has_pending_descriptor_notify() {
-                        virtio_block.process_pending_descriptor_notify(&mut self.ram_regions)?;
-                    }
-                }
-
-                if let Some(npu) = peripheral.as_any_mut().downcast_mut::<Npu>() {
-                    if npu.has_pending_descriptor_notify() {
-                        npu.process_pending_descriptor_notify(&mut self.ram_regions)?;
-                    }
-                }
-
-                if let Some(lpu) = peripheral.as_any_mut().downcast_mut::<Lpu>() {
-                    if lpu.has_pending_descriptor_notify() {
-                        lpu.process_pending_descriptor_notify(&mut self.ram_regions)?;
-                    }
-                }
+                // Dispatch pending work via the virtual method on Peripheral.
+                // Each accelerator overrides try_execute_pending to handle
+                // start-bit / descriptor-notify triggers without the Bus
+                // needing to know concrete types.
+                peripheral.try_execute_pending(&mut self.ram_regions)?;
 
                 return Ok(());
             }
@@ -372,6 +365,36 @@ impl Bus {
         None
     }
 
+    /// Get GPU snapshot if GPU peripheral is attached.
+    pub fn get_gpu_snapshot(&self) -> Option<GpuSnapshot> {
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() != "GPU" {
+                continue;
+            }
+
+            if let Some(gpu) = peripheral.as_any().downcast_ref::<Gpu>() {
+                return Some(gpu.snapshot());
+            }
+        }
+
+        None
+    }
+
+    /// Get TPU snapshot if TPU peripheral is attached.
+    pub fn get_tpu_snapshot(&self) -> Option<TpuSnapshot> {
+        for (_, _, peripheral) in &self.peripheral_regions {
+            if peripheral.name() != "TPU" {
+                continue;
+            }
+
+            if let Some(tpu) = peripheral.as_any().downcast_ref::<Tpu>() {
+                return Some(tpu.snapshot());
+            }
+        }
+
+        None
+    }
+
     /// Get timer and software interrupt status from CLINT.
     ///
     /// Returns (mtip, msip) where:
@@ -443,11 +466,17 @@ impl Bus {
     /// Current source mapping follows xv6-rv32 memlayout:
     /// - VirtIO block -> source 1
     /// - UART        -> source 10
+    /// - NPU         -> source 11
+    /// - LPU         -> source 12
+    /// - GPU         -> source 13
+    /// - TPU         -> source 14
     pub fn sync_plic_pending_from_peripherals(&mut self) {
         let mut virtio_pending = false;
         let mut uart_pending = false;
         let mut npu_pending = false;
         let mut lpu_pending = false;
+        let mut gpu_pending = false;
+        let mut tpu_pending = false;
 
         for (_, _, peripheral) in &self.peripheral_regions {
             if peripheral.name() == "VirtIO-Block" && peripheral.has_interrupt() {
@@ -462,9 +491,15 @@ impl Bus {
             if peripheral.name() == "LPU" && peripheral.has_interrupt() {
                 lpu_pending = true;
             }
+            if peripheral.name() == "GPU" && peripheral.has_interrupt() {
+                gpu_pending = true;
+            }
+            if peripheral.name() == "TPU" && peripheral.has_interrupt() {
+                tpu_pending = true;
+            }
         }
 
-        if !virtio_pending && !uart_pending && !npu_pending && !lpu_pending {
+        if !virtio_pending && !uart_pending && !npu_pending && !lpu_pending && !gpu_pending && !tpu_pending {
             return;
         }
 
@@ -484,6 +519,12 @@ impl Bus {
                     }
                     if lpu_pending {
                         plic.set_pending(Self::LPU_IRQ_SOURCE);
+                    }
+                    if gpu_pending {
+                        plic.set_pending(Self::GPU_IRQ_SOURCE);
+                    }
+                    if tpu_pending {
+                        plic.set_pending(Self::TPU_IRQ_SOURCE);
                     }
                 }
                 break;

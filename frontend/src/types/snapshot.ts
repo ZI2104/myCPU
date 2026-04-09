@@ -157,6 +157,51 @@ export interface LpuStateResponse {
   error?: string;
 }
 
+export interface GpuStateResponse {
+  type: 'gpu_state';
+  success: boolean;
+  control?: number;
+  status?: number;
+  kernel_type?: number;
+  precision?: number;
+  kernels_executed?: number;
+  cycles?: number;
+  ops_count?: number;
+  bytes_transferred?: number;
+  tasks_done?: number;
+  tasks_error?: number;
+  error_code?: number;
+  work_queue_len?: number;
+  conv_kernel_size?: number;
+  conv_stride?: number;
+  conv_padding?: number;
+  conv_input_dims?: number;
+  conv_channels?: number;
+  error?: string;
+}
+
+export interface TpuStateResponse {
+  type: 'tpu_state';
+  success: boolean;
+  control?: number;
+  status?: number;
+  kernel_type?: number;
+  m?: number;
+  n?: number;
+  k?: number;
+  matrices_computed?: number;
+  cycles?: number;
+  ops_count?: number;
+  tasks_done?: number;
+  tasks_error?: number;
+  error_code?: number;
+  input_scale?: number;
+  output_scale?: number;
+  input_zero_point?: number;
+  output_zero_point?: number;
+  error?: string;
+}
+
 // Breakpoints
 export interface Breakpoint {
   addr: number;

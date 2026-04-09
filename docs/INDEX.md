@@ -42,13 +42,14 @@ docs/
 
 ---
 
-## 3) 协处理器与扩展（NPU/LPU）
+## 3) 协处理器与加速器
 
 | 文档 | 说明 |
 |------|------|
 | [npu/NPU_SPEC.md](npu/NPU_SPEC.md) | NPU ABI / 寄存器规范（权威细节） |
 | [npu/NPU_OVERVIEW.md](npu/NPU_OVERVIEW.md) | NPU 集成概览与运行说明 |
 | [npu/NPU_INTEGRATION_SUMMARY.md](npu/NPU_INTEGRATION_SUMMARY.md) | NPU 集成调试总结 |
+| [guides/GPU_TPU_API.md](guides/GPU_TPU_API.md) | GPU/TPU MMIO 软件 API 文档 |
 
 ---
 

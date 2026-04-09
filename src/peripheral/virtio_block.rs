@@ -9,6 +9,7 @@
 //! stone before full VirtIO descriptor DMA support.
 
 use crate::error::{Result, SimError};
+use crate::peripheral::dma;
 use crate::traits::Memory;
 use crate::traits::Peripheral;
 use crate::types::Addr;
@@ -1006,6 +1007,17 @@ impl Peripheral for VirtioBlock {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+
+    fn try_execute_pending(
+        &mut self,
+        ram_regions: &mut dma::RamRegions,
+    ) -> Result<bool> {
+        if !self.has_pending_descriptor_notify() {
+            return Ok(false);
+        }
+        self.process_pending_descriptor_notify(ram_regions)?;
+        Ok(true)
     }
 }
 

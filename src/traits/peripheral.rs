@@ -4,6 +4,7 @@
 //! devices in the RISC-V simulator.
 
 use crate::error::Result;
+use crate::traits::Memory;
 use crate::types::Addr;
 use std::any::Any;
 
@@ -84,6 +85,18 @@ pub trait Peripheral: Send {
     /// Mutable downcast to Any for runtime type inspection.
     fn as_any_mut(&mut self) -> &mut dyn Any {
         unreachable!("as_any_mut must be implemented for peripherals that need downcasting")
+    }
+
+    /// Try to execute any pending DMA operation after a register write.
+    ///
+    /// Returns `true` if work was performed. The default does nothing.
+    /// Accelerators (GPU, TPU, etc.) override this to trigger compute
+    /// when the Bus detects a pending start or descriptor notification.
+    fn try_execute_pending(
+        &mut self,
+        _ram_regions: &mut Vec<(Addr, usize, Box<dyn Memory>)>,
+    ) -> Result<bool> {
+        Ok(false)
     }
 }
 

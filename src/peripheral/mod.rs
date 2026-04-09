@@ -18,14 +18,19 @@
 //! bus.attach_peripheral(Addr::new(0x1000_0000), Box::new(uart));
 //! ```
 
+pub mod dma;
+mod gpu;
 mod input;
 mod lpu;
 mod npu;
+mod tpu;
 mod uart;
 mod virtio_block;
 
+pub use gpu::{Gpu, GpuSnapshot, GPU_BASE, GPU_SIZE};
 pub use input::{InputDevice, INPUT_BASE, INPUT_SIZE};
 pub use lpu::{Lpu, LpuSnapshot, LPU_BASE, LPU_SIZE};
 pub use npu::{Npu, NpuSnapshot, NPU_BASE, NPU_SIZE};
+pub use tpu::{Tpu, TpuSnapshot, TPU_BASE, TPU_SIZE};
 pub use uart::{OutputCallback, Uart, UART_BASE, UART_IRQ, UART_SIZE};
 pub use virtio_block::{VirtioBlock, VirtioGuestMemory, VIRTIO_BLK_BASE, VIRTIO_BLK_SIZE};

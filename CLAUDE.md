@@ -151,6 +151,8 @@ cargo fmt
 | `RegIdx(u8)`       | 寄存器索引 (0-31) |
 | `Memory` trait     | 内存访问接口      |
 | `Peripheral` trait | 外设接口          |
+| `Accelerator` trait | 加速器接口 (GPU/TPU) |
+| `KernelType` enum  | GPU/TPU 内核类型 |
 | `Cpu`              | CPU 核心结构      |
 | `CpuState`         | CPU 状态快照      |
 
@@ -158,13 +160,13 @@ cargo fmt
 
 - 架构设计: `docs/design/ARCHITECTURE.md`
 - 开发路线: `docs/design/ROADMAP.md`
+- GPU/TPU API: `docs/guides/GPU_TPU_API.md`
 - 项目说明: `README.md`
 
 ## 下一步
 
-当前 Phase 1 已完成，下一步是实现 Phase 2 的 RV32I 指令集：
+当前 Phase 1-6 已完成，GPU/TPU 模拟加速器（Phase 5.2）已实现。可选方向：
 
-1. 创建 `src/instruction/` 目录
-2. 实现指令译码器 (`decoder.rs`)
-3. 实现 R/I/S/B/U/J/System 类型指令
-4. 在 `Cpu::execute()` 中调用指令执行
+1. 在模拟器上运行 miniOS / Linux 最小系统
+2. 形成: 自己写 CPU → 自己写 OS → 自己跑 Linux 的完整闭环
+3. Hybrid Offload 路径（异步队列 + CPU 回退）
