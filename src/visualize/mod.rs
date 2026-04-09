@@ -7,7 +7,7 @@ pub mod linux_fb_program;
 pub mod server;
 pub mod snapshot;
 
-pub use server::{start_visualize_server, VisualizeServer};
+pub use server::{start_visualize_server, start_visualize_server_with_initial_pc, VisualizeServer};
 pub use snapshot::{
     disassemble, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot,
     PipelineSnapshot, WbStageInfo,

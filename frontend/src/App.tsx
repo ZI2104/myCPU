@@ -40,7 +40,6 @@ function App() {
   const [lpuState, setLpuState] = useState<LpuStateResponse | null>(null);
   const [pipelineResetKey, setPipelineResetKey] = useState(0);
   const [followKey, setFollowKey] = useState(0);
-  const [initialPc, setInitialPc] = useState<number | null>(null);
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
   const framebufferHandlersRef = useRef<((data: FramebufferResponse) => void)[]>([]);
 
@@ -60,9 +59,6 @@ function App() {
           framebufferHandlersRef.current.forEach(handler => handler(fbResponse));
         } else if (data.type === 'framebuffer_game') {
           setGameState(data as FramebufferGameResponse);
-        } else if (data && data.pc !== undefined && initialPc === null) {
-          // record the initial PC on first snapshot so reset can restore it
-          setInitialPc(data.pc);
         } else if (data.type === 'input_state') {
           setInputState(data as InputStateResponse);
         } else if (data.status !== undefined) {
@@ -119,11 +115,8 @@ function App() {
     setRunning(false);
     setPipelineResetKey(prev => prev + 1);
     setFollowKey(k => k + 1);
-    // Ensure backend uses the program's initial PC on reset: set initial PC
-    // to the recorded value (if known) before issuing reset.
-    if (initialPc !== null) {
-      send(`set_initial_pc 0x${initialPc.toString(16)}`);
-    }
+    // Do not override backend initial_pc using runtime snapshot PC.
+    // Backend already tracks authoritative initial PC (ELF entry / CLI --pc).
     // send reset and ensure the CPU is paused afterward (some backends auto-resume)
     send('reset');
     // small safeguard: request pause explicitly to stop auto-run
@@ -236,7 +229,14 @@ function App() {
               </div>
 
               {activeTab === 'pipeline' && (
-                <PipelineVisualizer pipeline={snapshot.pipeline} resetKey={pipelineResetKey} followKey={followKey} cycle={snapshot.perf.cycles} />
+                <PipelineVisualizer
+                  pipeline={snapshot.pipeline}
+                  resetKey={pipelineResetKey}
+                  followKey={followKey}
+                  cycle={snapshot.perf.cycles}
+                  running={running}
+                  resetSequence={snapshot.reset_sequence ?? 0}
+                />
               )}
 
               {activeTab === 'memory' && (

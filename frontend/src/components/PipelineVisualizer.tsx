@@ -7,12 +7,15 @@ interface PipelineVisualizerProps {
   resetKey?: number;
   followKey?: number;
   cycle?: number; // optional server-provided global cycle counter
+  running?: boolean;
+  resetSequence?: number;
 }
 
 interface HistoryEntry {
   pipeline: PipelineSnapshot;
   timestamp: number;
   cycle: number;
+  resetSequence: number;
 }
 
 // 获取各阶段的详情信息
@@ -77,13 +80,21 @@ const STAGES = [
   { key: 'WB' as const, label: 'WB' },
 ];
 
-export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline, resetKey, followKey, cycle }) => {
+export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
+  pipeline,
+  resetKey,
+  followKey,
+  cycle,
+  running = false,
+  resetSequence = 0,
+}) => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const prevPipelineRef = useRef<PipelineSnapshot | null>(null);
   const prevResetKeyRef = useRef<number>(resetKey ?? 0);
   const cycleCounterRef = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledRef = useRef<boolean>(false);
+  const suppressNextScrollEventRef = useRef<boolean>(false);
   const prevFollowKeyRef = useRef<number | undefined>(undefined);
 
   // 当 resetKey 变化时清空历史
@@ -109,6 +120,13 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
     }
   }, [followKey]);
 
+  // While running, keep auto-follow enabled to always show the newest cycle.
+  useEffect(() => {
+    if (running) {
+      userScrolledRef.current = false;
+    }
+  }, [running]);
+
   useEffect(() => {
     if (!pipeline) return;
 
@@ -125,6 +143,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
         pipeline,
         timestamp: Date.now(),
         cycle: cycleNumber,
+        resetSequence,
       };
       // debug: log cycle numbers for troubleshooting missing-even-cycles (dev only)
       if (import.meta.env.DEV) {
@@ -132,7 +151,8 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
       }
       // detect gaps between last recorded cycle (prev[0]) and this new cycle
       const placeholders: HistoryEntry[] = [];
-      const lastRecorded = prev.length > 0 ? prev[0].cycle : (newEntry.cycle - 1);
+      const sameResetPrev = prev.filter(e => e.resetSequence === resetSequence);
+      const lastRecorded = sameResetPrev.length > 0 ? sameResetPrev[0].cycle : (newEntry.cycle - 1);
       const gap = newEntry.cycle - lastRecorded;
       if (gap > 1) {
         for (let c = lastRecorded + 1; c < newEntry.cycle; c++) {
@@ -148,6 +168,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
             },
             timestamp: Date.now() + c,
             cycle: c,
+            resetSequence,
           });
         }
       }
@@ -157,7 +178,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
       const map = new Map<number, HistoryEntry>();
 
       // Start by inserting previous entries (they will be overwritten by newEntry)
-      for (const e of prev) {
+      for (const e of sameResetPrev) {
         map.set(e.cycle, e);
       }
 
@@ -179,14 +200,15 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
 
     // auto-scroll to the latest cycles if user hasn't manually scrolled
     requestAnimationFrame(() => {
-      if (containerRef.current && !userScrolledRef.current) {
+      if (containerRef.current && (running || !userScrolledRef.current)) {
         // scroll to the rightmost position (latest cycles)
+        suppressNextScrollEventRef.current = true;
         containerRef.current.scrollLeft = Math.max(0, containerRef.current.scrollWidth - containerRef.current.clientWidth);
       }
     });
 
     prevPipelineRef.current = pipeline;
-  }, [pipeline]);
+  }, [pipeline, running, cycle, resetSequence]);
 
   if (!pipeline) {
     return <div className="pipeline-visualizer">No pipeline data</div>;
@@ -226,7 +248,15 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ pipeline
         <div
           className="timeline-columns"
           ref={el => { containerRef.current = el; }}
-          onScroll={() => { userScrolledRef.current = true; }}
+          onScroll={() => {
+            if (suppressNextScrollEventRef.current) {
+              suppressNextScrollEventRef.current = false;
+              return;
+            }
+            if (!running) {
+              userScrolledRef.current = true;
+            }
+          }}
         >
           {visibleHistory.map((entry) => (
             <div key={entry.cycle} className="timeline-column">

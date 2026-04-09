@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CpuSnapshot } from '../types/snapshot';
 
 interface UseWebSocketReturn {
@@ -15,6 +15,8 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   const [error, setError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const latestResetSequenceRef = useRef<number>(0);
+  const latestCycleRef = useRef<number>(-1);
 
   useEffect(() => {
     const ws = new WebSocket(url);
@@ -23,11 +25,15 @@ export function useWebSocket(url: string): UseWebSocketReturn {
       console.log('WebSocket connected');
       setConnected(true);
       setError(null);
+      latestResetSequenceRef.current = 0;
+      latestCycleRef.current = -1;
     };
 
     ws.onclose = () => {
       console.log('WebSocket disconnected');
       setConnected(false);
+      latestResetSequenceRef.current = 0;
+      latestCycleRef.current = -1;
     };
 
     ws.onerror = (e) => {
@@ -42,7 +48,25 @@ export function useWebSocket(url: string): UseWebSocketReturn {
       try {
         const data = JSON.parse(rawData);
         if (data.registers) {
-          setSnapshot(data as CpuSnapshot);
+          const next = data as CpuSnapshot;
+          const nextResetSequence = typeof next.reset_sequence === 'number' ? next.reset_sequence : 0;
+          const nextCycle = typeof next.perf?.cycles === 'number' ? next.perf.cycles : -1;
+
+          const currentResetSequence = latestResetSequenceRef.current;
+          const currentCycle = latestCycleRef.current;
+
+          // Drop stale snapshots that are older than the latest accepted
+          // (important around reset where mixed frames may arrive close together).
+          if (nextResetSequence < currentResetSequence) {
+            return;
+          }
+          if (nextResetSequence === currentResetSequence && nextCycle < currentCycle) {
+            return;
+          }
+
+          latestResetSequenceRef.current = nextResetSequence;
+          latestCycleRef.current = nextCycle;
+          setSnapshot(next);
         } else if (data.status) {
           console.log('Status:', data.status);
         } else if (data.error) {

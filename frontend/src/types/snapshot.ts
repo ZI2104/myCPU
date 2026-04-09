@@ -9,7 +9,7 @@ export interface CpuSnapshot {
   halted: boolean;
   // Incremented by server on Reset so frontend can detect and prioritize
   // reset-aligned snapshots. Optional for backward compatibility.
-  reset_sequence?: number;
+  reset_sequence?: number; // Incremented by server on Reset so frontend can detect and prioritize
 }
 
 export interface PipelineSnapshot {

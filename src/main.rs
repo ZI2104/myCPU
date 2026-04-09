@@ -13,7 +13,7 @@ use mycpu::perf::PerfReport;
 use mycpu::peripheral::{InputDevice, Lpu, Npu, Uart, VirtioBlock};
 use mycpu::types::{Addr, RegIdx, Word};
 use mycpu::visualize::linux_fb_program;
-use mycpu::visualize::start_visualize_server;
+use mycpu::visualize::start_visualize_server_with_initial_pc;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1726,7 +1726,7 @@ fn start_visualize(
     // Create tokio runtime and start server
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        start_visualize_server(cpu, port)
+        start_visualize_server_with_initial_pc(cpu, port, start_pc.raw())
             .await
             .map_err(|e| anyhow::anyhow!("{}", e))
     })

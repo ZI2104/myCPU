@@ -9,12 +9,12 @@ use crate::error::Result;
 use crate::memory::Ram;
 use crate::peripheral::INPUT_BASE;
 use crate::types::Addr;
-use log::debug;
 use crate::visualize::snapshot::{
     disassemble, Breakpoint, CpuSnapshot, DisassembledInstruction, DisassemblyResponse,
     FramebufferResponse, HistoryRecord, HistoryResponse, MemoryReadResponse,
 };
 use futures_util::{SinkExt, StreamExt};
+use log::debug;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -757,6 +757,8 @@ pub struct CommandContext {
     initial_pc: Arc<Mutex<u32>>,
     /// Clock lock to serialize clock() with reset operations
     pub clock_lock: Arc<Mutex<()>>,
+    /// Reset sequence counter
+    pub reset_sequence: Arc<Mutex<u64>>,
 }
 
 impl CommandContext {
@@ -772,6 +774,7 @@ impl CommandContext {
         initial_pc: Arc<Mutex<u32>>,
         state_tx: broadcast::Sender<CpuSnapshot>,
         clock_lock: Arc<Mutex<()>>,
+        reset_sequence: Arc<Mutex<u64>>,
     ) -> Self {
         Self {
             cpu,
@@ -784,6 +787,7 @@ impl CommandContext {
             game_state,
             initial_pc,
             clock_lock,
+            reset_sequence,
         }
     }
 
@@ -821,13 +825,23 @@ pub struct VisualizeServer {
     initial_pc: Arc<Mutex<u32>>,
     /// Lock used to serialize clock() calls with reset so reset is atomic
     clock_lock: Arc<Mutex<()>>,
+    /// Reset sequence counter
+    reset_sequence: Arc<Mutex<u64>>,
 }
 
 impl VisualizeServer {
     /// Create a new visualization server.
     pub fn new(cpu: PipelineCpu) -> Self {
-        let (state_tx, _) = broadcast::channel(16);
         let initial_pc = cpu.pc().raw();
+        Self::new_with_initial_pc(cpu, initial_pc)
+    }
+
+    /// Create a new visualization server with an explicit initial PC used by Reset.
+    ///
+    /// This is useful when CPU state may have advanced before server startup
+    /// (e.g. warmup). Reset should still return to the original entry/start PC.
+    pub fn new_with_initial_pc(cpu: PipelineCpu, initial_pc: u32) -> Self {
+        let (state_tx, _) = broadcast::channel(16);
         Self {
             cpu: Arc::new(Mutex::new(cpu)),
             running: Arc::new(Mutex::new(false)),
@@ -839,6 +853,7 @@ impl VisualizeServer {
             max_history: 10000,
             initial_pc: Arc::new(Mutex::new(initial_pc)),
             clock_lock: Arc::new(Mutex::new(())),
+            reset_sequence: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -859,6 +874,7 @@ impl VisualizeServer {
         let history = self.history.clone();
         let game_state = self.game_state.clone();
         let max_history = self.max_history;
+        let reset_sequence = self.reset_sequence.clone();
 
         // Spawn the continuous execution task
         let clock_lock_for_loop = self.clock_lock.clone();
@@ -871,6 +887,7 @@ impl VisualizeServer {
             history.clone(),
             max_history,
             clock_lock_for_loop,
+            reset_sequence,
         ));
 
         // Accept client connections
@@ -888,6 +905,7 @@ impl VisualizeServer {
             // `state_tx` isn't moved into the connection closure
             let state_tx_for_conn = state_tx.clone();
             let clock_lock_for_conn = self.clock_lock.clone();
+            let reset_sequence_for_conn = self.reset_sequence.clone();
 
             tokio::spawn(async move {
                 println!("Client connected from {}", client_addr);
@@ -905,7 +923,8 @@ impl VisualizeServer {
                 // Send initial state
                 {
                     let cpu_guard = cpu.lock().await;
-                    let snapshot = cpu_guard.snapshot();
+                    let mut snapshot = cpu_guard.snapshot();
+                    snapshot.reset_sequence = *reset_sequence_for_conn.lock().await;
                     let json = serde_json::to_string(&snapshot).unwrap();
                     if tx.send(Message::Text(json)).await.is_err() {
                         return;
@@ -935,6 +954,7 @@ impl VisualizeServer {
                                                 initial_pc.clone(),
                                                 state_tx_for_conn.clone(),
                                                 clock_lock_for_conn.clone(),
+                                                reset_sequence_for_conn.clone(),
                                             );
                                             if Self::execute_command(&mut ctx, command).await.is_err() {
                                                 break;
@@ -985,7 +1005,8 @@ impl VisualizeServer {
             Command::State => {
                 let json = {
                     let cpu_guard = ctx.cpu.lock().await;
-                    let snapshot = cpu_guard.snapshot();
+                    let mut snapshot = cpu_guard.snapshot();
+                    snapshot.reset_sequence = *ctx.reset_sequence.lock().await;
                     serde_json::to_string(&snapshot).unwrap()
                 };
                 ctx.send_json(json).await;
@@ -997,7 +1018,9 @@ impl VisualizeServer {
                     let _clk = ctx.clock_lock.lock().await;
                     let mut cpu_guard = ctx.cpu.lock().await;
                     let _ = cpu_guard.clock();
-                    cpu_guard.snapshot()
+                    let mut snapshot = cpu_guard.snapshot();
+                    snapshot.reset_sequence = *ctx.reset_sequence.lock().await;
+                    snapshot
                 };
                 // Broadcast to all subscribers (including this client) to avoid
                 // sending the same snapshot twice via both broadcast and direct send.
@@ -1021,7 +1044,9 @@ impl VisualizeServer {
                         executed += 1;
                     }
 
-                    (executed, cpu_guard.snapshot())
+                    let mut snapshot = cpu_guard.snapshot();
+                    snapshot.reset_sequence = *ctx.reset_sequence.lock().await;
+                    (executed, snapshot)
                 };
 
                 // Broadcast the final snapshot
@@ -1084,6 +1109,12 @@ impl VisualizeServer {
                     );
                     cpu_guard.snapshot()
                 };
+
+                let new_reset_sequence = {
+                    let mut seq_guard = ctx.reset_sequence.lock().await;
+                    *seq_guard = seq_guard.saturating_add(1);
+                    *seq_guard
+                };
                 // Notify client that CPU is paused after reset
                 ctx.send_status("paused").await;
 
@@ -1093,14 +1124,35 @@ impl VisualizeServer {
                 // the top-level PC and IF-stage PC to the configured initial PC.
                 let mut modified_snapshot = snapshot_val.clone();
                 let initial_pc = *ctx.initial_pc.lock().await;
-                // Force top-level pc and IF-stage to initial PC so UI shows the
+                // Force top-level pc to initial PC so UI shows the
                 // expected fetch state immediately after reset.
                 modified_snapshot.pc = initial_pc;
+                modified_snapshot.reset_sequence = new_reset_sequence;
+
+                // Read the actual instruction at initial_pc from memory so the
+                // IF stage shows the correct first instruction instead of 0.
+                let instruction = {
+                    let cpu_guard = ctx.cpu.lock().await;
+                    let bus = cpu_guard.bus();
+                    let mut bytes = [0u8; 4];
+                    for i in 0..4 {
+                        match bus.read_byte(Addr::new(initial_pc + i)) {
+                            Ok(byte) => bytes[i as usize] = byte.raw(),
+                            Err(_) => {
+                                bytes = [0u8; 4];
+                                break;
+                            }
+                        }
+                    }
+                    u32::from_le_bytes(bytes)
+                };
+                let instruction_str = crate::visualize::snapshot::disassemble(instruction);
+
                 modified_snapshot.pipeline.if_stage =
                     Some(crate::visualize::snapshot::IfStageInfo {
                         pc: initial_pc,
-                        instruction: 0,
-                        instruction_str: String::new(),
+                        instruction,
+                        instruction_str,
                     });
                 // Reset performance counters on the snapshot so frontend cycle
                 // columns restart from C0 after a reset.
@@ -1110,6 +1162,13 @@ impl VisualizeServer {
                 modified_snapshot.perf.stalls = 0;
                 modified_snapshot.perf.load_use_stalls = 0;
                 modified_snapshot.perf.control_hazards = 0;
+                modified_snapshot.perf.load_use_stall_rate = 0.0;
+                modified_snapshot.perf.control_hazard_rate = 0.0;
+                modified_snapshot.perf.load_use_stall_share = 0.0;
+                modified_snapshot.perf.control_hazard_share = 0.0;
+                modified_snapshot.perf.branch_accuracy = None;
+                modified_snapshot.perf.memory_reads = 0;
+                modified_snapshot.perf.memory_writes = 0;
 
                 let _ = ctx.state_tx.send(modified_snapshot.clone());
                 // Also send the modified snapshot directly to the requesting client
@@ -1632,6 +1691,7 @@ impl VisualizeServer {
         history: Arc<Mutex<VecDeque<HistoryRecord>>>,
         max_history: usize,
         clock_lock: Arc<Mutex<()>>,
+        reset_sequence: Arc<Mutex<u64>>,
     ) {
         loop {
             let is_running = *running.lock().await;
@@ -1644,7 +1704,7 @@ impl VisualizeServer {
 
             // Execute cycle and collect data
             let (snapshot, new_pc, cycles_after) = {
-                let mut cpu_guard = cpu.lock().await;
+                let cpu_guard = cpu.lock().await;
                 if cpu_guard.is_halted() {
                     let mut running_guard = running.lock().await;
                     *running_guard = false;
@@ -1719,7 +1779,8 @@ impl VisualizeServer {
                         *running_guard = false;
 
                         // Broadcast a final snapshot so clients see halted state
-                        let snapshot = cpu_guard.snapshot();
+                        let mut snapshot = cpu_guard.snapshot();
+                        snapshot.reset_sequence = *reset_sequence.lock().await;
                         let _ = state_tx.send(snapshot);
 
                         // Sleep briefly to avoid tight error loop.
@@ -1732,7 +1793,8 @@ impl VisualizeServer {
                 // After executing, collect snapshot and metrics
                 let new_pc = cpu_guard.pc().raw();
                 let cycles_after = cpu_guard.cycles();
-                let snapshot = cpu_guard.snapshot();
+                let mut snapshot = cpu_guard.snapshot();
+                snapshot.reset_sequence = *reset_sequence.lock().await;
 
                 // Derive instruction info from snapshot IF stage if available
                 let (instr_opt, instr_str_opt) = if let Some(if_stage) = &snapshot.pipeline.if_stage
@@ -1987,7 +2049,7 @@ mod tests {
         use crate::types::Addr;
 
         // Create CPU with initial PC 0x1000
-        let mut bus = Bus::new();
+        let bus = Bus::new();
         let cpu = PipelineCpu::with_pc(bus, Addr::new(0x1000));
         let server = VisualizeServer::new(cpu);
 
@@ -2017,5 +2079,15 @@ mod tests {
 /// Start the visualization server with a CPU.
 pub async fn start_visualize_server(cpu: PipelineCpu, port: u16) -> Result<()> {
     let server = VisualizeServer::new(cpu);
+    server.start(port).await
+}
+
+/// Start visualization server with an explicit initial PC for Reset.
+pub async fn start_visualize_server_with_initial_pc(
+    cpu: PipelineCpu,
+    port: u16,
+    initial_pc: u32,
+) -> Result<()> {
+    let server = VisualizeServer::new_with_initial_pc(cpu, initial_pc);
     server.start(port).await
 }

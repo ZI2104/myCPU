@@ -74,21 +74,26 @@ body {
 .status-indicator {
   width: 12px;
   height: 12px;
+  min-width: 12px;
+  max-width: 12px;
   padding: 0;
   margin: 0;
   border-radius: 50%;
   display: inline-block;
   vertical-align: middle;
-  box-sizing: content-box;
+  box-sizing: border-box;
   flex-shrink: 0;
+  box-shadow: 0 0 4px rgba(0, 0, 0. 1px);
 }
 
 .status-indicator.connected {
   background: #4CAF50;
+  box-shadow: none;
 }
 
 .status-indicator.disconnected {
   background: #FF5722;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 1px);
 }
 
 .controls {
