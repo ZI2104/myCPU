@@ -15,11 +15,16 @@
 //! ```rust,no_run
 //! use mycpu::loader::ElfLoader;
 //! use mycpu::memory::Bus;
+//! use mycpu::error::Result;
 //!
+//! fn main() -> Result<()> {
 //! let mut bus = Bus::new();
 //! let loader = ElfLoader::from_file("program.elf")?;
 //! loader.load_into(&mut bus)?;
 //! let entry = loader.entry_point();
+//! let _ = entry;
+//! Ok(())
+//! }
 //! ```
 
 use crate::error::{Result, SimError};

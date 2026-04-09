@@ -4,10 +4,13 @@
 //! reports from collected performance statistics.
 
 use crate::cpu::PerfCollector;
+use serde::Serialize;
 use std::fmt;
+use std::fs;
+use std::path::Path;
 
 /// Performance report containing execution statistics.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct PerfReport {
     /// Total cycles executed
     pub cycles: u64,
@@ -42,7 +45,7 @@ pub struct PerfReport {
 }
 
 /// Branch prediction statistics.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct BranchStats {
     /// Total branches executed
     pub total: u64,
@@ -55,7 +58,7 @@ pub struct BranchStats {
 }
 
 /// Memory access statistics.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct MemoryStats {
     /// Memory reads
     pub reads: u64,
@@ -65,6 +68,14 @@ pub struct MemoryStats {
     pub total: u64,
     /// Memory operations per instruction
     pub mops_per_instruction: f64,
+    /// Cache hits
+    pub cache_hits: u64,
+    /// Cache misses
+    pub cache_misses: u64,
+    /// TLB hits
+    pub tlb_hits: u64,
+    /// TLB misses
+    pub tlb_misses: u64,
 }
 
 impl PerfReport {
@@ -117,6 +128,10 @@ impl PerfReport {
             writes: collector.memory_writes,
             total: collector.memory_reads + collector.memory_writes,
             mops_per_instruction: collector.mops_per_instruction(),
+            cache_hits: collector.cache_hits,
+            cache_misses: collector.cache_misses,
+            tlb_hits: collector.tlb_hits,
+            tlb_misses: collector.tlb_misses,
         };
 
         // Calculate efficiency (ideal CPI = 1.0 for a perfect pipeline)
@@ -139,6 +154,16 @@ impl PerfReport {
             memory,
             efficiency,
         }
+    }
+
+    /// Serialize the report to a pretty JSON string.
+    pub fn to_json_string(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Write the JSON representation to a path.
+    pub fn write_json_to<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        fs::write(path, self.to_json_string())
     }
 
     /// Format a large number with thousand separators.
@@ -305,6 +330,26 @@ impl fmt::Display for PerfReport {
         )?;
         writeln!(
             f,
+            "║  Cache Hits:      {:>42} ║",
+            Self::format_number(self.memory.cache_hits)
+        )?;
+        writeln!(
+            f,
+            "║  Cache Misses:    {:>42} ║",
+            Self::format_number(self.memory.cache_misses)
+        )?;
+        writeln!(
+            f,
+            "║  TLB Hits:        {:>42} ║",
+            Self::format_number(self.memory.tlb_hits)
+        )?;
+        writeln!(
+            f,
+            "║  TLB Misses:      {:>42} ║",
+            Self::format_number(self.memory.tlb_misses)
+        )?;
+        writeln!(
+            f,
             "╚══════════════════════════════════════════════════════════════╝"
         )?;
 
@@ -332,6 +377,10 @@ impl MemoryStats {
             writes: 0,
             total: 0,
             mops_per_instruction: 0.0,
+            cache_hits: 0,
+            cache_misses: 0,
+            tlb_hits: 0,
+            tlb_misses: 0,
         }
     }
 }

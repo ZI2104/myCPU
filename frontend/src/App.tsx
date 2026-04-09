@@ -6,6 +6,7 @@ import { DebugInspector } from './components/DebugInspector';
 import { FramebufferView } from './components/FramebufferView';
 import { GameFlowPanel } from './components/GameFlowPanel';
 import { InputPanel } from './components/InputPanel';
+import { MemoryHierarchyPanel } from './components/MemoryHierarchyPanel';
 import { MemoryView } from './components/MemoryView';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PipelineVisualizer } from './components/PipelineVisualizer';
@@ -296,6 +297,7 @@ function App() {
 
             <div className="right-panel">
               <PerformanceDashboard perf={snapshot.perf} />
+              <MemoryHierarchyPanel perf={snapshot.perf} />
               <PredictorPanel
                 predictor={snapshot.predictor}
                 onSwitchPredictor={(type: string) => send(`predictor_switch ${type}`)}

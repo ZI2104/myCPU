@@ -116,6 +116,30 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ perf
           <span>Memory Writes:</span>
           <span>{formatNumber(safe(perf.memory_writes))}</span>
         </div>
+        {typeof perf.cache_hits === 'number' && (
+          <div className="detail-row">
+            <span>Cache Hits:</span>
+            <span>{formatNumber(safe(perf.cache_hits))}</span>
+          </div>
+        )}
+        {typeof perf.cache_misses === 'number' && (
+          <div className="detail-row">
+            <span>Cache Misses:</span>
+            <span>{formatNumber(safe(perf.cache_misses))}</span>
+          </div>
+        )}
+        {typeof perf.tlb_hits === 'number' && (
+          <div className="detail-row">
+            <span>TLB Hits:</span>
+            <span>{formatNumber(safe(perf.tlb_hits))}</span>
+          </div>
+        )}
+        {typeof perf.tlb_misses === 'number' && (
+          <div className="detail-row">
+            <span>TLB Misses:</span>
+            <span>{formatNumber(safe(perf.tlb_misses))}</span>
+          </div>
+        )}
       </div>
     </div>
   );

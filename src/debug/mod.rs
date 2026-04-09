@@ -20,14 +20,10 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust
 //! use mycpu::debug::GdbServer;
-//! use mycpu::cpu::Cpu;
 //!
-//! async fn run_debugger(cpu: &mut Cpu) {
-//!     let mut server = GdbServer::new(cpu, 1234);
-//!     server.run().await.unwrap();
-//! }
+//! let _server = GdbServer::new(1234);
 //! ```
 
 use crate::cpu::{Cpu, CpuState};
@@ -298,7 +294,7 @@ impl GdbServer {
             Err(_) => return "E01".to_string(),
         };
 
-        let cpu = self.cpu.lock().await;
+        let mut cpu = self.cpu.lock().await;
         let mut result = String::with_capacity(len * 2);
         for i in 0..len {
             match cpu.read_byte(Addr::new(addr.wrapping_add(i as u32))) {

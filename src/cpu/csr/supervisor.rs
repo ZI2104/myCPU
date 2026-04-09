@@ -75,6 +75,34 @@ impl Sstatus {
             self.value &= !(1 << 8);
         }
     }
+
+    /// Supervisor User Memory access (SUM).
+    /// When set, S-mode may access User-mode pages for Load/Store.
+    pub fn sum(&self) -> bool {
+        (self.value & (1 << 18)) != 0
+    }
+
+    pub fn set_sum(&mut self, value: bool) {
+        if value {
+            self.value |= 1 << 18;
+        } else {
+            self.value &= !(1 << 18);
+        }
+    }
+
+    /// Make eXecutable Readable (MXR).
+    /// When set, pages with X=1 may be read (Load) as well.
+    pub fn mxr(&self) -> bool {
+        (self.value & (1 << 19)) != 0
+    }
+
+    pub fn set_mxr(&mut self, value: bool) {
+        if value {
+            self.value |= 1 << 19;
+        } else {
+            self.value &= !(1 << 19);
+        }
+    }
 }
 
 /// Supervisor Interrupt Enable register (sie).

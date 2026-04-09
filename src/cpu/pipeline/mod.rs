@@ -31,7 +31,7 @@ pub use registers::{
 // Re-export for visualization
 use crate::visualize::snapshot::{
     disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo,
-    MemStageInfo, PerfSnapshot, PipelineSnapshot, PredictorSnapshot, PreIfStageInfo, WbStageInfo,
+    MemStageInfo, PerfSnapshot, PipelineSnapshot, PreIfStageInfo, PredictorSnapshot, WbStageInfo,
 };
 
 use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
@@ -84,6 +84,13 @@ pub struct PipelineCpu {
     // Branch predictor
     predictor: PredictorManager,
 
+    // TLB (Translation Lookaside Buffer)
+    tlb: crate::cpu::Tlb,
+
+    // Caches
+    i_cache: crate::cpu::Cache,
+    d_cache: crate::cpu::Cache,
+
     // Saved WB input for snapshot (old mem_wb before clock update)
     wb_input: MemWbRegister,
 
@@ -118,6 +125,15 @@ impl PipelineCpu {
             writeback_stage: WritebackStage::new(),
             hazard_unit: HazardUnit::default(),
             predictor: PredictorManager::new(PredictorType::None),
+            tlb: crate::cpu::Tlb::new(),
+            i_cache: crate::cpu::Cache::new(
+                crate::cpu::cache::CacheType::Instruction,
+                crate::cpu::cache::ICACHE_SIZE,
+            ),
+            d_cache: crate::cpu::Cache::new(
+                crate::cpu::cache::CacheType::Data,
+                crate::cpu::cache::DCACHE_SIZE,
+            ),
             wb_input: MemWbRegister::default(),
             perf: PerfCollector::new(),
             instructions_executed: 0,
@@ -468,6 +484,10 @@ impl PipelineCpu {
                 branch_accuracy: perf.branch_accuracy(),
                 memory_reads: perf.memory_reads,
                 memory_writes: perf.memory_writes,
+                cache_hits: perf.cache_hits,
+                cache_misses: perf.cache_misses,
+                tlb_hits: perf.tlb_hits,
+                tlb_misses: perf.tlb_misses,
             },
             predictor: {
                 let pstats = self.predictor.stats();
@@ -565,12 +585,24 @@ impl PipelineCpu {
         // 2b. Memory stage - use data_latch for loads, write bus for stores
         let satp_for_mem = self.csr.satp;
         let privilege_for_mem = self.privilege;
+        let sstatus_sum = self.csr.sstatus.sum();
+        let sstatus_mxr = self.csr.sstatus.mxr();
         let new_mem_wb = match self.memory_stage.execute_with_latch(
             &self.ex_mem,
             &self.data_latch,
             &mut self.bus,
             |bus, vaddr, access| {
-                mmu::translate_addr(bus, &satp_for_mem, privilege_for_mem, vaddr, access)
+                Self::translate_with_tlb_components(
+                    &mut self.tlb,
+                    &mut self.perf,
+                    bus,
+                    satp_for_mem,
+                    privilege_for_mem,
+                    sstatus_sum,
+                    sstatus_mxr,
+                    vaddr,
+                    access,
+                )
             },
         ) {
             Ok(mem_wb) => mem_wb,
@@ -595,6 +627,20 @@ impl PipelineCpu {
         }
         if self.ex_mem.ctrl.mem_write {
             self.perf.record(PerfEvent::MemoryWrites);
+            // Store currently writes through bus in MEM stage; invalidate D-cache line
+            // to avoid stale cached data until a dedicated store-through cache path is added.
+            let vaddr = Addr::new(self.ex_mem.alu_result.raw());
+            if let Ok(paddr) = mmu::translate_addr(
+                &mut self.bus,
+                &satp_for_mem,
+                privilege_for_mem,
+                vaddr,
+                MemoryAccessType::Store,
+                sstatus_sum,
+                sstatus_mxr,
+            ) {
+                self.d_cache.invalidate(paddr);
+            }
         }
 
         // 2c. Execute stage - perform ALU operations and branch evaluation
@@ -630,28 +676,50 @@ impl PipelineCpu {
         // 2d. Issue data RAM read request based on EX output.
         // This models the synchronous data RAM: address is presented when the
         // instruction is in EX, and data becomes available in MEM (next cycle).
-        let satp_for_data = self.csr.satp;
-        let privilege_for_data = self.privilege;
         let new_data_latch = if new_ex_mem.valid && new_ex_mem.ctrl.mem_read {
             let vaddr = Addr::new(new_ex_mem.alu_result.raw());
-            match mmu::translate_addr(
-                &self.bus,
-                &satp_for_data,
-                privilege_for_data,
-                vaddr,
-                MemoryAccessType::Load,
-            ) {
+            match self.translate_with_tlb(vaddr, MemoryAccessType::Load) {
                 Ok(paddr) => {
                     let raw_data = match new_ex_mem.ctrl.mem_width {
                         control::mem_width::BYTE => {
-                            let byte = self.bus.read_byte(paddr)?;
+                            let hits_before = self.d_cache.stats().hits;
+                            let misses_before = self.d_cache.stats().misses;
+                            let byte = self.d_cache.read_byte(paddr, &mut self.bus)?;
+                            Self::record_cache_delta(
+                                &mut self.perf,
+                                hits_before,
+                                misses_before,
+                                self.d_cache.stats().hits,
+                                self.d_cache.stats().misses,
+                            );
                             Word::from_byte_zero(byte.raw())
                         }
                         control::mem_width::HALF => {
-                            let half = self.bus.read_half(paddr)?;
+                            let hits_before = self.d_cache.stats().hits;
+                            let misses_before = self.d_cache.stats().misses;
+                            let half = self.d_cache.read_half(paddr, &mut self.bus)?;
+                            Self::record_cache_delta(
+                                &mut self.perf,
+                                hits_before,
+                                misses_before,
+                                self.d_cache.stats().hits,
+                                self.d_cache.stats().misses,
+                            );
                             Word::from_half_zero(half.raw())
                         }
-                        _ => self.bus.read_word(paddr)?,
+                        _ => {
+                            let hits_before = self.d_cache.stats().hits;
+                            let misses_before = self.d_cache.stats().misses;
+                            let word = self.d_cache.read_word(paddr, &mut self.bus)?;
+                            Self::record_cache_delta(
+                                &mut self.perf,
+                                hits_before,
+                                misses_before,
+                                self.d_cache.stats().hits,
+                                self.d_cache.stats().misses,
+                            );
+                            word
+                        }
                     };
                     DataReadLatch {
                         paddr,
@@ -688,6 +756,11 @@ impl PipelineCpu {
             &self.mem_wb,
             self.hazard_unit.flush_id_ex,
         )?;
+
+        // SFENCE.VMA: flush TLB entries when decoded in ID stage.
+        if self.if_id.valid && Self::is_sfence_vma(self.if_id.instruction) {
+            self.tlb.flush_all();
+        }
 
         // Track branches (now resolved in ID stage)
         if new_id_ex.valid && new_id_ex.ctrl.branch {
@@ -755,21 +828,29 @@ impl PipelineCpu {
             (false, Addr::new(0))
         };
 
-        let satp_for_if = self.csr.satp;
-        let privilege_for_if = self.privilege;
         let new_instr_latch = match self.fetch_stage.pre_fetch(
-            &self.bus,
             self.hazard_unit.stall,
             pred_target,
             pred_taken,
-            |bus, vaddr| {
-                mmu::translate_addr(
-                    bus,
-                    &satp_for_if,
-                    privilege_for_if,
+            |vaddr| {
+                let paddr = Self::translate_with_tlb_components(
+                    &mut self.tlb,
+                    &mut self.perf,
+                    &mut self.bus,
+                    self.csr.satp,
+                    self.privilege,
+                    sstatus_sum,
+                    sstatus_mxr,
                     vaddr,
                     MemoryAccessType::Instruction,
-                )
+                )?;
+                let word = Self::read_cache_word_and_record(
+                    &mut self.i_cache,
+                    &mut self.perf,
+                    &mut self.bus,
+                    paddr,
+                )?;
+                Ok(word.raw())
             },
         ) {
             Ok(latch) => latch,
@@ -901,6 +982,9 @@ impl ExecutionModel for PipelineCpu {
         self.writeback_stage.reset();
         self.hazard_unit.reset();
         self.predictor.reset();
+        self.tlb.reset();
+        self.i_cache.reset();
+        self.d_cache.reset();
         self.wb_input = MemWbRegister::default();
         self.perf.reset();
         self.instructions_executed = 0;
@@ -966,6 +1050,162 @@ impl PipelineCpu {
     /// Get predictor direction prediction statistics.
     pub fn predictor_stats(&self) -> PredictorStats {
         self.predictor.stats()
+    }
+
+    #[inline]
+    fn record_cache_delta(
+        perf: &mut PerfCollector,
+        hits_before: u64,
+        misses_before: u64,
+        hits_after: u64,
+        misses_after: u64,
+    ) {
+        if hits_after > hits_before {
+            perf.record_cache_hit();
+        }
+        if misses_after > misses_before {
+            perf.record_cache_miss();
+        }
+    }
+
+    fn read_cache_word_and_record(
+        cache: &mut crate::cpu::Cache,
+        perf: &mut PerfCollector,
+        bus: &mut Bus,
+        paddr: Addr,
+    ) -> Result<Word> {
+        let hits_before = cache.stats().hits;
+        let misses_before = cache.stats().misses;
+        let word = cache.read_word(paddr, bus)?;
+        Self::record_cache_delta(
+            perf,
+            hits_before,
+            misses_before,
+            cache.stats().hits,
+            cache.stats().misses,
+        );
+        Ok(word)
+    }
+
+    #[inline]
+    fn is_sfence_vma(instruction: u32) -> bool {
+        let opcode = instruction & 0x7F;
+        let funct3 = (instruction >> 12) & 0x7;
+        let funct7 = (instruction >> 25) & 0x7F;
+        opcode == 0x73 && funct3 == 0 && funct7 == 0x09
+    }
+
+    #[inline]
+    fn page_fault(vaddr: Addr, access: MemoryAccessType) -> SimError {
+        SimError::PageFault {
+            addr: vaddr,
+            access,
+        }
+    }
+
+    #[inline]
+    fn check_user_access(rwxu: u8, vaddr: Addr, access: MemoryAccessType) -> Result<()> {
+        let u = (rwxu & 0x08) != 0;
+        if !u {
+            return Err(Self::page_fault(vaddr, access));
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn check_supervisor_access(
+        rwxu: u8,
+        sum: bool,
+        mxr: bool,
+        vaddr: Addr,
+        access: MemoryAccessType,
+    ) -> Result<()> {
+        let u = (rwxu & 0x08) != 0;
+
+        if u && matches!(access, MemoryAccessType::Instruction) {
+            return Err(Self::page_fault(vaddr, access));
+        }
+        if u && !sum && !matches!(access, MemoryAccessType::Instruction) {
+            return Err(Self::page_fault(vaddr, access));
+        }
+        if matches!(access, MemoryAccessType::Load) {
+            let readable = (rwxu & 0x01) != 0;
+            let executable = (rwxu & 0x04) != 0;
+            if !readable && !(mxr && executable) {
+                return Err(Self::page_fault(vaddr, access));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_tlb_hit_access(
+        privilege: PrivilegeLevel,
+        rwxu: u8,
+        sum: bool,
+        mxr: bool,
+        vaddr: Addr,
+        access: MemoryAccessType,
+    ) -> Result<()> {
+        match privilege {
+            PrivilegeLevel::User => Self::check_user_access(rwxu, vaddr, access),
+            PrivilegeLevel::Supervisor => {
+                Self::check_supervisor_access(rwxu, sum, mxr, vaddr, access)
+            }
+            PrivilegeLevel::Machine => Ok(()),
+        }
+    }
+
+    fn translate_with_tlb_components(
+        tlb: &mut crate::cpu::Tlb,
+        perf: &mut PerfCollector,
+        bus: &mut Bus,
+        satp: crate::cpu::csr::Satp,
+        privilege: PrivilegeLevel,
+        sum: bool,
+        mxr: bool,
+        vaddr: Addr,
+        access: MemoryAccessType,
+    ) -> Result<Addr> {
+        if privilege == PrivilegeLevel::Machine || !satp.is_sv32() {
+            return Ok(vaddr);
+        }
+
+        let asid = satp.asid();
+
+        if let Some(result) = tlb.lookup(vaddr, asid, access) {
+            perf.record_tlb_hit();
+
+            Self::check_tlb_hit_access(privilege, result.rwxu, sum, mxr, vaddr, access)?;
+
+            return Ok(result.paddr);
+        }
+
+        perf.record_tlb_miss();
+
+        let tlb_result = mmu::translate_addr_full(bus, &satp, privilege, vaddr, access, sum, mxr)?;
+
+        tlb.insert(vaddr, tlb_result.paddr, asid, tlb_result.rwxu);
+        Ok(tlb_result.paddr)
+    }
+
+    /// Translate a virtual address using TLB + page table walk.
+    ///
+    /// TLB is consulted first. On miss, a full page table walk is performed
+    /// and the result is filled into the TLB.
+    fn translate_with_tlb(&mut self, vaddr: Addr, access: MemoryAccessType) -> Result<Addr> {
+        let sum = self.csr.sstatus.sum();
+        let mxr = self.csr.sstatus.mxr();
+        Self::translate_with_tlb_components(
+            &mut self.tlb,
+            &mut self.perf,
+            &mut self.bus,
+            self.csr.satp,
+            self.privilege,
+            sum,
+            mxr,
+            vaddr,
+            access,
+        )
     }
 }
 

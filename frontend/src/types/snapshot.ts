@@ -83,6 +83,10 @@ export interface PerfSnapshot {
   branch_accuracy: number | null;
   memory_reads: number;
   memory_writes: number;
+  cache_hits?: number;
+  cache_misses?: number;
+  tlb_hits?: number;
+  tlb_misses?: number;
 }
 
 // Branch Predictor

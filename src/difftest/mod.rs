@@ -15,13 +15,17 @@
 //! use mycpu::difftest::DiffTest;
 //! use mycpu::cpu::Cpu;
 //! use mycpu::memory::Bus;
+//! use mycpu::error::Result;
 //!
+//! fn main() -> Result<()> {
+//! let bus = Bus::new();
 //! let mut cpu = Cpu::new(bus);
 //! let mut difftest = DiffTest::connect("localhost:1234")?;
 //!
 //! loop {
-//!     cpu.step()?;
-//!     difftest.step_and_compare(&cpu)?;
+//!     let state = cpu.step()?;
+//!     let _ = difftest.step_and_compare(&state);
+//! }
 //! }
 //! ```
 //!

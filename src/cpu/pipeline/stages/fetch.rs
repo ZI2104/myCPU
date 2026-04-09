@@ -42,24 +42,22 @@ impl FetchStage {
     /// `InstrFetchLatch` and becomes available to the IF phase in the next cycle.
     ///
     /// # Arguments
-    /// * `bus` - Memory bus for instruction fetch
     /// * `stall` - Whether the pipeline is stalled (load-use hazard)
     /// * `branch_target` - Branch target address (from EX/MEM stage)
     /// * `branch_taken` - Whether a branch/jump is being taken
-    /// * `translate` - Address translation hook (virtual → physical)
+    /// * `fetch_instruction` - Instruction fetch hook (supports MMU/cache integration)
     ///
     /// # Returns
     /// A new `InstrFetchLatch` containing the fetched instruction.
     pub fn pre_fetch<F>(
         &mut self,
-        bus: &Bus,
         stall: bool,
         branch_target: Addr,
         branch_taken: bool,
-        translate: F,
+        mut fetch_instruction: F,
     ) -> Result<InstrFetchLatch>
     where
-        F: Fn(&Bus, Addr) -> Result<Addr>,
+        F: FnMut(Addr) -> Result<u32>,
     {
         if stall {
             // Stall: do not issue new request, return invalid latch
@@ -77,9 +75,8 @@ impl FetchStage {
             self.pc + Addr::new(4)
         };
 
-        // Issue synchronous RAM read: translate virtual address, then read
-        let phys_pc = translate(bus, next_pc)?;
-        let instruction = bus.read_word(phys_pc)?;
+        // Issue synchronous RAM read through injected hook (supports MMU+cache)
+        let instruction = fetch_instruction(next_pc)?;
 
         // Update internal PC state
         self.pc = next_pc;
@@ -87,7 +84,7 @@ impl FetchStage {
 
         Ok(InstrFetchLatch {
             pc: next_pc,
-            instruction: instruction.raw(),
+            instruction,
             valid: true,
         })
     }
@@ -214,7 +211,9 @@ mod tests {
         let mut stage = FetchStage::new();
         // PC starts at 0, pre_fetch uses nextPC = PC+4 = 4
         let latch = stage
-            .pre_fetch(&bus, false, Addr::new(0), false, |_bus, addr| Ok(addr))
+            .pre_fetch(false, Addr::new(0), false, |addr| {
+                Ok(bus.read_word(addr)?.raw())
+            })
             .unwrap();
 
         // Latch contains instruction at address 4 (nextPC)
@@ -238,7 +237,9 @@ mod tests {
 
         // Stalled pre-fetch: should return invalid latch, PC unchanged
         let latch = stage
-            .pre_fetch(&bus, true, Addr::new(0), false, |_bus, addr| Ok(addr))
+            .pre_fetch(true, Addr::new(0), false, |addr| {
+                Ok(bus.read_word(addr)?.raw())
+            })
             .unwrap();
 
         assert!(!latch.valid);
@@ -252,7 +253,9 @@ mod tests {
         let mut stage = FetchStage::new();
         // Branch to 0x100: nextPC = 0x100
         let latch = stage
-            .pre_fetch(&bus, false, Addr::new(0x100), true, |_bus, addr| Ok(addr))
+            .pre_fetch(false, Addr::new(0x100), true, |addr| {
+                Ok(bus.read_word(addr)?.raw())
+            })
             .unwrap();
 
         assert!(latch.valid);

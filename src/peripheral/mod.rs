@@ -11,11 +11,10 @@
 //! ```rust,no_run
 //! use mycpu::peripheral::Uart;
 //! use mycpu::memory::Bus;
-//! use mycpu::types::Addr;
 //!
 //! let mut bus = Bus::new();
 //! let uart = Uart::new();
-//! bus.attach_peripheral(Addr::new(0x1000_0000), Box::new(uart));
+//! bus.attach_peripheral(uart);
 //! ```
 
 pub mod dma;

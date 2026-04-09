@@ -41,6 +41,14 @@ pub struct PerfCollector {
     pub exceptions_taken: u64,
     /// Branch mispredictions (dynamic predictor)
     pub branch_mispredictions: u64,
+    /// Cache hits (if cache simulation enabled)
+    pub cache_hits: u64,
+    /// Cache misses (if cache simulation enabled)
+    pub cache_misses: u64,
+    /// TLB hits (if TLB simulation enabled)
+    pub tlb_hits: u64,
+    /// TLB misses (if TLB simulation enabled)
+    pub tlb_misses: u64,
 }
 
 impl PerfCollector {
@@ -73,6 +81,30 @@ impl PerfCollector {
             PerfEvent::BranchMispredictions => self.branch_mispredictions += 1,
             PerfEvent::None => {}
         }
+    }
+
+    /// Record cache hit event (convenience API - avoids adding new PerfEvent codes)
+    #[inline]
+    pub fn record_cache_hit(&mut self) {
+        self.cache_hits += 1;
+    }
+
+    /// Record cache miss event (convenience API - avoids adding new PerfEvent codes)
+    #[inline]
+    pub fn record_cache_miss(&mut self) {
+        self.cache_misses += 1;
+    }
+
+    /// Record TLB hit
+    #[inline]
+    pub fn record_tlb_hit(&mut self) {
+        self.tlb_hits += 1;
+    }
+
+    /// Record TLB miss
+    #[inline]
+    pub fn record_tlb_miss(&mut self) {
+        self.tlb_misses += 1;
     }
 
     /// Reset all counters to zero.
@@ -163,6 +195,10 @@ impl PerfCollector {
         self.interrupts_taken += other.interrupts_taken;
         self.exceptions_taken += other.exceptions_taken;
         self.branch_mispredictions += other.branch_mispredictions;
+        self.cache_hits += other.cache_hits;
+        self.cache_misses += other.cache_misses;
+        self.tlb_hits += other.tlb_hits;
+        self.tlb_misses += other.tlb_misses;
     }
 }
 

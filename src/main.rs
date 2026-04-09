@@ -14,8 +14,9 @@ use mycpu::peripheral::{InputDevice, Lpu, Npu, Uart, VirtioBlock};
 use mycpu::types::{Addr, RegIdx, Word};
 use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server_with_initial_pc;
+use std::env;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -26,6 +27,23 @@ const OPENSBI_DYNAMIC_INFO_ADDR: u32 = 0x87EF_0000;
 const OPENSBI_DYNAMIC_INFO_MAGIC: u32 = 0x4942_534F; // 'OSBI'
 const OPENSBI_DYNAMIC_INFO_VERSION_2: u32 = 0x2;
 const OPENSBI_DYNAMIC_INFO_NEXT_MODE_S: u32 = 0x1;
+const XV6_CPU0_ADDR: u32 = 0x8001_34C4;
+const XV6_PROC_BASE: u32 = 0x8001_36E4;
+const XV6_TICKS_ADDR: u32 = 0x8002_4010;
+const XV6_MSCRATCH0_ADDR: u32 = 0x8000_B000;
+const XV6_TICKSLOCK_ADDR: u32 = 0x8001_66E4;
+const XV6_NPROC: u32 = 64;
+const XV6_PROC_STRIDE: u32 = 192;
+const PROC_STATE_OFFSET: u32 = 12;
+const CPU_PROC_OFFSET: u32 = 0;
+const CPU_NOFF_OFFSET: u32 = 60;
+const CPU_INTENA_OFFSET: u32 = 64;
+const CLINT_MTIME_ADDR: u32 = 0x0200_BFF8;
+const CLINT_MTIMECMP_ADDR: u32 = 0x0200_4000;
+const PLIC_PENDING0_ADDR: u32 = 0x0C00_1000;
+const PLIC_SENABLE0_ADDR: u32 = 0x0C00_2080;
+const PLIC_STHRESHOLD0_ADDR: u32 = 0x0C20_1000;
+const PLIC_SCLAIM_PEEK_ADDR: u32 = 0x0C20_1004;
 
 /// myCPU - A RISC-V RV32I Instruction Set Simulator
 #[derive(Parser, Debug)]
@@ -38,6 +56,7 @@ struct Args {
     command: Commands,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Run a RISC-V program
@@ -218,6 +237,41 @@ enum UartInjectTrigger {
     Prompt,
 }
 
+#[derive(Debug, Clone)]
+struct LinuxBootOptions {
+    enabled: bool,
+    hartid: u32,
+    dtb: Option<PathBuf>,
+    auto_dtb: bool,
+    dtb_addr: String,
+    bootargs: Option<String>,
+    bootargs_addr: String,
+    sbi: Option<PathBuf>,
+    sbi_addr: String,
+    payload_addr: String,
+}
+
+#[derive(Debug, Clone)]
+struct RunProgramOptions {
+    memory_mb: usize,
+    pc: String,
+    max_count: u64,
+    heartbeat_every: u64,
+    heartbeat_mode: HeartbeatMode,
+    verbose: bool,
+    show_perf_report: bool,
+    file: PathBuf,
+    virtio_disk: Option<PathBuf>,
+    uart_script: Option<String>,
+    uart_inject_at: u64,
+    uart_inject_every: u64,
+    uart_inject_trigger: UartInjectTrigger,
+    input_script: Option<String>,
+    input_inject_at: u64,
+    input_inject_every: u64,
+    linux: LinuxBootOptions,
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -249,14 +303,14 @@ fn main() -> anyhow::Result<()> {
             linux_sbi,
             linux_sbi_addr,
             linux_payload_addr,
-        } => run_program(
-            memory,
-            &pc,
-            count,
+        } => run_program(RunProgramOptions {
+            memory_mb: memory,
+            pc,
+            max_count: count,
             heartbeat_every,
             heartbeat_mode,
             verbose,
-            perf_report,
+            show_perf_report: perf_report,
             file,
             virtio_disk,
             uart_script,
@@ -266,17 +320,19 @@ fn main() -> anyhow::Result<()> {
             input_script,
             input_inject_at,
             input_inject_every,
-            linux_boot,
-            linux_hartid,
-            linux_dtb,
-            linux_auto_dtb,
-            &linux_dtb_addr,
-            linux_bootargs,
-            &linux_bootargs_addr,
-            linux_sbi,
-            &linux_sbi_addr,
-            &linux_payload_addr,
-        ),
+            linux: LinuxBootOptions {
+                enabled: linux_boot,
+                hartid: linux_hartid,
+                dtb: linux_dtb,
+                auto_dtb: linux_auto_dtb,
+                dtb_addr: linux_dtb_addr,
+                bootargs: linux_bootargs,
+                bootargs_addr: linux_bootargs_addr,
+                sbi: linux_sbi,
+                sbi_addr: linux_sbi_addr,
+                payload_addr: linux_payload_addr,
+            },
+        }),
         Commands::Debug {
             port,
             memory,
@@ -297,56 +353,29 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Run a RISC-V program directly
-fn run_program(
-    memory_mb: usize,
-    pc_str: &str,
-    max_count: u64,
-    heartbeat_every: u64,
-    heartbeat_mode: HeartbeatMode,
-    verbose: bool,
-    show_perf_report: bool,
-    file: PathBuf,
-    virtio_disk: Option<PathBuf>,
-    uart_script: Option<String>,
-    uart_inject_at: u64,
-    uart_inject_every: u64,
-    uart_inject_trigger: UartInjectTrigger,
-    input_script: Option<String>,
-    input_inject_at: u64,
-    input_inject_every: u64,
-    linux_boot: bool,
-    linux_hartid: u32,
-    linux_dtb: Option<PathBuf>,
-    linux_auto_dtb: bool,
-    linux_dtb_addr_str: &str,
-    linux_bootargs: Option<String>,
-    linux_bootargs_addr_str: &str,
-    linux_sbi: Option<PathBuf>,
-    linux_sbi_addr_str: &str,
-    linux_payload_addr_str: &str,
-) -> anyhow::Result<()> {
-    init_logger(verbose);
+fn run_program(opts: RunProgramOptions) -> anyhow::Result<()> {
+    init_logger(opts.verbose);
 
-    let requested_pc = parse_hex_address(pc_str)?;
-    let mut bus = create_bus(memory_mb, virtio_disk.as_ref())?;
+    let requested_pc = parse_hex_address(&opts.pc)?;
+    let mut bus = create_bus(opts.memory_mb, opts.virtio_disk.as_ref())?;
     let uart_prompt_ready = Arc::new(AtomicBool::new(false));
 
     // Attach UART for output
     attach_stdout_uart(&mut bus, Some(Arc::clone(&uart_prompt_ready)));
 
-    let start_pc = if let Some(sbi_path) = linux_sbi.as_ref() {
-        if !linux_boot {
+    let start_pc = if let Some(sbi_path) = opts.linux.sbi.as_ref() {
+        if !opts.linux.enabled {
             return Err(anyhow::anyhow!(
                 "--linux-sbi requires --linux-boot to be enabled"
             ));
         }
 
-        let sbi_addr = parse_hex_address(linux_sbi_addr_str)?;
-        let payload_addr = parse_hex_address(linux_payload_addr_str)?;
-        let payload_size = load_raw_file_at(&mut bus, &file, payload_addr)?;
+        let sbi_addr = parse_hex_address(&opts.linux.sbi_addr)?;
+        let payload_addr = parse_hex_address(&opts.linux.payload_addr)?;
+        let payload_size = load_raw_file_at(&mut bus, &opts.file, payload_addr)?;
         println!(
             "Linux boot chain: loaded payload {} ({} bytes) at {}",
-            file.display(),
+            opts.file.display(),
             payload_size,
             payload_addr
         );
@@ -360,28 +389,18 @@ fn run_program(
         );
         sbi_start_pc
     } else {
-        let file_entry = load_file(&mut bus, &file, requested_pc)?;
+        let file_entry = load_file(&mut bus, &opts.file, requested_pc)?;
         file_entry.unwrap_or(requested_pc)
     };
     bus.print_memory_map();
 
     let mut cpu = Cpu::with_pc(bus, start_pc);
 
-    apply_linux_boot_context(
-        &mut cpu,
-        linux_boot,
-        linux_hartid,
-        linux_dtb,
-        linux_auto_dtb,
-        linux_dtb_addr_str,
-        linux_bootargs,
-        linux_bootargs_addr_str,
-        memory_mb,
-    )?;
+    apply_linux_boot_context(&mut cpu, &opts.linux, opts.memory_mb)?;
 
-    if linux_boot && linux_sbi.is_some() {
-        let payload_addr = parse_hex_address(linux_payload_addr_str)?;
-        inject_opensbi_dynamic_info(&mut cpu, payload_addr, linux_hartid)?;
+    if opts.linux.enabled && opts.linux.sbi.is_some() {
+        let payload_addr = parse_hex_address(&opts.linux.payload_addr)?;
+        inject_opensbi_dynamic_info(&mut cpu, payload_addr, opts.linux.hartid)?;
     }
 
     println!("\nmyCPU RISC-V Simulator v{}", mycpu::VERSION);
@@ -392,31 +411,32 @@ fn run_program(
             requested_pc, start_pc
         );
     }
-    println!("Memory size: {} MB", memory_mb);
+    println!("Memory size: {} MB", opts.memory_mb);
     println!(
         "Max instructions: {}",
-        if max_count == 0 {
+        if opts.max_count == 0 {
             "unlimited".to_string()
         } else {
-            max_count.to_string()
+            opts.max_count.to_string()
         }
     );
     println!("\n--- Starting execution ---\n");
 
-    if heartbeat_every > 0 {
+    if opts.heartbeat_every > 0 {
         println!(
             "Heartbeat enabled: every {} instructions (mode={:?})",
-            heartbeat_every, heartbeat_mode
+            opts.heartbeat_every, opts.heartbeat_mode
         );
     }
 
-    let mut uart_injector = uart_script
+    let mut uart_injector = opts
+        .uart_script
         .map(|script| {
             UartInjector::new(
                 parse_escaped_uart_script(&script),
-                uart_inject_at,
-                uart_inject_every.max(1),
-                uart_inject_trigger,
+                opts.uart_inject_at,
+                opts.uart_inject_every.max(1),
+                opts.uart_inject_trigger,
                 Arc::clone(&uart_prompt_ready),
             )
         })
@@ -432,10 +452,15 @@ fn run_program(
         );
     }
 
-    let mut input_injector = input_script
+    let mut input_injector = opts
+        .input_script
         .map(|script| {
             parse_input_script(&script).map(|actions| {
-                InputInjector::new(actions, input_inject_at, input_inject_every.max(1))
+                InputInjector::new(
+                    actions,
+                    opts.input_inject_at,
+                    opts.input_inject_every.max(1),
+                )
             })
         })
         .transpose()?
@@ -452,14 +477,14 @@ fn run_program(
 
     let start_time = Instant::now();
     let instructions_executed =
-        if heartbeat_every == 0 && uart_injector.is_none() && input_injector.is_none() {
-            cpu.run(max_count)?
+        if opts.heartbeat_every == 0 && uart_injector.is_none() && input_injector.is_none() {
+            cpu.run(opts.max_count)?
         } else {
             run_with_heartbeat(
                 &mut cpu,
-                max_count,
-                heartbeat_every,
-                heartbeat_mode,
+                opts.max_count,
+                opts.heartbeat_every,
+                opts.heartbeat_mode,
                 uart_injector.as_mut(),
                 input_injector.as_mut(),
             )?
@@ -495,18 +520,54 @@ fn run_program(
         );
     }
 
-    if verbose {
+    if opts.verbose {
         println!("\nFinal register state:");
         println!("{}", cpu.registers());
     }
 
     // Generate performance report if requested
-    if show_perf_report {
+    if opts.show_perf_report {
         let report = PerfReport::from_collector(cpu.perf_collector());
         println!("{}", report);
+        // If CI requests JSON output, write report to path in MYCPU_PERF_JSON
+        if let Ok(path) = env::var("MYCPU_PERF_JSON") {
+            match validated_perf_json_path(&path) {
+                Ok(valid_path) => match report.write_json_to(&valid_path) {
+                    Ok(_) => eprintln!("Perf JSON written to {}", valid_path.display()),
+                    Err(e) => eprintln!(
+                        "Failed to write perf JSON to {}: {}",
+                        valid_path.display(),
+                        e
+                    ),
+                },
+                Err(msg) => {
+                    eprintln!("Ignoring MYCPU_PERF_JSON='{}': {}", path, msg);
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+fn validated_perf_json_path(raw: &str) -> std::result::Result<PathBuf, &'static str> {
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        return Err("absolute paths are not allowed");
+    }
+
+    if path
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+    {
+        return Err("path traversal is not allowed");
+    }
+
+    if !path.starts_with("artifacts") {
+        return Err("path must be under artifacts/");
+    }
+
+    Ok(path.to_path_buf())
 }
 
 #[derive(Debug, Clone)]
@@ -597,7 +658,7 @@ impl UartInjector {
                 if step < self.inject_at {
                     return;
                 }
-                if (step - self.inject_at) % self.inject_every != 0 {
+                if !(step - self.inject_at).is_multiple_of(self.inject_every) {
                     return;
                 }
 
@@ -619,7 +680,7 @@ impl UartInjector {
                     self.prompt_wait_for_prompt = false;
                 }
 
-                if self.inject_every > 1 && step % self.inject_every != 0 {
+                if self.inject_every > 1 && !step.is_multiple_of(self.inject_every) {
                     return;
                 }
 
@@ -669,7 +730,7 @@ impl InputInjector {
         if step < self.inject_at {
             return;
         }
-        if (step - self.inject_at) % self.inject_every != 0 {
+        if !(step - self.inject_at).is_multiple_of(self.inject_every) {
             return;
         }
 
@@ -707,24 +768,18 @@ fn split_prompt_chunks(bytes: &[u8]) -> Vec<Vec<u8>> {
 
 fn apply_linux_boot_context(
     cpu: &mut Cpu,
-    linux_boot: bool,
-    linux_hartid: u32,
-    linux_dtb: Option<PathBuf>,
-    linux_auto_dtb: bool,
-    linux_dtb_addr_str: &str,
-    linux_bootargs: Option<String>,
-    linux_bootargs_addr_str: &str,
+    linux: &LinuxBootOptions,
     memory_mb: usize,
 ) -> anyhow::Result<()> {
-    if !linux_boot {
+    if !linux.enabled {
         return Ok(());
     }
 
-    let dtb_addr = parse_hex_address(linux_dtb_addr_str)?;
-    let bootargs_addr = parse_hex_address(linux_bootargs_addr_str)?;
+    let dtb_addr = parse_hex_address(&linux.dtb_addr)?;
+    let bootargs_addr = parse_hex_address(&linux.bootargs_addr)?;
 
-    let dtb_ptr = if let Some(path) = linux_dtb {
-        let dtb = std::fs::read(&path)?;
+    let dtb_ptr = if let Some(path) = linux.dtb.as_ref() {
+        let dtb = std::fs::read(path)?;
         if dtb.is_empty() {
             return Err(anyhow::anyhow!(
                 "Linux DTB file is empty: {}",
@@ -739,12 +794,12 @@ fn apply_linux_boot_context(
             dtb_addr
         );
         dtb_addr.raw()
-    } else if linux_auto_dtb {
+    } else if linux.auto_dtb {
         let memory_size_bytes = (memory_mb as u64)
             .saturating_mul(1024)
             .saturating_mul(1024)
             .min(u32::MAX as u64) as u32;
-        let dtb = generate_minimal_linux_dtb(memory_size_bytes, linux_bootargs.as_deref());
+        let dtb = generate_minimal_linux_dtb(memory_size_bytes, linux.bootargs.as_deref());
         cpu.bus_mut().write_bytes(dtb_addr, &dtb)?;
         println!(
             "Linux boot: auto-generated DTB ({} bytes, mem={} MB) at {}",
@@ -757,8 +812,8 @@ fn apply_linux_boot_context(
         0
     };
 
-    if let Some(bootargs) = linux_bootargs {
-        let mut bootargs_bytes = bootargs.into_bytes();
+    if let Some(bootargs) = linux.bootargs.as_ref() {
+        let mut bootargs_bytes = bootargs.as_bytes().to_vec();
         bootargs_bytes.push(0);
         cpu.bus_mut().write_bytes(bootargs_addr, &bootargs_bytes)?;
         println!(
@@ -769,13 +824,13 @@ fn apply_linux_boot_context(
     }
 
     cpu.registers_mut()
-        .write(RegIdx::new(10), Word::new(linux_hartid));
+        .write(RegIdx::new(10), Word::new(linux.hartid));
     cpu.registers_mut()
         .write(RegIdx::new(11), Word::new(dtb_ptr));
 
     println!(
         "Linux boot context: a0(hartid)={}, a1(dtb)=0x{:08x}",
-        linux_hartid, dtb_ptr
+        linux.hartid, dtb_ptr
     );
 
     Ok(())
@@ -1031,6 +1086,430 @@ fn parse_input_script(script: &str) -> anyhow::Result<Vec<InputAction>> {
     Ok(actions)
 }
 
+fn read_word_or(cpu: &Cpu, addr: u32, default: u32) -> u32 {
+    cpu.bus()
+        .read_word(Addr::new(addr))
+        .ok()
+        .map(|w| w.raw())
+        .unwrap_or(default)
+}
+
+fn collect_sv32_debug(cpu: &Cpu, satp: u32, sepc_raw: u32) -> (u32, u32, u32) {
+    if (satp & 0x8000_0000) == 0 {
+        return (0, 0, 0);
+    }
+
+    let root = (satp & 0x003F_FFFF) << 12;
+    let vpn1 = (sepc_raw >> 22) & 0x3FF;
+    let vpn0 = (sepc_raw >> 12) & 0x3FF;
+    let pte1_addr = root.wrapping_add(vpn1 * 4);
+    let pte1 = read_word_or(cpu, pte1_addr, 0);
+    let is_leaf1 = (pte1 & ((1 << 1) | (1 << 3))) != 0;
+    let pte0 = if pte1 != 0 && !is_leaf1 {
+        let next = ((pte1 >> 10) & 0x003F_FFFF) << 12;
+        let pte0_addr = next.wrapping_add(vpn0 * 4);
+        read_word_or(cpu, pte0_addr, 0)
+    } else {
+        0
+    };
+
+    (root, pte1, pte0)
+}
+
+fn collect_proc_state_summary(cpu: &Cpu) -> (u32, u32, u32, u32, i32, u32) {
+    let mut proc_runnable = 0u32;
+    let mut proc_running = 0u32;
+    let mut proc_sleeping = 0u32;
+    let mut proc_runnable_locked = 0u32;
+    let mut first_runnable_idx: i32 = -1;
+    let mut first_runnable_lock_cpu = 0u32;
+
+    for i in 0..XV6_NPROC {
+        let proc_base = XV6_PROC_BASE + i * XV6_PROC_STRIDE;
+        let state_addr = proc_base + PROC_STATE_OFFSET;
+        if let Ok(state) = cpu.bus().read_word(Addr::new(state_addr)) {
+            match state.raw() {
+                1 => proc_sleeping += 1,
+                2 => {
+                    proc_runnable += 1;
+                    if first_runnable_idx < 0 {
+                        first_runnable_idx = i as i32;
+                    }
+                    let lock_word = read_word_or(cpu, proc_base, 0);
+                    if lock_word != 0 {
+                        proc_runnable_locked += 1;
+                    }
+                    if first_runnable_idx == i as i32 {
+                        first_runnable_lock_cpu = read_word_or(cpu, proc_base + 8, 0);
+                    }
+                }
+                3 => proc_running += 1,
+                _ => {}
+            }
+        }
+    }
+
+    (
+        proc_runnable,
+        proc_running,
+        proc_sleeping,
+        proc_runnable_locked,
+        first_runnable_idx,
+        first_runnable_lock_cpu,
+    )
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct VirtioActivity {
+    cmds: u64,
+    notifies: u64,
+    desc: u64,
+    irq_raised: u64,
+    irq_ack: u64,
+    desc_not_ready: u64,
+    desc_no_avail: u64,
+    desc_success: u64,
+    desc_error: u64,
+}
+
+#[derive(Debug, Clone)]
+struct HeartbeatCommonMetrics {
+    count: u64,
+    pc: Addr,
+    privilege: String,
+    tp: u32,
+    global_mie: bool,
+    global_sie: bool,
+    mip: u32,
+    mie: u32,
+    sip: u32,
+    sie: u32,
+    satp: u32,
+    scause: u32,
+    sepc: u32,
+    stval: u32,
+    sv32_root: u32,
+    sv32_pte1: u32,
+    sv32_pte0: u32,
+    mtip: bool,
+    msip: bool,
+    meip: bool,
+    seip: bool,
+    virtio_irq: bool,
+    uart_irq: bool,
+    virtio: VirtioActivity,
+    same_pc_streak: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HeartbeatDiagnosticMetrics {
+    cpu0_proc: u32,
+    cpu0_noff: i32,
+    cpu0_intena: u32,
+    ticks: u32,
+    clint_mtime: u32,
+    clint_mtimecmp: u32,
+    mscratch: u32,
+    scratch_interval: u32,
+    tickslock_locked: u32,
+    tickslock_cpu: u32,
+    proc0_state: u32,
+    proc0_pid: u32,
+    proc0_ctx_ra: u32,
+    proc0_state_cpu_view: u32,
+    plic_pending0: u32,
+    plic_senable0: u32,
+    plic_sthreshold0: u32,
+    plic_sclaim_peek: u32,
+    proc_runnable: u32,
+    proc_running: u32,
+    proc_sleeping: u32,
+    proc_runnable_locked: u32,
+    first_runnable_idx: i32,
+    first_runnable_lock_cpu: u32,
+}
+
+fn as_bit(value: bool) -> u8 {
+    if value {
+        1
+    } else {
+        0
+    }
+}
+
+fn flush_stdout_silent() {
+    std::io::stdout().flush().ok();
+}
+
+type HeartbeatFieldList = Vec<(&'static str, String)>;
+
+fn push_field<T: ToString>(fields: &mut HeartbeatFieldList, key: &'static str, value: T) {
+    fields.push((key, value.to_string()));
+}
+
+fn push_hex_u32(fields: &mut HeartbeatFieldList, key: &'static str, value: u32) {
+    fields.push((key, format!("0x{value:08x}")));
+}
+
+fn render_heartbeat_line(tag: &str, fields: &HeartbeatFieldList) -> String {
+    let payload = fields
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[{tag}] {payload}")
+}
+
+fn build_compact_heartbeat_fields(common: &HeartbeatCommonMetrics) -> HeartbeatFieldList {
+    let mut fields = HeartbeatFieldList::with_capacity(26);
+    push_field(&mut fields, "step", common.count);
+    push_field(&mut fields, "pc", common.pc);
+    push_field(&mut fields, "priv", &common.privilege);
+    push_hex_u32(&mut fields, "tp", common.tp);
+    push_field(&mut fields, "mstatus.mie", as_bit(common.global_mie));
+    push_field(&mut fields, "sstatus.sie", as_bit(common.global_sie));
+    push_hex_u32(&mut fields, "mip", common.mip);
+    push_hex_u32(&mut fields, "mie", common.mie);
+    push_hex_u32(&mut fields, "sip", common.sip);
+    push_hex_u32(&mut fields, "sie", common.sie);
+    push_hex_u32(&mut fields, "satp", common.satp);
+    push_hex_u32(&mut fields, "scause", common.scause);
+    push_hex_u32(&mut fields, "sepc", common.sepc);
+    push_hex_u32(&mut fields, "stval", common.stval);
+    push_hex_u32(&mut fields, "sv32.root", common.sv32_root);
+    push_hex_u32(&mut fields, "sv32.pte1", common.sv32_pte1);
+    push_hex_u32(&mut fields, "sv32.pte0", common.sv32_pte0);
+    push_field(&mut fields, "mtip", as_bit(common.mtip));
+    push_field(&mut fields, "msip", as_bit(common.msip));
+    push_field(&mut fields, "meip", as_bit(common.meip));
+    push_field(&mut fields, "seip", as_bit(common.seip));
+    push_field(&mut fields, "virtio_irq", as_bit(common.virtio_irq));
+    push_field(&mut fields, "uart_irq", as_bit(common.uart_irq));
+    push_field(&mut fields, "v_notify", common.virtio.notifies);
+    push_field(&mut fields, "v_desc_ok", common.virtio.desc_success);
+    push_field(&mut fields, "pc_streak", common.same_pc_streak);
+    fields
+}
+
+fn build_diagnostic_heartbeat_fields(
+    common: &HeartbeatCommonMetrics,
+    diag: &HeartbeatDiagnosticMetrics,
+) -> HeartbeatFieldList {
+    let mut fields = HeartbeatFieldList::with_capacity(57);
+    push_field(&mut fields, "step", common.count);
+    push_field(&mut fields, "pc", common.pc);
+    push_field(&mut fields, "priv", &common.privilege);
+    push_hex_u32(&mut fields, "tp", common.tp);
+    push_field(&mut fields, "mstatus.mie", as_bit(common.global_mie));
+    push_field(&mut fields, "sstatus.sie", as_bit(common.global_sie));
+    push_hex_u32(&mut fields, "mip", common.mip);
+    push_hex_u32(&mut fields, "mie", common.mie);
+    push_hex_u32(&mut fields, "sip", common.sip);
+    push_hex_u32(&mut fields, "sie", common.sie);
+    push_hex_u32(&mut fields, "satp", common.satp);
+    push_hex_u32(&mut fields, "scause", common.scause);
+    push_hex_u32(&mut fields, "sepc", common.sepc);
+    push_hex_u32(&mut fields, "stval", common.stval);
+    push_hex_u32(&mut fields, "sv32.root", common.sv32_root);
+    push_hex_u32(&mut fields, "sv32.pte1", common.sv32_pte1);
+    push_hex_u32(&mut fields, "sv32.pte0", common.sv32_pte0);
+    push_field(&mut fields, "mtip", as_bit(common.mtip));
+    push_field(&mut fields, "msip", as_bit(common.msip));
+    push_field(&mut fields, "meip", as_bit(common.meip));
+    push_field(&mut fields, "virtio_irq", as_bit(common.virtio_irq));
+    push_field(&mut fields, "uart_irq", as_bit(common.uart_irq));
+    push_field(&mut fields, "v_cmd", common.virtio.cmds);
+    push_field(&mut fields, "v_notify", common.virtio.notifies);
+    push_field(&mut fields, "v_desc", common.virtio.desc);
+    push_field(&mut fields, "v_irq_raise", common.virtio.irq_raised);
+    push_field(&mut fields, "v_irq_ack", common.virtio.irq_ack);
+    push_field(
+        &mut fields,
+        "v_desc_not_ready",
+        common.virtio.desc_not_ready,
+    );
+    push_field(&mut fields, "v_desc_no_avail", common.virtio.desc_no_avail);
+    push_field(&mut fields, "v_desc_ok", common.virtio.desc_success);
+    push_field(&mut fields, "v_desc_err", common.virtio.desc_error);
+    push_hex_u32(&mut fields, "plic_pending0", diag.plic_pending0);
+    push_hex_u32(&mut fields, "plic_senable0", diag.plic_senable0);
+    push_hex_u32(&mut fields, "plic_sth", diag.plic_sthreshold0);
+    push_field(&mut fields, "plic_sclaim", diag.plic_sclaim_peek);
+    push_hex_u32(&mut fields, "cpu0_proc", diag.cpu0_proc);
+    push_field(&mut fields, "cpu0_noff", diag.cpu0_noff);
+    push_field(&mut fields, "cpu0_intena", diag.cpu0_intena);
+    push_field(&mut fields, "ticks", diag.ticks);
+    push_field(&mut fields, "mtime", diag.clint_mtime);
+    push_field(&mut fields, "mtimecmp", diag.clint_mtimecmp);
+    push_hex_u32(&mut fields, "mscratch", diag.mscratch);
+    push_field(&mut fields, "scratch5", diag.scratch_interval);
+    push_field(&mut fields, "tickslock_locked", diag.tickslock_locked);
+    push_hex_u32(&mut fields, "tickslock_cpu", diag.tickslock_cpu);
+    push_field(&mut fields, "p0_state", diag.proc0_state);
+    push_field(&mut fields, "p0_state_cpu", diag.proc0_state_cpu_view);
+    push_field(&mut fields, "p0_pid", diag.proc0_pid);
+    push_hex_u32(&mut fields, "p0_ctx_ra", diag.proc0_ctx_ra);
+    push_field(&mut fields, "p_run", diag.proc_runnable);
+    push_field(&mut fields, "p_run_locked", diag.proc_runnable_locked);
+    push_field(&mut fields, "p_run0_idx", diag.first_runnable_idx);
+    push_hex_u32(&mut fields, "p_run0_lock_cpu", diag.first_runnable_lock_cpu);
+    push_field(&mut fields, "p_running", diag.proc_running);
+    push_field(&mut fields, "p_sleep", diag.proc_sleeping);
+    push_field(&mut fields, "pc_streak", common.same_pc_streak);
+    fields
+}
+
+fn collect_virtio_activity(cpu: &Cpu) -> VirtioActivity {
+    let (
+        cmds,
+        notifies,
+        desc,
+        irq_raised,
+        irq_ack,
+        desc_not_ready,
+        desc_no_avail,
+        desc_success,
+        desc_error,
+    ) = cpu
+        .bus()
+        .get_virtio_activity_counters()
+        .unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0));
+
+    VirtioActivity {
+        cmds,
+        notifies,
+        desc,
+        irq_raised,
+        irq_ack,
+        desc_not_ready,
+        desc_no_avail,
+        desc_success,
+        desc_error,
+    }
+}
+
+fn collect_heartbeat_common(cpu: &Cpu, count: u64, same_pc_streak: u64) -> HeartbeatCommonMetrics {
+    let pc = cpu.pc();
+    let tp = cpu.registers().read(RegIdx::new(4)).raw();
+    let csr = cpu.csr();
+    let mip = csr.mip.read();
+    let mie = csr.mie.read();
+    let global_mie = csr.mstatus.mie();
+    let sip = csr.sip.read();
+    let sie = csr.sie.read();
+    let scause = csr.scause.read();
+    let sepc = csr.sepc.read();
+    let stval = csr.stval.read();
+    let satp = csr.satp.read();
+    let global_sie = csr.sstatus.sie();
+    let (sv32_root, sv32_pte1, sv32_pte0) = collect_sv32_debug(cpu, satp, sepc);
+    let (mtip, msip) = cpu.bus().get_clint_interrupt_status();
+    let (meip, seip) = cpu.bus().get_plic_interrupt_status();
+    let virtio_irq = cpu.bus().has_peripheral_interrupt("VirtIO-Block");
+    let uart_irq = cpu.bus().has_peripheral_interrupt("UART");
+    let virtio = collect_virtio_activity(cpu);
+
+    HeartbeatCommonMetrics {
+        count,
+        pc,
+        privilege: cpu.privilege().to_string(),
+        tp,
+        global_mie,
+        global_sie,
+        mip,
+        mie,
+        sip,
+        sie,
+        satp,
+        scause,
+        sepc,
+        stval,
+        sv32_root,
+        sv32_pte1,
+        sv32_pte0,
+        mtip,
+        msip,
+        meip,
+        seip,
+        virtio_irq,
+        uart_irq,
+        virtio,
+        same_pc_streak,
+    }
+}
+
+fn collect_heartbeat_diagnostic(cpu: &mut Cpu) -> HeartbeatDiagnosticMetrics {
+    let cpu0_proc = read_word_or(cpu, XV6_CPU0_ADDR + CPU_PROC_OFFSET, 0);
+    let cpu0_noff = read_word_or(cpu, XV6_CPU0_ADDR + CPU_NOFF_OFFSET, u32::MAX) as i32;
+    let cpu0_intena = read_word_or(cpu, XV6_CPU0_ADDR + CPU_INTENA_OFFSET, 0);
+    let ticks = read_word_or(cpu, XV6_TICKS_ADDR, 0);
+    let clint_mtime = read_word_or(cpu, CLINT_MTIME_ADDR, 0);
+    let clint_mtimecmp = read_word_or(cpu, CLINT_MTIMECMP_ADDR, 0);
+    let mscratch = cpu.csr().mscratch.get();
+    let scratch_interval = read_word_or(cpu, XV6_MSCRATCH0_ADDR + 20, 0);
+    let tickslock_locked = read_word_or(cpu, XV6_TICKSLOCK_ADDR, 0);
+    let tickslock_cpu = read_word_or(cpu, XV6_TICKSLOCK_ADDR + 8, 0);
+    let proc0_state = read_word_or(cpu, XV6_PROC_BASE + PROC_STATE_OFFSET, 0);
+    let proc0_pid = read_word_or(cpu, XV6_PROC_BASE + 32, 0);
+    let proc0_ctx_ra = read_word_or(cpu, XV6_PROC_BASE + 52, 0);
+    let proc0_state_cpu_view = cpu
+        .read_word(Addr::new(XV6_PROC_BASE + PROC_STATE_OFFSET))
+        .ok()
+        .map(|w| w.raw())
+        .unwrap_or(u32::MAX);
+    let plic_pending0 = read_word_or(cpu, PLIC_PENDING0_ADDR, 0);
+    let plic_senable0 = read_word_or(cpu, PLIC_SENABLE0_ADDR, 0);
+    let plic_sthreshold0 = read_word_or(cpu, PLIC_STHRESHOLD0_ADDR, 0);
+    let plic_sclaim_peek = read_word_or(cpu, PLIC_SCLAIM_PEEK_ADDR, 0);
+    let (
+        proc_runnable,
+        proc_running,
+        proc_sleeping,
+        proc_runnable_locked,
+        first_runnable_idx,
+        first_runnable_lock_cpu,
+    ) = collect_proc_state_summary(cpu);
+
+    HeartbeatDiagnosticMetrics {
+        cpu0_proc,
+        cpu0_noff,
+        cpu0_intena,
+        ticks,
+        clint_mtime,
+        clint_mtimecmp,
+        mscratch,
+        scratch_interval,
+        tickslock_locked,
+        tickslock_cpu,
+        proc0_state,
+        proc0_pid,
+        proc0_ctx_ra,
+        proc0_state_cpu_view,
+        plic_pending0,
+        plic_senable0,
+        plic_sthreshold0,
+        plic_sclaim_peek,
+        proc_runnable,
+        proc_running,
+        proc_sleeping,
+        proc_runnable_locked,
+        first_runnable_idx,
+        first_runnable_lock_cpu,
+    }
+}
+
+fn emit_compact_heartbeat(common: &HeartbeatCommonMetrics) {
+    let line = render_heartbeat_line("hb-lite", &build_compact_heartbeat_fields(common));
+    println!("{line}");
+    flush_stdout_silent();
+}
+
+fn emit_diagnostic_heartbeat(common: &HeartbeatCommonMetrics, diag: &HeartbeatDiagnosticMetrics) {
+    let line = render_heartbeat_line("hb", &build_diagnostic_heartbeat_fields(common, diag));
+    println!("{line}");
+    flush_stdout_silent();
+}
+
 fn run_with_heartbeat(
     cpu: &mut Cpu,
     max_count: u64,
@@ -1039,18 +1518,6 @@ fn run_with_heartbeat(
     mut uart_injector: Option<&mut UartInjector>,
     mut input_injector: Option<&mut InputInjector>,
 ) -> anyhow::Result<u64> {
-    const XV6_CPU0_ADDR: u32 = 0x8001_34C4;
-    const XV6_PROC_BASE: u32 = 0x8001_36E4;
-    const XV6_TICKS_ADDR: u32 = 0x8002_4010;
-    const XV6_MSCRATCH0_ADDR: u32 = 0x8000_B000;
-    const XV6_TICKSLOCK_ADDR: u32 = 0x8001_66E4;
-    const XV6_NPROC: u32 = 64;
-    const XV6_PROC_STRIDE: u32 = 192;
-    const PROC_STATE_OFFSET: u32 = 12;
-    const CPU_PROC_OFFSET: u32 = 0;
-    const CPU_NOFF_OFFSET: u32 = 60;
-    const CPU_INTENA_OFFSET: u32 = 64;
-
     let mut count = 0u64;
     let mut last_hb_pc: Option<Addr> = None;
     let mut same_pc_streak = 0u64;
@@ -1071,7 +1538,7 @@ fn run_with_heartbeat(
             injector.maybe_inject(count, cpu);
         }
 
-        if heartbeat_every > 0 && count % heartbeat_every == 0 {
+        if heartbeat_every > 0 && count.is_multiple_of(heartbeat_every) {
             let pc = cpu.pc();
             if Some(pc) == last_hb_pc {
                 same_pc_streak += 1;
@@ -1080,301 +1547,15 @@ fn run_with_heartbeat(
                 last_hb_pc = Some(pc);
             }
 
-            let tp = cpu.registers().read(RegIdx::new(4)).raw();
-            let csr = cpu.csr();
-            let mip = csr.mip.read();
-            let mie = csr.mie.read();
-            let global_mie = csr.mstatus.mie();
-            let sip = csr.sip.read();
-            let sie = csr.sie.read();
-            let scause = csr.scause.read();
-            let sepc = csr.sepc.read();
-            let stval = csr.stval.read();
-            let satp = csr.satp.read();
-            let global_sie = csr.sstatus.sie();
-            let sepc_raw = sepc;
-            let (sv32_root, sv32_pte1, sv32_pte0) = if (satp & 0x8000_0000) != 0 {
-                let root = (satp & 0x003F_FFFF) << 12;
-                let vpn1 = (sepc_raw >> 22) & 0x3FF;
-                let vpn0 = (sepc_raw >> 12) & 0x3FF;
-                let pte1_addr = root.wrapping_add(vpn1 * 4);
-                let pte1 = cpu
-                    .bus()
-                    .read_word(Addr::new(pte1_addr))
-                    .ok()
-                    .map(|w| w.raw())
-                    .unwrap_or(0);
-                let is_leaf1 = (pte1 & ((1 << 1) | (1 << 3))) != 0;
-                let pte0 = if pte1 != 0 && !is_leaf1 {
-                    let next = ((pte1 >> 10) & 0x003F_FFFF) << 12;
-                    let pte0_addr = next.wrapping_add(vpn0 * 4);
-                    cpu.bus()
-                        .read_word(Addr::new(pte0_addr))
-                        .ok()
-                        .map(|w| w.raw())
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
-                (root, pte1, pte0)
-            } else {
-                (0, 0, 0)
-            };
-            let (mtip, msip) = cpu.bus().get_clint_interrupt_status();
-            let (meip, seip) = cpu.bus().get_plic_interrupt_status();
-            let virtio_irq = cpu.bus().has_peripheral_interrupt("VirtIO-Block");
-            let uart_irq = cpu.bus().has_peripheral_interrupt("UART");
-            let (
-                virtio_cmds,
-                virtio_notifies,
-                virtio_desc,
-                virtio_irq_raised,
-                virtio_irq_ack,
-                virtio_desc_not_ready,
-                virtio_desc_no_avail,
-                virtio_desc_success,
-                virtio_desc_error,
-            ) = cpu
-                .bus()
-                .get_virtio_activity_counters()
-                .unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0));
+            let common = collect_heartbeat_common(cpu, count, same_pc_streak);
 
             if matches!(heartbeat_mode, HeartbeatMode::Compact) {
-                println!(
-                    "[hb-lite] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} satp=0x{:08x} scause=0x{:08x} sepc=0x{:08x} stval=0x{:08x} sv32.root=0x{:08x} sv32.pte1=0x{:08x} sv32.pte0=0x{:08x} mtip={} msip={} meip={} seip={} virtio_irq={} uart_irq={} v_notify={} v_desc_ok={} pc_streak={}",
-                    count,
-                    pc,
-                    cpu.privilege(),
-                    tp,
-                    if global_mie { 1 } else { 0 },
-                    if global_sie { 1 } else { 0 },
-                    mip,
-                    mie,
-                    sip,
-                    sie,
-                    satp,
-                    scause,
-                    sepc,
-                    stval,
-                    sv32_root,
-                    sv32_pte1,
-                    sv32_pte0,
-                    if mtip { 1 } else { 0 },
-                    if msip { 1 } else { 0 },
-                    if meip { 1 } else { 0 },
-                    if seip { 1 } else { 0 },
-                    if virtio_irq { 1 } else { 0 },
-                    if uart_irq { 1 } else { 0 },
-                    virtio_notifies,
-                    virtio_desc_success,
-                    same_pc_streak
-                );
-                std::io::stdout().flush().ok();
+                emit_compact_heartbeat(&common);
                 continue;
             }
 
-            let cpu0_proc = cpu
-                .bus()
-                .read_word(Addr::new(XV6_CPU0_ADDR + CPU_PROC_OFFSET))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let cpu0_noff = cpu
-                .bus()
-                .read_word(Addr::new(XV6_CPU0_ADDR + CPU_NOFF_OFFSET))
-                .ok()
-                .map(|w| w.raw() as i32)
-                .unwrap_or(-1);
-            let cpu0_intena = cpu
-                .bus()
-                .read_word(Addr::new(XV6_CPU0_ADDR + CPU_INTENA_OFFSET))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let ticks = cpu
-                .bus()
-                .read_word(Addr::new(XV6_TICKS_ADDR))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let clint_mtime = cpu
-                .bus()
-                .read_word(Addr::new(0x0200_BFF8))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let clint_mtimecmp = cpu
-                .bus()
-                .read_word(Addr::new(0x0200_4000))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let mscratch = cpu.csr().mscratch.get();
-            let scratch_interval = cpu
-                .bus()
-                .read_word(Addr::new(XV6_MSCRATCH0_ADDR + 20))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let tickslock_locked = cpu
-                .bus()
-                .read_word(Addr::new(XV6_TICKSLOCK_ADDR))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let tickslock_cpu = cpu
-                .bus()
-                .read_word(Addr::new(XV6_TICKSLOCK_ADDR + 8))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let proc0_state = cpu
-                .bus()
-                .read_word(Addr::new(XV6_PROC_BASE + PROC_STATE_OFFSET))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let proc0_pid = cpu
-                .bus()
-                .read_word(Addr::new(XV6_PROC_BASE + 32))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let proc0_ctx_ra = cpu
-                .bus()
-                .read_word(Addr::new(XV6_PROC_BASE + 52))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let proc0_state_cpu_view = cpu
-                .read_word(Addr::new(XV6_PROC_BASE + PROC_STATE_OFFSET))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(u32::MAX);
-            let plic_pending0 = cpu
-                .bus()
-                .read_word(Addr::new(0x0C00_1000))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let plic_senable0 = cpu
-                .bus()
-                .read_word(Addr::new(0x0C00_2080))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let plic_sthreshold0 = cpu
-                .bus()
-                .read_word(Addr::new(0x0C20_1000))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let plic_sclaim_peek = cpu
-                .bus()
-                .read_word(Addr::new(0x0C20_1004))
-                .ok()
-                .map(|w| w.raw())
-                .unwrap_or(0);
-            let mut proc_runnable = 0u32;
-            let mut proc_running = 0u32;
-            let mut proc_sleeping = 0u32;
-            let mut proc_runnable_locked = 0u32;
-            let mut first_runnable_idx: i32 = -1;
-            let mut first_runnable_lock_cpu = 0u32;
-            for i in 0..XV6_NPROC {
-                let proc_base = XV6_PROC_BASE + i * XV6_PROC_STRIDE;
-                let state_addr = XV6_PROC_BASE + i * XV6_PROC_STRIDE + PROC_STATE_OFFSET;
-                if let Ok(state) = cpu.bus().read_word(Addr::new(state_addr)) {
-                    match state.raw() {
-                        1 => proc_sleeping += 1,
-                        2 => {
-                            proc_runnable += 1;
-                            if first_runnable_idx < 0 {
-                                first_runnable_idx = i as i32;
-                            }
-                            let lock_word = cpu
-                                .bus()
-                                .read_word(Addr::new(proc_base))
-                                .ok()
-                                .map(|w| w.raw())
-                                .unwrap_or(0);
-                            if lock_word != 0 {
-                                proc_runnable_locked += 1;
-                            }
-                            if first_runnable_idx == i as i32 {
-                                first_runnable_lock_cpu = cpu
-                                    .bus()
-                                    .read_word(Addr::new(proc_base + 8))
-                                    .ok()
-                                    .map(|w| w.raw())
-                                    .unwrap_or(0);
-                            }
-                        }
-                        3 => proc_running += 1,
-                        _ => {}
-                    }
-                }
-            }
-            println!(
-                "[hb] step={} pc={} priv={} tp=0x{:08x} mstatus.mie={} sstatus.sie={} mip=0x{:08x} mie=0x{:08x} sip=0x{:08x} sie=0x{:08x} satp=0x{:08x} scause=0x{:08x} sepc=0x{:08x} stval=0x{:08x} sv32.root=0x{:08x} sv32.pte1=0x{:08x} sv32.pte0=0x{:08x} mtip={} msip={} meip={} virtio_irq={} uart_irq={} v_cmd={} v_notify={} v_desc={} v_irq_raise={} v_irq_ack={} v_desc_not_ready={} v_desc_no_avail={} v_desc_ok={} v_desc_err={} plic_pending0=0x{:08x} plic_senable0=0x{:08x} plic_sth=0x{:08x} plic_sclaim={} cpu0_proc=0x{:08x} cpu0_noff={} cpu0_intena={} ticks={} mtime={} mtimecmp={} mscratch=0x{:08x} scratch5={} tickslock_locked={} tickslock_cpu=0x{:08x} p0_state={} p0_state_cpu={} p0_pid={} p0_ctx_ra=0x{:08x} p_run={} p_run_locked={} p_run0_idx={} p_run0_lock_cpu=0x{:08x} p_running={} p_sleep={} pc_streak={}",
-                count,
-                pc,
-                cpu.privilege(),
-                tp,
-                if global_mie { 1 } else { 0 },
-                if global_sie { 1 } else { 0 },
-                mip,
-                mie,
-                sip,
-                sie,
-                satp,
-                scause,
-                sepc,
-                stval,
-                sv32_root,
-                sv32_pte1,
-                sv32_pte0,
-                if mtip { 1 } else { 0 },
-                if msip { 1 } else { 0 },
-                if meip { 1 } else { 0 },
-                if virtio_irq { 1 } else { 0 },
-                if uart_irq { 1 } else { 0 },
-                virtio_cmds,
-                virtio_notifies,
-                virtio_desc,
-                virtio_irq_raised,
-                virtio_irq_ack,
-                virtio_desc_not_ready,
-                virtio_desc_no_avail,
-                virtio_desc_success,
-                virtio_desc_error,
-                plic_pending0,
-                plic_senable0,
-                plic_sthreshold0,
-                plic_sclaim_peek,
-                cpu0_proc,
-                cpu0_noff,
-                cpu0_intena,
-                ticks,
-                clint_mtime,
-                clint_mtimecmp,
-                mscratch,
-                scratch_interval,
-                tickslock_locked,
-                tickslock_cpu,
-                proc0_state,
-                proc0_state_cpu_view,
-                proc0_pid,
-                proc0_ctx_ra,
-                proc_runnable,
-                proc_runnable_locked,
-                first_runnable_idx,
-                first_runnable_lock_cpu,
-                proc_running,
-                proc_sleeping,
-                same_pc_streak
-            );
-            std::io::stdout().flush().ok();
+            let diag = collect_heartbeat_diagnostic(cpu);
+            emit_diagnostic_heartbeat(&common, &diag);
         }
     }
 
@@ -1606,7 +1787,7 @@ fn attach_stdout_uart(bus: &mut Bus, prompt_ready: Option<Arc<AtomicBool>>) {
                 flag.store(true, Ordering::Release);
             }
         }
-        std::io::stdout().flush().ok();
+        flush_stdout_silent();
     }));
     bus.attach_peripheral(uart);
 }
@@ -1616,7 +1797,7 @@ fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<O
     let data = std::fs::read(path)?;
 
     // Check if it's an ELF file (magic: 0x7F 'E' 'L' 'F')
-    if data.len() >= 4 && &data[0..4] == &[0x7F, b'E', b'L', b'F'] {
+    if data.len() >= 4 && data[0..4] == [0x7F, b'E', b'L', b'F'] {
         let loader = ElfLoader::from_bytes(data)?;
         let entry = loader.entry_point();
         println!("Loading ELF file: {} segments", loader.segment_count());
@@ -1640,7 +1821,7 @@ fn load_file(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<O
 /// Load a file as raw bytes at the specified address.
 fn load_raw_file_at(bus: &mut Bus, path: &PathBuf, load_addr: Addr) -> anyhow::Result<usize> {
     let data = std::fs::read(path)?;
-    if data.len() >= 4 && &data[0..4] == &[0x7F, b'E', b'L', b'F'] {
+    if data.len() >= 4 && data[0..4] == [0x7F, b'E', b'L', b'F'] {
         println!(
             "Linux boot chain: payload {} looks like ELF, but loaded as raw image at {}",
             path.display(),

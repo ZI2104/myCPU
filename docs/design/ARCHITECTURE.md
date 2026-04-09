@@ -70,6 +70,14 @@ graph TB
 
 ---
 
+### 当前实现同步（2026-04-09）
+
+- **MMU/TLB 路径**：已从“可选设计”推进到可运行实现，`src/cpu/tlb.rs` 提供 TLB 基础能力（命中/未命中、ASID 隔离、刷新）。
+- **性能可观测性**：性能链路（`PerfCollector` → `PerfReport` → 可视化快照/前端）已打通 cache/TLB 指标。
+- **回归工程化**：`riscv-tests` 已接入 CI（DiffTest + QEMU），并将每测例性能 JSON 上传为 artifacts，用于 ISA 正确性与性能趋势联合观测。
+
+---
+
 ## 三、6 级流水线设计
 
 ### 流水线阶段
@@ -166,14 +174,14 @@ flowchart TD
 
 #### 控制冒险 - 分支预测
 
-| 策略              | 说明                            | 实现复杂度 |
-| ----------------- | ------------------------------- | ---------- |
-| Always Not Taken  | 总是预测不跳转 (静态)           | 简单       |
-| 1-Bit             | 记住上次结果                    | 简单       |
-| 2-Bit Saturating  | 4 状态 FSM，需连续 2 次错误翻转 | 中等       |
-| Local (2-Level)   | 每分支 BHR + 共享 PHT          | 中等       |
-| Global (gshare)   | GHR XOR PC 索引 PHT            | 中等       |
-| BTB               | 分支目标缓存 (配合方向预测器)   | 复杂       |
+| 策略             | 说明                            | 实现复杂度 |
+| ---------------- | ------------------------------- | ---------- |
+| Always Not Taken | 总是预测不跳转 (静态)           | 简单       |
+| 1-Bit            | 记住上次结果                    | 简单       |
+| 2-Bit Saturating | 4 状态 FSM，需连续 2 次错误翻转 | 中等       |
+| Local (2-Level)  | 每分支 BHR + 共享 PHT           | 中等       |
+| Global (gshare)  | GHR XOR PC 索引 PHT             | 中等       |
+| BTB              | 分支目标缓存 (配合方向预测器)   | 复杂       |
 
 **当前实现**: 5 种方向预测器 + BTB，支持运行时切换，通过前端可视化对比。
 
@@ -189,13 +197,13 @@ PredictorManager
 
 **方向预测器对比**：
 
-| 预测器         | 存储开销                   | 特点                                     |
-| -------------- | -------------------------- | ---------------------------------------- |
-| Always Not     | 0                          | 基线，无动态预测                         |
-| 1-Bit          | 1024 × 1-bit (BHT)         | 循环首尾各误预测一次                     |
-| 2-Bit          | 1024 × 2-bit (BHT)         | 抵抗单次异常，需连续 2 次错误才翻转      |
-| Local          | 1024 × 10-bit (BHR) + 1024 × 2-bit (PHT) | 捕获每分支行为模式             |
-| Global (gshare)| 10-bit GHR + 1024 × 2-bit (PHT)    | 捕获分支间相关性 (GHR XOR PC 索引) |
+| 预测器          | 存储开销                                 | 特点                                |
+| --------------- | ---------------------------------------- | ----------------------------------- |
+| Always Not      | 0                                        | 基线，无动态预测                    |
+| 1-Bit           | 1024 × 1-bit (BHT)                       | 循环首尾各误预测一次                |
+| 2-Bit           | 1024 × 2-bit (BHT)                       | 抵抗单次异常，需连续 2 次错误才翻转 |
+| Local           | 1024 × 10-bit (BHR) + 1024 × 2-bit (PHT) | 捕获每分支行为模式                  |
+| Global (gshare) | 10-bit GHR + 1024 × 2-bit (PHT)          | 捕获分支间相关性 (GHR XOR PC 索引)  |
 
 **BTB 设计**：
 - 256 项直接映射缓存 (PC[9:2] 索引，PC[31:10] 作为 tag)
@@ -218,8 +226,8 @@ Cycle N+1:
 
 ##### WebSocket 命令
 
-| 命令 | 说明 |
-| ---- | ---- |
+| 命令                      | 说明                                           |
+| ------------------------- | ---------------------------------------------- |
 | `predictor_switch <type>` | 切换预测器 (none/one_bit/two_bit/local/global) |
 
 ##### 前端可视化
@@ -1599,23 +1607,23 @@ myCPU 实现了符合 RISC-V 硬件性能监控 (HPM) 规范的 CSR 寄存器。
 
 #### 支持的性能事件
 
-| 事件 ID | 事件名称            | 说明                    |
-| ------- | ------------------- | ----------------------- |
-| 0       | None                | 禁用计数                |
-| 1       | Cycles              | CPU 周期                |
-| 2       | InstructionsRetired | 已完成指令              |
-| 3       | LoadUseStalls       | Load-Use 暂停周期       |
-| 4       | ControlHazards      | 控制冒险 (分支预测错误) |
-| 5       | BranchExecuted      | 执行的分支指令          |
-| 6       | BranchTaken         | 跳转的分支              |
-| 7       | BranchNotTaken      | 未跳转的分支            |
-| 15      | BranchMispredictions| 动态预测器误预测次数    |
-| 8       | MemoryReads         | 内存读取次数            |
-| 9       | MemoryWrites        | 内存写入次数            |
-| 10      | AluOperations       | ALU 操作次数            |
-| 11      | CsrAccesses         | CSR 访问次数            |
-| 12      | InterruptsTaken     | 已处理中断数            |
-| 13      | PipelineFlushes     | 流水线冲刷次数          |
+| 事件 ID | 事件名称             | 说明                    |
+| ------- | -------------------- | ----------------------- |
+| 0       | None                 | 禁用计数                |
+| 1       | Cycles               | CPU 周期                |
+| 2       | InstructionsRetired  | 已完成指令              |
+| 3       | LoadUseStalls        | Load-Use 暂停周期       |
+| 4       | ControlHazards       | 控制冒险 (分支预测错误) |
+| 5       | BranchExecuted       | 执行的分支指令          |
+| 6       | BranchTaken          | 跳转的分支              |
+| 7       | BranchNotTaken       | 未跳转的分支            |
+| 15      | BranchMispredictions | 动态预测器误预测次数    |
+| 8       | MemoryReads          | 内存读取次数            |
+| 9       | MemoryWrites         | 内存写入次数            |
+| 10      | AluOperations        | ALU 操作次数            |
+| 11      | CsrAccesses          | CSR 访问次数            |
+| 12      | InterruptsTaken      | 已处理中断数            |
+| 13      | PipelineFlushes      | 流水线冲刷次数          |
 
 ### 性能收集器架构
 

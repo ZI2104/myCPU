@@ -23,68 +23,70 @@ docs/
 
 ## 1) 先看这些（高频入口）
 
-| 文档 | 说明 |
-|------|------|
-| [guides/GETTING_STARTED.md](guides/GETTING_STARTED.md) | 快速上手、构建运行与常用命令 |
-| [design/ROADMAP.md](design/ROADMAP.md) | 阶段进度、里程碑、验收证据 |
-| [design/PROJECT_STRUCTURE.md](design/PROJECT_STRUCTURE.md) | 目录职责与产物落位 |
-| [guides/DEMO_GUIDE.md](guides/DEMO_GUIDE.md) | 课程演示与验收脚本串联 |
+| 文档                                                       | 说明                         |
+| ---------------------------------------------------------- | ---------------------------- |
+| [guides/GETTING_STARTED.md](guides/GETTING_STARTED.md)     | 快速上手、构建运行与常用命令 |
+| [design/ROADMAP.md](design/ROADMAP.md)                     | 阶段进度、里程碑、验收证据   |
+| [design/PROJECT_STRUCTURE.md](design/PROJECT_STRUCTURE.md) | 目录职责与产物落位           |
+| [guides/DEMO_GUIDE.md](guides/DEMO_GUIDE.md)               | 课程演示与验收脚本串联       |
 
 ---
 
 ## 2) 架构与实现（核心技术）
 
-| 文档 | 说明 |
-|------|------|
-| [design/ARCHITECTURE.md](design/ARCHITECTURE.md) | 架构详版（完整设计） |
-| [design/PERFORMANCE_MONITORING.md](design/PERFORMANCE_MONITORING.md) | 性能计数器与报告 |
-| [design/VISUALIZATION_DESIGN.md](design/VISUALIZATION_DESIGN.md) | 可视化设计与交互 |
+| 文档                                                                 | 说明                 |
+| -------------------------------------------------------------------- | -------------------- |
+| [design/ARCHITECTURE.md](design/ARCHITECTURE.md)                     | 架构详版（完整设计） |
+| [design/PERFORMANCE_MONITORING.md](design/PERFORMANCE_MONITORING.md) | 性能计数器与报告     |
+| [design/VISUALIZATION_DESIGN.md](design/VISUALIZATION_DESIGN.md)     | 可视化设计与交互     |
 
 ---
 
 ## 3) 协处理器与加速器
 
-| 文档 | 说明 |
-|------|------|
-| [npu/NPU_SPEC.md](npu/NPU_SPEC.md) | NPU ABI / 寄存器规范（权威细节） |
-| [npu/NPU_OVERVIEW.md](npu/NPU_OVERVIEW.md) | NPU 集成概览与运行说明 |
-| [npu/NPU_INTEGRATION_SUMMARY.md](npu/NPU_INTEGRATION_SUMMARY.md) | NPU 集成调试总结 |
-| [guides/GPU_TPU_API.md](guides/GPU_TPU_API.md) | GPU/TPU MMIO 软件 API 文档 |
+| 文档                                                             | 说明                             |
+| ---------------------------------------------------------------- | -------------------------------- |
+| [npu/NPU_SPEC.md](npu/NPU_SPEC.md)                               | NPU ABI / 寄存器规范（权威细节） |
+| [npu/NPU_OVERVIEW.md](npu/NPU_OVERVIEW.md)                       | NPU 集成概览与运行说明           |
+| [npu/NPU_INTEGRATION_SUMMARY.md](npu/NPU_INTEGRATION_SUMMARY.md) | NPU 集成调试总结                 |
+| [guides/GPU_TPU_API.md](guides/GPU_TPU_API.md)                   | GPU/TPU MMIO 软件 API 文档       |
 
 ---
 
 ## 4) 开发记录与复盘
 
-| 文档 | 说明 |
-|------|------|
-| [development/MILESTONE_EXECUTION.md](development/MILESTONE_EXECUTION.md) | 里程碑执行台账 |
-| [development/CONSTRUCTION_BLUEPRINT.md](development/CONSTRUCTION_BLUEPRINT.md) | 施工蓝图 v3.0（已合并到 ROADMAP） |
-| [development/PHASE3_STRICT_ACCEPTANCE_ISSUES.md](development/PHASE3_STRICT_ACCEPTANCE_ISSUES.md) | Phase 3 严格验收问题清单 |
-| [development/PHASE6_IMPROVEMENTS.md](development/PHASE6_IMPROVEMENTS.md) | Phase 6 改进方向与后续优化 |
+| 文档                                                                                                 | 说明                                     |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| [development/MILESTONE_EXECUTION.md](development/MILESTONE_EXECUTION.md)                             | 里程碑执行台账                           |
+| [development/CONSTRUCTION_BLUEPRINT.md](development/CONSTRUCTION_BLUEPRINT.md)                       | 施工蓝图 v3.0（已合并到 ROADMAP）        |
+| [development/RISCV_TESTS_CI.md](development/RISCV_TESTS_CI.md)                                       | riscv-tests 差分回归 CI 说明             |
+| [development/RISCv_tests_integration_CHANGELOG.md](development/RISCv_tests_integration_CHANGELOG.md) | riscv-tests + cache/TLB 指标集成变更记录 |
+| [development/PHASE3_STRICT_ACCEPTANCE_ISSUES.md](development/PHASE3_STRICT_ACCEPTANCE_ISSUES.md)     | Phase 3 严格验收问题清单                 |
+| [development/PHASE6_IMPROVEMENTS.md](development/PHASE6_IMPROVEMENTS.md)                             | Phase 6 改进方向与后续优化               |
 
 ---
 
 ## 5) 研究与调研
 
-| 文档 | 说明 |
-|------|------|
+| 文档                                                                                                     | 说明               |
+| -------------------------------------------------------------------------------------------------------- | ------------------ |
 | [research/CPU_SIMULATOR_RESEARCH_REVIEW_20260331.md](research/CPU_SIMULATOR_RESEARCH_REVIEW_20260331.md) | CPU 模拟器调研报告 |
 
 ---
 
 ## 6) 参考资料
 
-| 文档 | 说明 |
-|------|------|
+| 文档                                                         | 说明                     |
+| ------------------------------------------------------------ | ------------------------ |
 | [reference/CLAUDE_COMMANDS.md](reference/CLAUDE_COMMANDS.md) | Claude Code 斜杠命令参考 |
 
 ---
 
 ## 7) 汇报材料
 
-| 文档 | 说明 |
-|------|------|
-| [presentations/汇报讲稿.md](presentations/汇报讲稿.md) | 汇报讲稿 |
+| 文档                                                                                         | 说明         |
+| -------------------------------------------------------------------------------------------- | ------------ |
+| [presentations/汇报讲稿.md](presentations/汇报讲稿.md)                                       | 汇报讲稿     |
 | [presentations/开题报告_PPT大纲与5分钟讲稿.md](presentations/开题报告_PPT大纲与5分钟讲稿.md) | 开题报告材料 |
 
 ---

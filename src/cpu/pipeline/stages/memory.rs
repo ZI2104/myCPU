@@ -39,10 +39,10 @@ impl MemoryStage {
         ex_mem: &ExMemRegister,
         data_latch: &DataReadLatch,
         bus: &mut Bus,
-        translate: F,
+        mut translate: F,
     ) -> Result<MemWbRegister>
     where
-        F: Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
+        F: FnMut(&mut Bus, Addr, MemoryAccessType) -> Result<Addr>,
     {
         // Handle invalid instruction
         if !ex_mem.valid {
@@ -60,7 +60,7 @@ impl MemoryStage {
 
         // Handle memory write: translate and write to bus (same as before)
         if ex_mem.ctrl.mem_write {
-            self.write_memory(bus, addr, ex_mem.store_data, &ex_mem.ctrl, &translate)?;
+            self.write_memory(bus, addr, ex_mem.store_data, &ex_mem.ctrl, &mut translate)?;
         }
 
         // Determine write-back data
@@ -126,10 +126,10 @@ impl MemoryStage {
         &mut self,
         ex_mem: &ExMemRegister,
         bus: &mut Bus,
-        translate: F,
+        mut translate: F,
     ) -> Result<MemWbRegister>
     where
-        F: Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
+        F: FnMut(&mut Bus, Addr, MemoryAccessType) -> Result<Addr>,
     {
         if !ex_mem.valid {
             return Ok(MemWbRegister::bubble_from_ex_mem(ex_mem));
@@ -139,12 +139,12 @@ impl MemoryStage {
         let mut mem_data = Word::ZERO;
 
         if ex_mem.ctrl.mem_read {
-            mem_data = self.read_memory(bus, addr, &ex_mem.ctrl, &translate)?;
+            mem_data = self.read_memory(bus, addr, &ex_mem.ctrl, &mut translate)?;
             self.mem_data = mem_data;
         }
 
         if ex_mem.ctrl.mem_write {
-            self.write_memory(bus, addr, ex_mem.store_data, &ex_mem.ctrl, &translate)?;
+            self.write_memory(bus, addr, ex_mem.store_data, &ex_mem.ctrl, &mut translate)?;
         }
 
         let write_data = if ex_mem.ctrl.mem_read {
@@ -173,10 +173,10 @@ impl MemoryStage {
     /// Read from memory based on width (legacy helper).
     fn read_memory(
         &self,
-        bus: &Bus,
+        bus: &mut Bus,
         addr: Addr,
         ctrl: &crate::cpu::pipeline::control::MemControlSignals,
-        translate: &impl Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
+        translate: &mut impl FnMut(&mut Bus, Addr, MemoryAccessType) -> Result<Addr>,
     ) -> Result<Word> {
         let paddr = translate(bus, addr, MemoryAccessType::Load)?;
         match ctrl.mem_width {
@@ -208,7 +208,7 @@ impl MemoryStage {
         addr: Addr,
         data: Word,
         ctrl: &crate::cpu::pipeline::control::MemControlSignals,
-        translate: &impl Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
+        translate: &mut impl FnMut(&mut Bus, Addr, MemoryAccessType) -> Result<Addr>,
     ) -> Result<()> {
         let paddr = translate(bus, addr, MemoryAccessType::Store)?;
         match ctrl.mem_width {

@@ -318,6 +318,14 @@ pub struct PerfSnapshot {
     pub memory_reads: u64,
     /// Memory write count
     pub memory_writes: u64,
+    /// Cache hits (if cache simulation enabled)
+    pub cache_hits: u64,
+    /// Cache misses (if cache simulation enabled)
+    pub cache_misses: u64,
+    /// TLB hits (if TLB simulation enabled)
+    pub tlb_hits: u64,
+    /// TLB misses (if TLB simulation enabled)
+    pub tlb_misses: u64,
 }
 
 impl CpuSnapshot {
@@ -373,6 +381,10 @@ impl Default for PerfSnapshot {
             branch_accuracy: None,
             memory_reads: 0,
             memory_writes: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            tlb_hits: 0,
+            tlb_misses: 0,
         }
     }
 }

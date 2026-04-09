@@ -394,7 +394,7 @@ Phase 7: CI/发布工程化（规划）
 ### P3: Sv32 分页 (可选)
 
 - [X] 页表结构（SATP CSR + Sv32 两级页表遍历骨架）
-- [ ] TLB 缓存
+- [X] TLB 缓存
 - [X] 地址翻译入口（单周期 CPU：取指/Load/Store）
 - [X] 页错误异常（Instruction/Load/Store Page Fault）
 
@@ -413,6 +413,18 @@ Phase 7: CI/发布工程化（规划）
 - 当前边界：
   - 暂未实现 TLB
   - 暂未实现 A/D 位硬件更新语义与权限细则（SUM/MXR 等）
+
+#### P3 同步校验（2026-04-09）
+
+- 新增能力：
+  - `src/cpu/tlb.rs` TLB 已接入并具备 ASID 隔离、按地址/ASID/全量刷新能力；
+  - MMU + Pipeline 翻译路径已接入 TLB 命中/未命中采样；
+  - PerfCollector/PerfReport/可视化快照与前端面板已暴露 `cache_hits/cache_misses/tlb_hits/tlb_misses`。
+- 验收测试：
+  - `cargo test --lib` 通过（386 passed, 0 failed）；
+  - TLB 单测通过（`cpu::tlb::*`）。
+- 现状边界：
+  - A/D 位硬件自动更新语义与更细粒度权限策略（SUM/MXR）仍在后续优化清单。
 
 ### P4: 多核支持 (可选)
 
@@ -647,6 +659,13 @@ Phase 7: CI/发布工程化（规划）
 - riscv-tests 官方测试套件
 - 流水线正确性测试
 - 特权级切换测试
+
+#### riscv-tests 持续回归（2026-04-09）
+
+- [X] 工作流：`.github/workflows/run-riscv-tests.yml`
+- [X] 脚本：`scripts/run_riscv_tests.sh`
+- [X] 产物：`artifacts/riscv-tests/*.perf.json`（`if: always()` 上传）
+- [X] 限流：`workflow_dispatch` 支持 `max_tests`
 
 ### 端到端测试
 

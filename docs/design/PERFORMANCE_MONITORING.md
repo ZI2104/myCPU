@@ -8,16 +8,31 @@
 - 流水线效率分析
 - 基准测试程序运行
 
+## 当前实现同步（2026-04-09）
+
+本章节补充当前代码基线中的已落地能力（区别于下文的设计草案示例）：
+
+- `src/cpu/perf_collector.rs`
+    - 已提供 cache/TLB 计数字段：`cache_hits/cache_misses/tlb_hits/tlb_misses`；
+    - 已提供便捷记录接口：`record_cache_hit/miss`、`record_tlb_hit/miss`。
+- `src/perf/report.rs`
+    - `PerfReport` JSON 与文本输出已包含上述 cache/TLB 指标。
+- `src/visualize/snapshot.rs` + 前端面板
+    - 可视化快照已暴露 cache/TLB 指标；
+    - 前端 `PerformanceDashboard` 与 `MemoryHierarchyPanel` 已展示命中/未命中及命中率。
+- CI 联动
+    - `riscv-tests` 回归会产出每测例 perf JSON（`artifacts/riscv-tests/*.perf.json`），可用于离线趋势分析。
+
 ## RISC-V HPM 规范
 
 ### 性能计数器 CSR
 
-| CSR 地址 | 名称 | 说明 |
-|----------|------|------|
-| 0xB00 | mcycle | 机器模式周期计数器 |
-| 0xB02 | minstret | 机器模式已完成指令计数器 |
+| CSR 地址  | 名称            | 说明                     |
+| --------- | --------------- | ------------------------ |
+| 0xB00     | mcycle          | 机器模式周期计数器       |
+| 0xB02     | minstret        | 机器模式已完成指令计数器 |
 | 0xB03-B1F | mhpmcounter3-31 | 机器模式可编程事件计数器 |
-| 0x323-33F | mhpmevent3-31 | 事件选择寄存器 |
+| 0x323-33F | mhpmevent3-31   | 事件选择寄存器           |
 
 ### 实现计划
 
