@@ -7,7 +7,7 @@ param(
     [ValidateSet('linux-program', 'pattern-demo')]
     [string]$Mode = 'linux-program',
 
-    [int]$Warmup = 3500,
+    [int]$Warmup = 0,
 
     [switch]$SkipProbe
 )

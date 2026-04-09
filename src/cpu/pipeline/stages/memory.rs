@@ -46,13 +46,7 @@ impl MemoryStage {
     {
         // Handle invalid instruction
         if !ex_mem.valid {
-            return Ok(MemWbRegister {
-                pc: ex_mem.pc,
-                write_data: Word::ZERO,
-                rd: ex_mem.rd,
-                ctrl: WbControlSignals::none(),
-                valid: false,
-            });
+            return Ok(MemWbRegister::bubble_from_ex_mem(ex_mem));
         }
 
         let addr = Addr::new(ex_mem.alu_result.raw());
@@ -84,8 +78,11 @@ impl MemoryStage {
 
         Ok(MemWbRegister {
             pc: ex_mem.pc,
+            alu_result: ex_mem.alu_result,
             write_data,
             rd: ex_mem.rd,
+            mem_read: ex_mem.ctrl.mem_read,
+            mem_write: ex_mem.ctrl.mem_write,
             ctrl: wb_ctrl,
             valid: true,
         })
@@ -135,13 +132,7 @@ impl MemoryStage {
         F: Fn(&Bus, Addr, MemoryAccessType) -> Result<Addr>,
     {
         if !ex_mem.valid {
-            return Ok(MemWbRegister {
-                pc: ex_mem.pc,
-                write_data: Word::ZERO,
-                rd: ex_mem.rd,
-                ctrl: WbControlSignals::none(),
-                valid: false,
-            });
+            return Ok(MemWbRegister::bubble_from_ex_mem(ex_mem));
         }
 
         let addr = Addr::new(ex_mem.alu_result.raw());
@@ -169,8 +160,11 @@ impl MemoryStage {
 
         Ok(MemWbRegister {
             pc: ex_mem.pc,
+            alu_result: ex_mem.alu_result,
             write_data,
             rd: ex_mem.rd,
+            mem_read: ex_mem.ctrl.mem_read,
+            mem_write: ex_mem.ctrl.mem_write,
             ctrl: wb_ctrl,
             valid: true,
         })

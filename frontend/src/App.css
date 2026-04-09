@@ -218,6 +218,10 @@ body {
   border-radius: 8px;
   padding: 15px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  /* prevent grid blowout: allow the 1fr track to shrink to 0 instead of
+     being pushed wider by the intrinsic min-width of pipeline columns */
+  min-width: 0;
+  overflow: hidden;
 }
 
 
@@ -234,14 +238,11 @@ body {
   border-radius: 8px;
   padding: 10px;
   background: #fafafa;
-  overflow-x: auto;
+  /* outer container clips — the inner .timeline-columns handles scrolling */
+  overflow: hidden;
   min-height: 340px;
   width: 100%;
   box-sizing: border-box;
-}
-
-/* Ensure timeline columns and labels stretch to the same height so cells align */
-.pipeline-timeline-container {
   align-items: stretch;
 }
 

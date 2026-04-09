@@ -69,8 +69,11 @@ mod tests {
     fn create_mem_wb(rd: u8, value: u32, reg_write: bool) -> MemWbRegister {
         MemWbRegister {
             pc: Addr::new(0),
+            alu_result: Word::ZERO,
             write_data: Word::new(value),
             rd: RegIdx::new(rd),
+            mem_read: false,
+            mem_write: false,
             ctrl: WbControlSignals {
                 reg_write,
                 mem_to_reg: false,
@@ -131,8 +134,11 @@ mod tests {
 
         let mem_wb = MemWbRegister {
             pc: Addr::new(0),
+            alu_result: Word::ZERO,
             write_data: Word::new(0x12345678),
             rd: RegIdx::new(5),
+            mem_read: false,
+            mem_write: false,
             ctrl: WbControlSignals {
                 reg_write: true,
                 mem_to_reg: false,

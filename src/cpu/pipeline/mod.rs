@@ -77,6 +77,9 @@ pub struct PipelineCpu {
     // Hazard and forwarding units
     hazard_unit: HazardUnit,
 
+    // Saved WB input for snapshot (old mem_wb before clock update)
+    wb_input: MemWbRegister,
+
     // Performance tracking
     perf: PerfCollector,
 
@@ -107,6 +110,7 @@ impl PipelineCpu {
             memory_stage: MemoryStage::new(),
             writeback_stage: WritebackStage::new(),
             hazard_unit: HazardUnit::default(),
+            wb_input: MemWbRegister::default(),
             perf: PerfCollector::new(),
             instructions_executed: 0,
             cycles: 0,
@@ -418,23 +422,23 @@ impl PipelineCpu {
                 } else {
                     None
                 },
-                mem_stage: if self.ex_mem.valid {
+                mem_stage: if self.mem_wb.valid {
                     Some(MemStageInfo {
-                        pc: self.ex_mem.pc.raw(),
-                        alu_result: self.ex_mem.alu_result.raw(),
-                        mem_read: self.ex_mem.ctrl.mem_read,
-                        mem_write: self.ex_mem.ctrl.mem_write,
-                        rd: self.ex_mem.rd.raw(),
+                        pc: self.mem_wb.pc.raw(),
+                        alu_result: self.mem_wb.alu_result.raw(),
+                        mem_read: self.mem_wb.mem_read,
+                        mem_write: self.mem_wb.mem_write,
+                        rd: self.mem_wb.rd.raw(),
                     })
                 } else {
                     None
                 },
-                wb_stage: if self.mem_wb.valid {
+                wb_stage: if self.wb_input.valid {
                     Some(WbStageInfo {
-                        pc: self.mem_wb.pc.raw(),
-                        write_data: self.mem_wb.write_data.raw(),
-                        rd: self.mem_wb.rd.raw(),
-                        reg_write: self.mem_wb.ctrl.reg_write,
+                        pc: self.wb_input.pc.raw(),
+                        write_data: self.wb_input.write_data.raw(),
+                        rd: self.wb_input.rd.raw(),
+                        reg_write: self.wb_input.ctrl.reg_write,
                     })
                 } else {
                     None
@@ -700,7 +704,9 @@ impl PipelineCpu {
         };
 
         // ========== Step 3: Update pipeline registers and latches ==========
-        self.mem_wb = new_mem_wb;
+        // Move old mem_wb into wb_input (for snapshot) and replace with new value.
+        // std::mem::replace avoids a clone — it takes the old value out by move.
+        self.wb_input = std::mem::replace(&mut self.mem_wb, new_mem_wb);
         self.ex_mem = new_ex_mem;
 
         // Control hazard: branch/jump resolved in ID → flush wrong-path IF/ID
@@ -800,6 +806,7 @@ impl ExecutionModel for PipelineCpu {
         self.memory_stage.reset();
         self.writeback_stage.reset();
         self.hazard_unit.reset();
+        self.wb_input = MemWbRegister::default();
         self.perf.reset();
         self.instructions_executed = 0;
         self.cycles = 0;

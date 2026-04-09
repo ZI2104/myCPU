@@ -1014,6 +1014,13 @@ impl VisualizeServer {
                     }
                 }
 
+                // Pause execution when the client disconnects so the CPU
+                // does not continue running with no one watching.
+                {
+                    let mut running_guard = running.lock().await;
+                    *running_guard = false;
+                }
+
                 println!("Client {} connection closed", client_addr);
             });
         }

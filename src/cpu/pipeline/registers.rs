@@ -261,11 +261,20 @@ pub struct MemWbRegister {
     /// PC of the instruction.
     pub pc: Addr,
 
+    /// ALU result (memory address for loads/stores, computation result otherwise).
+    pub alu_result: Word,
+
     /// Value to write back (from ALU or memory).
     pub write_data: Word,
 
     /// Destination register.
     pub rd: RegIdx,
+
+    /// Whether this instruction performed a memory read.
+    pub mem_read: bool,
+
+    /// Whether this instruction performed a memory write.
+    pub mem_write: bool,
 
     /// Control signal for WB.
     pub ctrl: WbControlSignals,
@@ -278,8 +287,11 @@ impl Default for MemWbRegister {
     fn default() -> Self {
         Self {
             pc: Addr::new(0),
+            alu_result: Word::ZERO,
             write_data: Word::ZERO,
             rd: RegIdx::new(0),
+            mem_read: false,
+            mem_write: false,
             ctrl: WbControlSignals::default(),
             valid: false,
         }
@@ -290,6 +302,22 @@ impl MemWbRegister {
     /// Create a new MEM/WB register with default values.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an invalid (bubble) MEM/WB register from the EX/MEM stage.
+    ///
+    /// Used when the instruction is flushed or the stage has no valid data.
+    pub fn bubble_from_ex_mem(ex_mem: &ExMemRegister) -> Self {
+        Self {
+            pc: ex_mem.pc,
+            alu_result: Word::ZERO,
+            write_data: Word::ZERO,
+            rd: ex_mem.rd,
+            mem_read: false,
+            mem_write: false,
+            ctrl: WbControlSignals::none(),
+            valid: false,
+        }
     }
 }
 
