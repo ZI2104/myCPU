@@ -67,10 +67,9 @@ export function useWebSocket(url: string): UseWebSocketReturn {
           latestResetSequenceRef.current = nextResetSequence;
           latestCycleRef.current = nextCycle;
           setSnapshot(next);
+          setError(null);
         } else if (data.status) {
           console.log('Status:', data.status);
-        } else if (data.error) {
-          setError(data.error);
         }
       } catch (e) {
         console.error('Parse error:', e);

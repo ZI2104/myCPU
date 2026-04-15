@@ -18,6 +18,32 @@ interface HistoryEntry {
   resetSequence: number;
 }
 
+// Reduced high-contrast palette for instruction tracing.
+// Keep color kinds small and clearly separated.
+const INSTRUCTION_COLORS = [
+  '#ef4444', // red
+  '#3b82f6', // blue
+  '#22c55e', // green
+  '#a855f7', // purple
+  '#f59e0b', // amber
+] as const;
+
+// Stride over the palette so consecutive PCs don't look like adjacent hues.
+const COLOR_STRIDE = 3;
+
+const getInstructionColorByPc = (pcHex: string): string => {
+  const normalized = pcHex.replace(/^0x/i, '');
+  const pc = Number.parseInt(normalized, 16);
+  if (Number.isNaN(pc)) {
+    return INSTRUCTION_COLORS[0];
+  }
+
+  // Deterministic color by instruction address (PC).
+  // Use PC>>2 to ignore alignment zeros; stride helps separate neighbors.
+  const idx = ((pc >>> 2) * COLOR_STRIDE) % INSTRUCTION_COLORS.length;
+  return INSTRUCTION_COLORS[idx];
+};
+
 // 获取各阶段的详情信息
 const getPreIfDetail = (stage: PreIfStageInfo | null): { pc: string; detail: string; highlight: boolean } => {
   if (!stage) return { pc: '', detail: '', highlight: false };
@@ -41,14 +67,26 @@ const getIfDetail = (stage: IfStageInfo | null): { pc: string; detail: string } 
   };
 };
 
-const getIdDetail = (stage: IdStageInfo | null): { pc: string; detail: string } => {
-  if (!stage) return { pc: '', detail: '' };
+const getIdDetail = (stage: IdStageInfo | null): { pc: string; detail: string; highlight: boolean } => {
+  if (!stage) return { pc: '', detail: '', highlight: false };
+
+  if (stage.is_branch) {
+    return {
+      pc: formatShortHex(stage.pc),
+      detail: stage.branch_taken
+        ? `-> ${formatShortHex(stage.branch_target)}`
+        : 'branch: not taken',
+      highlight: stage.branch_taken,
+    };
+  }
+
   const parts: string[] = [];
   if (stage.rs1 !== 0) parts.push(`x${stage.rs1}`);
   if (stage.rs2 !== 0) parts.push(`x${stage.rs2}`);
   return {
     pc: formatShortHex(stage.pc),
-    detail: parts.length > 0 ? parts.join(', ') : '-'
+    detail: parts.length > 0 ? parts.join(', ') : '-',
+    highlight: false,
   };
 };
 
@@ -59,7 +97,8 @@ const getExDetail = (stage: ExStageInfo | null): { pc: string; detail: string; h
     detail: stage.branch_taken
       ? `-> ${formatShortHex(stage.branch_target)}`
       : `alu: ${formatShortHex(stage.alu_result)}`,
-    highlight: stage.branch_taken
+    // Branch is resolved in ID stage now; EX stays informational.
+    highlight: false,
   };
 };
 
@@ -231,8 +270,8 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
     switch (stageKey) {
       case 'preIF': return getPreIfDetail(p.pre_if_stage);
       case 'IF': return { ...getIfDetail(p.if_stage), highlight: false };
-      case 'ID': return { ...getIdDetail(p.id_stage), highlight: false };
-      case 'EX': return { ...getExDetail(p.ex_stage), highlight: p.ex_stage?.branch_taken ?? false };
+      case 'ID': return getIdDetail(p.id_stage);
+      case 'EX': return getExDetail(p.ex_stage);
       case 'MEM': return { ...getMemDetail(p.mem_stage), highlight: false };
       case 'WB': return { ...getWbDetail(p.wb_stage), highlight: false };
       default: return { pc: '', detail: '', highlight: false };
@@ -278,10 +317,16 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
               {STAGES.map(stage => {
                 const content = getCellContent(stage.key, entry);
                 const hasData = content.pc !== '';
+                const instructionColor = hasData ? getInstructionColorByPc(content.pc) : undefined;
                 return (
                   <div
                     key={stage.key}
                     className={`timeline-cell ${hasData ? 'has-data' : 'empty'} ${content.highlight ? 'highlight' : ''}`}
+                    style={
+                      hasData
+                        ? ({ border: `2px solid ${instructionColor}` } as React.CSSProperties)
+                        : undefined
+                    }
                   >
                     {hasData ? (
                       <>

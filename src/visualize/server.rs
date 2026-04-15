@@ -17,10 +17,29 @@ use futures_util::{SinkExt, StreamExt};
 use log::debug;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Mutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+/// Tracks one active websocket client and decrements the global counter on drop.
+struct ActiveClientGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl ActiveClientGuard {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self { counter }
+    }
+}
+
+impl Drop for ActiveClientGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// Default base address for disassembly
 const DEFAULT_BASE_ADDR: u32 = 0x80000000;
@@ -743,11 +762,9 @@ impl Command {
                     None
                 }
             }
-            "predictor_switch" => parts
-                .get(1)
-                .map(|pt| Command::PredictorSwitch {
-                    predictor_type: pt.to_string(),
-                }),
+            "predictor_switch" => parts.get(1).map(|pt| Command::PredictorSwitch {
+                predictor_type: pt.to_string(),
+            }),
             _ => None,
         }
     }
@@ -854,6 +871,8 @@ pub struct VisualizeServer {
     clock_lock: Arc<Mutex<()>>,
     /// Reset sequence counter
     reset_sequence: Arc<Mutex<u64>>,
+    /// Number of active websocket clients
+    active_clients: Arc<AtomicUsize>,
 }
 
 impl VisualizeServer {
@@ -881,6 +900,7 @@ impl VisualizeServer {
             initial_pc: Arc::new(Mutex::new(initial_pc)),
             clock_lock: Arc::new(Mutex::new(())),
             reset_sequence: Arc::new(Mutex::new(0)),
+            active_clients: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -933,6 +953,7 @@ impl VisualizeServer {
             let state_tx_for_conn = state_tx.clone();
             let clock_lock_for_conn = self.clock_lock.clone();
             let reset_sequence_for_conn = self.reset_sequence.clone();
+            let active_clients_for_conn = self.active_clients.clone();
 
             tokio::spawn(async move {
                 println!("Client connected from {}", client_addr);
@@ -944,6 +965,8 @@ impl VisualizeServer {
                         return;
                     }
                 };
+
+                let client_guard = ActiveClientGuard::new(active_clients_for_conn.clone());
 
                 let (mut tx, mut rx) = ws.split();
 
@@ -1021,9 +1044,11 @@ impl VisualizeServer {
                     }
                 }
 
-                // Pause execution when the client disconnects so the CPU
-                // does not continue running with no one watching.
-                {
+                // Decrement active client count for this connection first.
+                drop(client_guard);
+
+                // Pause only when the LAST client disconnects.
+                if active_clients_for_conn.load(Ordering::SeqCst) == 0 {
                     let mut running_guard = running.lock().await;
                     *running_guard = false;
                 }

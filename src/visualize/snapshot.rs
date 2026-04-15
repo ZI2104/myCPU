@@ -88,6 +88,12 @@ pub struct IdStageInfo {
     pub rs2_val: u32,
     /// Immediate value
     pub imm: i32,
+    /// Whether branch/jump resolved as taken in ID.
+    pub branch_taken: bool,
+    /// Branch/jump target resolved in ID.
+    pub branch_target: u32,
+    /// Whether this instruction is a branch/jump control-flow instruction.
+    pub is_branch: bool,
 }
 
 /// EX (Execute) stage information.

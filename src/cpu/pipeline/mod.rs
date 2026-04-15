@@ -430,6 +430,9 @@ impl PipelineCpu {
                         rs1_val: self.id_ex.rs1_val.raw(),
                         rs2_val: self.id_ex.rs2_val.raw(),
                         imm: self.id_ex.imm,
+                        branch_taken: self.id_ex.branch_taken,
+                        branch_target: self.id_ex.branch_target.raw(),
+                        is_branch: self.id_ex.ctrl.branch || self.id_ex.ctrl.jump,
                     })
                 } else {
                     None
@@ -749,7 +752,7 @@ impl PipelineCpu {
 
         // 2e. Decode stage - decode instruction, read registers,
         // and resolve branch/jump (early branch resolution in ID).
-        let new_id_ex = self.decode_stage.execute(
+        let mut new_id_ex = self.decode_stage.execute(
             &self.if_id,
             &self.regs,
             &self.ex_mem,
@@ -757,48 +760,73 @@ impl PipelineCpu {
             self.hazard_unit.flush_id_ex,
         )?;
 
+        // Propagate prediction from IF/ID to ID/EX before branch resolution checks.
+        // This is required so misprediction detection in this cycle can compare
+        // actual branch outcome against the prediction made when the instruction
+        // entered IF.
+        if !self.hazard_unit.stall {
+            new_id_ex.prediction = self.if_id.prediction;
+        }
+
         // SFENCE.VMA: flush TLB entries when decoded in ID stage.
         if self.if_id.valid && Self::is_sfence_vma(self.if_id.instruction) {
             self.tlb.flush_all();
         }
 
-        // Track branches (now resolved in ID stage)
-        if new_id_ex.valid && new_id_ex.ctrl.branch {
-            self.perf.record(PerfEvent::BranchExecuted);
+        // Control-flow redirection is now driven by misprediction only.
+        // Correct predictions keep IF/ID intact (no unnecessary flush bubble).
+        let mut control_mispredict = false;
+        let mut redirect_target = Addr::new(0);
 
-            // Check for misprediction
+        // Track branches/jumps (resolved in ID stage)
+        if new_id_ex.valid && (new_id_ex.ctrl.branch || new_id_ex.ctrl.jump) {
+            // Check for misprediction (direction or target)
             let mispredict = PredictorManager::check_misprediction(
                 &new_id_ex.prediction,
                 new_id_ex.branch_taken,
                 new_id_ex.branch_target,
             );
 
-            if mispredict.mispredicted {
-                self.perf.record(PerfEvent::BranchMispredictions);
-            }
-
-            // Update predictor with actual outcome
-            self.predictor.update(
-                new_id_ex.pc,
-                new_id_ex.branch_taken,
-                new_id_ex.branch_target,
-                true, // is_branch
-            );
-
-            if new_id_ex.branch_taken {
-                self.perf.record(PerfEvent::BranchTaken);
+            control_mispredict = mispredict.mispredicted;
+            if control_mispredict {
+                // If actually taken, redirect to resolved target;
+                // if actually not taken, redirect to sequential PC+4.
+                redirect_target = if new_id_ex.branch_taken {
+                    new_id_ex.branch_target
+                } else {
+                    new_id_ex.pc_plus_4
+                };
                 self.perf.record(PerfEvent::ControlHazards);
-            } else {
-                self.perf.record(PerfEvent::BranchNotTaken);
             }
-        } else if new_id_ex.valid && new_id_ex.ctrl.jump {
-            // Jumps always taken — update BTB with target
-            self.predictor.update(
-                new_id_ex.pc,
-                true, // jumps are always taken
-                new_id_ex.branch_target,
-                false, // is_branch = false (it's a jump)
-            );
+
+            if new_id_ex.ctrl.branch {
+                self.perf.record(PerfEvent::BranchExecuted);
+                if control_mispredict {
+                    self.perf.record(PerfEvent::BranchMispredictions);
+                }
+
+                // Update predictor with actual branch outcome
+                self.predictor.update(
+                    new_id_ex.pc,
+                    new_id_ex.branch_taken,
+                    new_id_ex.branch_target,
+                    true, // is_branch
+                );
+
+                if new_id_ex.branch_taken {
+                    self.perf.record(PerfEvent::BranchTaken);
+                } else {
+                    self.perf.record(PerfEvent::BranchNotTaken);
+                }
+            } else {
+                // Jumps always taken — update BTB with target
+                self.predictor.update(
+                    new_id_ex.pc,
+                    true, // jumps are always taken
+                    new_id_ex.branch_target,
+                    false, // is_branch = false (it's a jump)
+                );
+            }
         }
 
         // 2f. IF phase - read from instr_latch (populated by previous cycle's pre-IF)
@@ -813,10 +841,10 @@ impl PipelineCpu {
         };
 
         // 2h. pre-IF phase - compute nextPC and issue instruction RAM read request.
-        // Priority: ID stage redirect > prediction > sequential
-        let (pred_taken, pred_target) = if new_id_ex.branch_taken {
-            // Hard redirect from ID stage resolution (always wins)
-            (true, new_id_ex.branch_target)
+        // Priority: misprediction redirect > prediction > sequential
+        let (pred_taken, pred_target) = if control_mispredict {
+            // Redirect only when prediction failed.
+            (true, redirect_target)
         } else if let Some(ref pred) = prediction_for_if {
             // Speculative fetch from predicted target
             if pred.taken {
@@ -875,17 +903,11 @@ impl PipelineCpu {
         self.wb_input = std::mem::replace(&mut self.mem_wb, new_mem_wb);
         self.ex_mem = new_ex_mem;
 
-        // Control hazard: branch/jump resolved in ID → flush wrong-path IF/ID
-        let branch_redirect = new_id_ex.valid && new_id_ex.branch_taken;
-        let id_branch_taken = new_id_ex.branch_taken;
+        // Control hazard: flush wrong-path IF/ID only on misprediction.
+        let branch_redirect = control_mispredict;
 
         // ID/EX is always updated (flush_id_ex controls if it becomes a bubble)
-        // Propagate prediction from IfIdRegister to IdExRegister
-        let mut id_ex_with_prediction = new_id_ex;
-        if !self.hazard_unit.stall {
-            id_ex_with_prediction.prediction = self.if_id.prediction;
-        }
-        self.id_ex = id_ex_with_prediction;
+        self.id_ex = new_id_ex;
 
         // IF/ID and instr_latch are only updated if not stalled
         if !self.hazard_unit.stall {
@@ -894,7 +916,7 @@ impl PipelineCpu {
                 ..new_if_id
             };
             self.instr_latch = new_instr_latch;
-            // On branch redirect, invalidate the wrong-path instruction in IF/ID
+            // On misprediction redirect, invalidate the wrong-path instruction in IF/ID
             if branch_redirect {
                 self.if_id.valid = false;
                 self.if_id.prediction = None;
@@ -909,8 +931,8 @@ impl PipelineCpu {
         }
 
         // ========== Step 4: Update PC ==========
-        // Branch redirect from ID stage or normal PC advancement
-        if id_branch_taken || !self.hazard_unit.stall_pc {
+        // Misprediction redirect or normal PC advancement
+        if control_mispredict || !self.hazard_unit.stall_pc {
             self.pc.set(self.fetch_stage.pc());
         }
 
@@ -1414,5 +1436,44 @@ mod tests {
         assert!(!cpu.id_ex.valid);
         assert!(!cpu.ex_mem.valid);
         assert!(!cpu.mem_wb.valid);
+    }
+
+    #[test]
+    fn test_correct_taken_prediction_does_not_flush_if_id() {
+        // BEQ x0, x0, +0 (always taken to itself)
+        let program = [0x00000063u32];
+        let bus = create_test_bus_with_program(&program);
+        let mut cpu = PipelineCpu::with_pc(bus, Addr::new(0));
+
+        // Use a simple dynamic predictor so it can quickly learn "taken".
+        cpu.switch_predictor(PredictorType::OneBit);
+
+        // Warm up until we observe at least one correct prediction.
+        let mut reached_correct_prediction = false;
+        for _ in 0..16 {
+            cpu.clock().unwrap();
+            let stats = cpu.predictor_stats();
+            if stats.correct > 0 {
+                reached_correct_prediction = true;
+                // On correct prediction, IF/ID should not be force-flushed.
+                assert!(cpu.if_id.valid);
+                break;
+            }
+        }
+
+        assert!(
+            reached_correct_prediction,
+            "predictor did not reach a correct prediction during warmup"
+        );
+
+        // After predictor has converged, repeated taken branches should not
+        // keep adding mispredictions and IF/ID should stay valid.
+        let mispred_before = cpu.predictor_stats().mispredictions;
+        for _ in 0..4 {
+            cpu.clock().unwrap();
+            assert!(cpu.if_id.valid);
+        }
+        let mispred_after = cpu.predictor_stats().mispredictions;
+        assert_eq!(mispred_before, mispred_after);
     }
 }

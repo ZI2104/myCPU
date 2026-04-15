@@ -43,6 +43,9 @@ export interface IdStageInfo {
   rs1_val: number;
   rs2_val: number;
   imm: number;
+  branch_taken: boolean;
+  branch_target: number;
+  is_branch: boolean;
 }
 
 export interface ExStageInfo {

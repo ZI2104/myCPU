@@ -29,7 +29,7 @@ body {
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 16px; /* reduced overall padding to tighten header/spacing */
+  padding: 16px;
 }
 
 .app-header {
@@ -200,17 +200,36 @@ body {
 /* Main Layout */
 .main-content {
   display: grid;
-  /* make center column flexible and side panels slightly narrower so center gets more space */
-  grid-template-columns: 280px 1fr 320px;
-  gap: 24px;
+  grid-template-columns: clamp(240px, 17vw, 280px) minmax(0, 1fr) clamp(280px, 22vw, 340px);
+  gap: 18px;
+  align-items: stretch;
+  min-height: clamp(640px, 78vh, 860px);
+  height: auto;
+  margin-bottom: 16px;
 }
 
 .left-panel,
+.center-panel,
 .right-panel {
   background: white;
   border-radius: 8px;
-  padding: 15px;
+  padding: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  height: 100%;
+  min-height: 0;
+}
+
+.left-panel {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: hidden;
+  overflow-x: hidden;
 }
 
 .center-panel {
@@ -221,7 +240,54 @@ body {
   /* prevent grid blowout: allow the 1fr track to shrink to 0 instead of
      being pushed wider by the intrinsic min-width of pipeline columns */
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.pipeline-bottom-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.pipeline-bottom-section {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 12px;
+  min-width: 0;
+}
+
+.pipeline-bottom-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #374151;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.pipeline-bottom-section .memory-hierarchy-panel,
+.pipeline-bottom-section .predictor-panel {
+  margin-top: 0;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.pipeline-bottom-section .memory-hierarchy-panel h3,
+.pipeline-bottom-section .predictor-panel h3 {
+  display: none;
+}
+
+.pipeline-bottom-section .predictor-panel {
+  background: transparent;
+}
+
+.pipeline-bottom-section .predictor-card {
+  border: 1px solid #444;
 }
 
 
@@ -269,8 +335,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2d3748;
-  color: white;
+  background: #ffffff;
+  color: #111827;
+  border: 2px solid #9ca3af;
   border-radius: 4px;
   font-weight: bold;
   font-size: 14px;
@@ -338,14 +405,14 @@ body {
 }
 
 .timeline-cell.has-data {
-  background: #2d3748;
-  color: white;
+  background: #ffffff;
+  color: #111827;
 }
 
 .timeline-cell.highlight {
-  background: #FF5722;
-  box-shadow: 0 0 6px rgba(255, 87, 34, 0.4);
-  color: white;
+  background: #ff9442;
+  color: #111827;
+  box-shadow: none;
 }
 
 .cell-pc {
@@ -356,7 +423,7 @@ body {
 
 .cell-detail {
   font-size: 11px;
-  opacity: 0.85;
+  opacity: 0.95;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -416,13 +483,18 @@ body {
   margin-top: 10px;
   display: flex;
   gap: 10px;
+  align-items: center;
+  min-height: 36px;
 }
 
 .status {
+  display: inline-flex;
+  align-items: center;
   padding: 4px 8px;
   border-radius: 4px;
   font-weight: bold;
   font-size: 12px;
+  line-height: 1.2;
 }
 
 .status.stall {
@@ -437,7 +509,9 @@ body {
 
 /* Register Panel - 双列紧凑布局 */
 .register-panel {
-  height: fit-content;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-header {
@@ -469,18 +543,23 @@ body {
 /* 双列寄存器网格 */
 .register-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(16, 34px);
+  gap: 4px 8px;
+  flex: 0 0 auto;
+  align-content: start;
 }
 
 .register-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   font-family: 'Fira Code', monospace;
   font-size: 13px;
   border-radius: 4px;
+  height: 34px;
+  min-height: 34px;
 }
 
 .register-item.modified {
@@ -541,22 +620,28 @@ body {
   max-height: none;
 }
 
+.right-panel .perf-dashboard {
+  padding: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 .perf-dashboard h3 {
   margin: 0 0 12px;
-  font-size: 14px;
+  font-size: 16px;
   text-align: center;
 }
 
 .perf-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .perf-card {
   text-align: center;
-  padding: 10px;
+  padding: 8px;
   border-radius: 6px;
   background: #f0f0f0;
   box-sizing: border-box;
@@ -589,13 +674,13 @@ body {
 }
 
 .perf-card .perf-value {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: bold;
   color: var(--primary-bg);
 }
 
 .perf-card .perf-label {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-light);
 }
 
@@ -607,7 +692,7 @@ body {
 }
 
 .progress-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-light);
   min-width: 140px; /* reserve space for the label so bar + value align */
 }
@@ -626,14 +711,14 @@ body {
 }
 
 .progress-value {
-  font-size: 12px;
+  font-size: 13px;
   width: 48px;
   text-align: right;
   flex: 0 0 48px;
 }
 
 .perf-details {
-  font-size: 11px;
+  font-size: 12px;
   /* avoid internal scrollbar so percentages on the right are never covered */
   overflow: visible;
   max-height: none;
@@ -653,7 +738,7 @@ body {
 
 .perf-details .progress-label {
   grid-column: 1 / -1;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-light);
 }
 
@@ -667,19 +752,20 @@ body {
 .perf-details .progress-value {
   grid-column: 2 / 3;
   justify-self: end;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* Ensure right-panel doesn't allow its children to overflow */
 .right-panel {
   box-sizing: border-box;
-  /* allow the right panel to expand so perf details are fully visible */
-  overflow: visible;
+  overflow-y: hidden;
+  overflow-x: hidden;
 }
 
 .detail-row {
   display: flex;
   justify-content: space-between;
+  font-size: 13px;
   padding: 3px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -695,7 +781,7 @@ body {
 
 .memory-hierarchy-panel h3 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: 16px;
   text-align: center;
 }
 
@@ -710,7 +796,7 @@ body {
 .mh-summary-item {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 13px;
   padding: 2px 0;
 }
 
@@ -729,7 +815,7 @@ body {
 
 .mh-card-title {
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
   margin-bottom: 6px;
 }
 
@@ -740,7 +826,7 @@ body {
 .mh-row {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 13px;
   padding: 2px 0;
 }
 
@@ -755,7 +841,7 @@ body {
   grid-template-columns: 60px 1fr 48px;
   gap: 6px;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mh-rate-label {
@@ -773,7 +859,7 @@ body {
 
 .mh-note {
   margin-top: 6px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-light);
 }
 
@@ -815,17 +901,19 @@ body {
 /* PC Display */
 .pc-display {
   text-align: center;
-  padding: 15px;
+  padding: 10px 12px;
   background: linear-gradient(135deg, #f5f5f5, #e8e8e8);
   border-radius: 8px;
-  margin-bottom: 15px;
+  margin-bottom: 12px;
+  line-height: 1.2;
 }
 
 .pc-display h3 {
-  margin: 0 0 10px;
+  margin: 0 0 6px;
   font-size: 12px;
   color: var(--text-light);
   text-transform: uppercase;
+  line-height: 1.15;
 }
 
 .pc-value {
@@ -833,12 +921,14 @@ body {
   font-size: 28px;
   font-weight: bold;
   color: var(--primary-bg);
+  line-height: 1.05;
 }
 
 .privilege {
   font-size: 12px;
   color: var(--text-light);
-  margin-top: 5px;
+  margin-top: 2px;
+  line-height: 1.15;
 }
 
 /* Memory View */
@@ -948,6 +1038,47 @@ body {
   flex-direction: column;
   gap: 10px;
   width: 100%;
+}
+
+.framebuffer-mode-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.mode-switch-label {
+  font-size: 12px;
+  color: var(--text-light);
+  font-weight: 700;
+}
+
+.mode-switch-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mode-switch-buttons button {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #374151;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mode-switch-buttons button.active {
+  background: var(--secondary-bg);
+  color: #fff;
+  border-color: var(--secondary-bg);
 }
 
 .framebuffer-header {
@@ -1143,14 +1274,20 @@ body {
 .input-reset {
   border: 1px solid var(--border);
   background: #fff;
+  color: #374151;
   padding: 4px 8px;
   border-radius: 4px;
   cursor: pointer;
 }
 
+.input-reset:hover {
+  background: #f3f4f6;
+}
+
 .input-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(56px, 72px));
+  grid-template-columns: repeat(6, minmax(56px, 72px));
+  grid-template-rows: 44px;
   gap: 8px;
   justify-content: start;
 }
@@ -1160,6 +1297,7 @@ body {
   border: 1px solid #cfcfcf;
   border-radius: 8px;
   background: #fff;
+  color: #1f2937;
   cursor: pointer;
   font-weight: 700;
   -webkit-user-select: none;
@@ -1174,6 +1312,7 @@ body {
 
 .input-btn.action {
   background: #f3e5f5;
+  color: #4b5563;
 }
 
 .input-hint {
@@ -1203,7 +1342,29 @@ body {
 
 .debug-section-title {
   font-weight: 700;
+  margin-bottom: 0;
+}
+
+.debug-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.debug-toggle-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.debug-toggle-btn:hover {
+  background: #f3f4f6;
 }
 
 .debug-controls-inline {
@@ -1235,6 +1396,11 @@ body {
   background: #fff;
 }
 
+.debug-list.preview {
+  max-height: none;
+  overflow: hidden;
+}
+
 .debug-list.mono {
   font-family: 'Fira Code', monospace;
   font-size: 12px;
@@ -1242,11 +1408,26 @@ body {
 
 .debug-list-item {
   display: grid;
-  grid-template-columns: 120px 1fr auto;
   gap: 8px;
   padding: 6px 8px;
   border-bottom: 1px solid #f0f0f0;
   align-items: center;
+}
+
+.debug-list-item.breakpoint-item {
+  grid-template-columns: minmax(0, 1fr) 200px auto;
+}
+
+.debug-list-item.disasm-item {
+  grid-template-columns: 120px minmax(0, 1fr) 24px;
+}
+
+.debug-list-item.history-item {
+  grid-template-columns: 72px 132px auto;
+}
+
+.debug-list-item.history-item > span:nth-child(2) {
+  text-align: center;
 }
 
 .debug-list-item:last-child {
@@ -1257,11 +1438,24 @@ body {
   background: #e3f2fd;
 }
 
+.debug-preview-hint {
+  color: #9ca3af;
+  font-size: 11px;
+  text-align: center;
+}
+
 .debug-label {
   color: #444;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.debug-list.mono .debug-label {
+  width: 360px;
+  min-width: 360px;
+  max-width: 360px;
+  display: inline-block;
 }
 
 .debug-empty {
@@ -1417,15 +1611,36 @@ body {
   margin-top: 16px;
 }
 
+@media (max-width: 1600px) {
+  .main-content {
+    grid-template-columns: clamp(220px, 18vw, 260px) minmax(0, 1fr) clamp(260px, 23vw, 300px);
+    gap: 14px;
+  }
+}
+
+@media (max-width: 1320px) {
+  .main-content {
+    grid-template-columns: clamp(220px, 20vw, 250px) minmax(0, 1fr);
+  }
+
+  .right-panel {
+    grid-column: 1 / -1;
+  }
+
+  .pipeline-bottom-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
 .predictor-panel h3 {
   margin: 0 0 12px 0;
   color: #e0e0e0;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .predictor-empty {
   color: #888;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .predictor-selector {
@@ -1437,7 +1652,7 @@ body {
 
 .predictor-selector label {
   color: #bbb;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -1448,7 +1663,7 @@ body {
   border: 1px solid #555;
   border-radius: 4px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -1468,7 +1683,7 @@ body {
 
 .predictor-card .card-header {
   color: #bbb;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1482,7 +1697,7 @@ body {
 
 .accuracy-badge {
   display: inline-block;
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
   padding: 4px 12px;
   border-radius: 4px;
@@ -1512,7 +1727,7 @@ body {
   display: flex;
   justify-content: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: #999;
 }
 
@@ -1537,7 +1752,7 @@ body {
 
 .btb-stat .stat-label {
   color: #bbb;
-  font-size: 11px;
+  font-size: 12px;
   min-width: 60px;
 }
 
@@ -1569,7 +1784,7 @@ body {
 
 .btb-stat .stat-value {
   color: #e0e0e0;
-  font-size: 11px;
+  font-size: 12px;
   min-width: 50px;
   text-align: right;
 }
@@ -1577,7 +1792,7 @@ body {
 .btb-detail {
   display: flex;
   gap: 12px;
-  font-size: 11px;
+  font-size: 12px;
   color: #888;
   margin-top: 4px;
 }
@@ -1590,7 +1805,7 @@ body {
 .btb-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .btb-table th {

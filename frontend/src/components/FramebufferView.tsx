@@ -12,6 +12,7 @@ interface FramebufferViewProps {
   perf: PerfSnapshot | null;
   gameState: FramebufferGameResponse | null;
   inputState: InputStateResponse | null;
+  mode: 'gameflow' | 'cpu';
 }
 
 type PixelFormat = 'gray8' | 'rgb565' | 'rgb888';
@@ -28,6 +29,7 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
   perf,
   gameState,
   inputState,
+  mode,
 }) => {
   const [addrInput, setAddrInput] = useState(LINUX_FB_ADDR);
   const [width, setWidth] = useState(LINUX_FB_WIDTH);
@@ -35,6 +37,7 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
   const [format, setFormat] = useState<PixelFormat>(LINUX_FB_FORMAT);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [demoPattern, setDemoPattern] = useState<DemoPattern>('pong');
+  const [cpuStepCount, setCpuStepCount] = useState(500);
   const [lastFrame, setLastFrame] = useState<FramebufferResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
@@ -57,6 +60,27 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
     sendCommand(`fb_demo ${demoPattern}`);
     sendCommand('fb linux');
   }, [demoPattern, sendCommand]);
+
+  const initCpuDemo = useCallback(() => {
+    sendCommand('pause');
+    sendCommand('reset');
+    sendCommand('fb linux');
+  }, [sendCommand]);
+
+  const stepCpuDemo = useCallback(() => {
+    const steps = Math.max(1, cpuStepCount);
+    sendCommand(`stepn ${steps}`);
+    sendCommand('fb linux');
+  }, [cpuStepCount, sendCommand]);
+
+  const runCpuDemo = useCallback(() => {
+    sendCommand('run');
+  }, [sendCommand]);
+
+  const pauseCpuDemo = useCallback(() => {
+    sendCommand('pause');
+    sendCommand('fb linux');
+  }, [sendCommand]);
 
   useEffect(() => {
     onFramebufferData((data: FramebufferResponse) => {
@@ -118,11 +142,14 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
   }, [autoRefresh, refresh]);
 
   const frameInfo = useMemo(() => {
+    if (error) {
+      return `读取失败：${error}`;
+    }
     if (!lastFrame) {
-      return '尚未读取帧缓冲';
+      return mode === 'cpu' ? 'CPU 模式：尚未读取帧缓冲（可先 Reset/Step）' : '尚未读取帧缓冲';
     }
     return `addr=${lastFrame.addr.toString(16)} format=${lastFrame.format} ${lastFrame.width}x${lastFrame.height}`;
-  }, [lastFrame]);
+  }, [error, lastFrame, mode]);
 
   const overlayText = useMemo(() => {
     const ipc = perf ? perf.ipc.toFixed(3) : 'N/A';
@@ -173,6 +200,8 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
           <select
             value={format}
             onChange={(event) => setFormat(event.target.value as PixelFormat)}
+            title="pixel format"
+            aria-label="pixel format"
           >
             <option value="rgb565">rgb565</option>
             <option value="rgb888">rgb888</option>
@@ -180,16 +209,35 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
           </select>
           <button onClick={refresh}>Refresh</button>
           <button onClick={applyLinuxPreset}>Linux Preset</button>
-          <select
-            value={demoPattern}
-            onChange={(event) => setDemoPattern(event.target.value as DemoPattern)}
-            title="demo pattern"
-          >
-            <option value="pong">pong</option>
-            <option value="checker">checker</option>
-            <option value="gradient">gradient</option>
-          </select>
-          <button onClick={runDemoFrame}>Demo Frame</button>
+          {mode === 'gameflow' ? (
+            <>
+              <select
+                value={demoPattern}
+                onChange={(event) => setDemoPattern(event.target.value as DemoPattern)}
+                title="demo pattern"
+              >
+                <option value="pong">pong</option>
+                <option value="checker">checker</option>
+                <option value="gradient">gradient</option>
+              </select>
+              <button onClick={runDemoFrame}>Demo Frame</button>
+            </>
+          ) : (
+            <>
+              <button onClick={initCpuDemo}>CPU Reset</button>
+              <input
+                type="number"
+                min={1}
+                max={5000000}
+                value={cpuStepCount}
+                onChange={(event) => setCpuStepCount(Number(event.target.value) || 1)}
+                title="cpu step count"
+              />
+              <button onClick={stepCpuDemo}>CPU StepN</button>
+              <button onClick={runCpuDemo}>CPU Run</button>
+              <button onClick={pauseCpuDemo}>CPU Pause</button>
+            </>
+          )}
           <label className="framebuffer-autorefresh">
             <input
               type="checkbox"
@@ -200,8 +248,6 @@ export const FramebufferView: React.FC<FramebufferViewProps> = ({
           </label>
         </div>
       </div>
-
-      {error && <div className="error-message">{error}</div>}
 
       <div className="framebuffer-meta">{frameInfo}</div>
 

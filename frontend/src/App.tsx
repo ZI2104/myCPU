@@ -46,10 +46,11 @@ function App() {
   const [tpuState, setTpuState] = useState<TpuStateResponse | null>(null);
   const [pipelineResetKey, setPipelineResetKey] = useState(0);
   const [followKey, setFollowKey] = useState(0);
+  const [framebufferMode, setFramebufferMode] = useState<'gameflow' | 'cpu'>('gameflow');
   const memoryHandlersRef = useRef<((data: MemoryReadResponse) => void)[]>([]);
   const framebufferHandlersRef = useRef<((data: FramebufferResponse) => void)[]>([]);
 
-  const { snapshot, connected, send, error, lastMessage } = useWebSocket(WS_URL);
+  const { snapshot, connected, send, lastMessage } = useWebSocket(WS_URL);
 
   // Handle memory data responses
   useEffect(() => {
@@ -174,8 +175,6 @@ function App() {
         onSpeedChange={handleSpeedChange}
       />
 
-      {error && <div className="error-message">{error}</div>}
-
       {snapshot && (
         <>
           <div className="main-content">
@@ -258,18 +257,41 @@ function App() {
 
               {activeTab === 'framebuffer' && (
                 <>
-                  <GameFlowPanel
-                    sendCommand={send}
-                    gameState={gameState}
-                    inputState={inputState}
-                  />
+                  <div className="framebuffer-mode-switch">
+                    <span className="mode-switch-label">渲染模式</span>
+                    <div className="mode-switch-buttons">
+                      <button
+                        className={framebufferMode === 'gameflow' ? 'active' : ''}
+                        onClick={() => setFramebufferMode('gameflow')}
+                      >
+                        GameFlow 直写帧
+                      </button>
+                      <button
+                        className={framebufferMode === 'cpu' ? 'active' : ''}
+                        onClick={() => setFramebufferMode('cpu')}
+                      >
+                        模拟 CPU 程序
+                      </button>
+                    </div>
+                  </div>
+
+                  {framebufferMode === 'gameflow' && (
+                    <GameFlowPanel
+                      sendCommand={send}
+                      gameState={gameState}
+                      inputState={inputState}
+                    />
+                  )}
+
                   <FramebufferView
                     sendCommand={send}
                     onFramebufferData={registerFramebufferHandler}
                     perf={snapshot.perf}
                     gameState={gameState}
                     inputState={inputState}
+                    mode={framebufferMode}
                   />
+
                   <InputPanel sendCommand={send} />
                 </>
               )}
@@ -296,14 +318,26 @@ function App() {
             </div>
 
             <div className="right-panel">
-              <PerformanceDashboard perf={snapshot.perf} />
-              <MemoryHierarchyPanel perf={snapshot.perf} />
-              <PredictorPanel
-                predictor={snapshot.predictor}
-                onSwitchPredictor={(type: string) => send(`predictor_switch ${type}`)}
-              />
+              <PerformanceDashboard perf={snapshot.perf} mode="full" />
             </div>
           </div>
+
+          {activeTab === 'pipeline' && (
+            <div className="pipeline-bottom-panel">
+              <section className="pipeline-bottom-section">
+                <h3 className="pipeline-bottom-title">Memory Hierarchy</h3>
+                <MemoryHierarchyPanel perf={snapshot.perf} />
+              </section>
+
+              <section className="pipeline-bottom-section">
+                <h3 className="pipeline-bottom-title">Branch Predictor</h3>
+                <PredictorPanel
+                  predictor={snapshot.predictor}
+                  onSwitchPredictor={(type: string) => send(`predictor_switch ${type}`)}
+                />
+              </section>
+            </div>
+          )}
 
           {snapshot.halted && (
             <div className="halted-message">

@@ -10,7 +10,7 @@ use mycpu::interrupt::{Clint, Plic};
 use mycpu::loader::ElfLoader;
 use mycpu::memory::{Bus, Ram};
 use mycpu::perf::PerfReport;
-use mycpu::peripheral::{InputDevice, Lpu, Npu, Uart, VirtioBlock};
+use mycpu::peripheral::{Gpu, InputDevice, Lpu, Npu, Tpu, Uart, VirtioBlock};
 use mycpu::types::{Addr, RegIdx, Word};
 use mycpu::visualize::linux_fb_program;
 use mycpu::visualize::start_visualize_server_with_initial_pc;
@@ -1743,6 +1743,8 @@ fn create_bus(memory_mb: usize, virtio_disk: Option<&PathBuf>) -> anyhow::Result
 
     bus.attach_peripheral(Npu::new());
     bus.attach_peripheral(Lpu::new());
+    bus.attach_peripheral(Gpu::new());
+    bus.attach_peripheral(Tpu::new());
 
     let virtio_block = if let Some(path) = virtio_disk {
         let image = std::fs::read(path)?;
