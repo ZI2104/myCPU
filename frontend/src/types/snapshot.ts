@@ -211,6 +211,18 @@ export interface LpuStateResponse {
   tasks_error?: number;
   desc_notify_count?: number;
   pending_desc_notify?: boolean;
+  bytes_processed?: number;
+  tokens_generated?: number;
+  embedding_lookups?: number;
+  embedding_bags?: number;
+  decode_candidates_evaluated?: number;
+  decoded_tokens?: number;
+  decode_top_k?: number;
+  decode_temperature_milli?: number;
+  decode_seed?: number;
+  sampled_decodes?: number;
+  decode_top_p_milli?: number;
+  nucleus_decodes?: number;
   error?: string;
 }
 

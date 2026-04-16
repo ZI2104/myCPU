@@ -1,6 +1,6 @@
 # OS 里程碑执行记录（逐项验收 + 上下文压缩）
 
-> 目标：按 `docs/design/ROADMAP.md` 中的“OS Bring-up 里程碑（用户目标对齐）”逐项推进。  
+> 目标：按 `docs/design/ROADMAP.md` 中的“OS Bring-up 里程碑（用户目标对齐）”逐项推进。
 > 规则：每完成一项，必须补充“完成记录 + 测试验收 + 上下文压缩”。
 
 ## 记录模板
@@ -21,92 +21,100 @@
 ### 2026-04-01 Phase-META-01（里程碑落档）
 
 - 完成内容：
+
   - 将用户要求的 Phase 0~6 目标与当前真实完成状态写入里程碑主文档。
   - 明确“每项完成后必须记录 + 压缩上下文 + 验收”的执行约定。
   - 修正 `ROADMAP` 中 P1 RV32M 状态为已完成。
-- 变更文件：
-  - `docs/design/ROADMAP.md`
-  - `docs/MILESTONE_EXECUTION.md`（本文件）
 - 验收命令：
+
   - `cargo test --test bringup_smoke`
   - `cargo test --lib`
 - 验收结果：
+
   - 通过：`bringup_smoke` 3/3 通过；库回归 217/217 通过。
 - 风险/未完成项：
+
   - 后续仍需按阶段推进功能落地，不可仅停留在文档状态。
 - 上下文压缩（供下一步直接续做）：
+
   - Phase 0 的“里程碑落档”与“测试入口”已落地，下一项进入 Phase 2 的 VirtIO-Block skeleton。
 
 ### 2026-04-01 Phase-0-01（OS bring-up 专项测试入口）
 
 - 完成内容：
+
   - 新增集成测试 `tests/bringup_smoke.rs`，作为 OS bring-up 验收入口。
   - 覆盖三条关键路径：
     - 引导 stub 指令执行（寄存器与 PC 演进正确）；
     - `ecall` 默认陷入 M 态；
     - `ecall`(U) 在 `medeleg.UECL` 使能时委托至 S 态。
-- 变更文件：
-  - `tests/bringup_smoke.rs`
 - 验收命令：
+
   - `cargo test --test bringup_smoke`
   - `cargo test --lib`
 - 验收结果：
+
   - 通过：bring-up 3/3；库回归 217/217。
 - 风险/未完成项：
+
   - 目前为 CPU 级 smoke，不含真实 xv6 镜像启动路径和块设备依赖。
 - 上下文压缩（供下一步直接续做）：
+
   - 下个最小可交付项：Phase 2 的 VirtIO-Block skeleton（先 MMIO 框架 + 最小读请求通路）。
 
 ### 2026-04-01 Phase-2-01（VirtIO-Block 最小骨架）
 
 - 完成内容：
+
   - 新增 `src/peripheral/virtio_block.rs`，实现最小 VirtIO-Block MMIO 骨架。
   - 支持基本寄存器（identity/status/sector/command/result/control）与 512B 数据窗口。
   - 支持最小命令闭环：`READ_SECTOR`、`WRITE_SECTOR`，并提供中断挂起/确认接口。
   - 默认启动总线挂载 VirtIO-Block 设备（`create_bus`）。
-- 变更文件：
-  - `src/peripheral/virtio_block.rs`
-  - `src/peripheral/mod.rs`
-  - `src/main.rs`
-  - `docs/design/ROADMAP.md`
 - 验收命令：
+
   - `cargo test virtio_block::tests --lib`
   - `cargo test --lib`
 - 验收结果：
+
   - 通过：VirtIO-Block 专项 3/3；库回归 220/220。
 - 风险/未完成项：
+
   - 当前为“命令寄存器 + 数据窗口”骨架，尚未接入标准 VirtIO descriptor queue。
   - 仍未打通 xv6 文件系统镜像与 shell 交互路径。
 - 上下文压缩（供下一步直接续做）：
+
   - 下一项优先：descriptor queue（desc/avail/used）最小实现，替换当前数据窗口命令模型。
 
 ### 2026-04-01 Phase-2-02（VirtIO 最小队列闭环）
 
 - 完成内容：
+
   - 在 `VirtioBlock` 中新增最小队列相关寄存器：queue addr/num/ready/notify、avail/used idx、queue head、last used head。
   - 新增 queue-notify 处理路径：根据 `req_type + sector + data_window` 执行读写请求，并推进 `used_idx` 与 `used_ring`。
   - 修复两处关键问题：
     - 字节写入导致 notify/command 被重复触发（改为仅低字节触发 side-effect）；
     - used ring 寄存器区与数据窗口地址冲突（迁移至非重叠地址段）。
   - 保持旧命令路径兼容（`READ_SECTOR/WRITE_SECTOR`）。
-- 变更文件：
-  - `src/peripheral/virtio_block.rs`
-  - `docs/design/ROADMAP.md`
 - 验收命令：
+
   - `cargo test virtio_block::tests --lib`
   - `cargo test --lib`
   - `cargo test --test bringup_smoke`
 - 验收结果：
+
   - 通过：VirtIO 专项 6/6；库回归 223/223；bring-up 3/3。
 - 风险/未完成项：
+
   - 当前 queue 路径仍为“简化请求模型”，尚未接入完整 desc/avail/used DMA 访存。
   - 仍未接入 xv6 文件系统镜像和 shell 交互。
 - 上下文压缩（供下一步直接续做）：
+
   - 下一项优先：引入最小 desc 链解析 + guest RAM 访问桥接（Bus 侧 DMA 读写接口）。
 
 ### 2026-04-01 Phase-2-03（最小 desc 链解析 + Bus DMA 桥接）
 
 - 完成内容：
+
   - 在 `VirtioBlock` 增加最小 descriptor chain 处理：读取 request/data/status 三段描述符，并完成 IN/OUT 请求的数据搬运。
   - 新增 `pending descriptor notify` 机制：在 queue 配置完整时，`QUEUE_NOTIFY` 先标记待处理，再由总线侧触发 DMA 处理。
   - 在 `Bus::write_byte` 增加 VirtIO 后处理钩子：当写入 VirtIO 并存在 pending notify 时，使用 RAM 区域作为 guest memory 完成描述符访存。
@@ -114,28 +122,28 @@
   - 新增测试：
     - `peripheral::virtio_block::tests::test_virtio_block_descriptor_chain_read_flow`
     - `memory::bus::tests::test_bus_virtio_descriptor_notify_bridge`
-- 变更文件：
-  - `src/peripheral/virtio_block.rs`
-  - `src/memory/bus.rs`
-  - `src/peripheral/mod.rs`
-  - `docs/design/ROADMAP.md`
 - 验收命令：
+
   - `cargo test virtio_block::tests --lib`
   - `cargo test memory::bus::tests::test_bus_virtio_descriptor_notify_bridge --lib`
   - `cargo test --lib`
   - `cargo test --test bringup_smoke`
 - 验收结果：
+
   - 通过：VirtIO 专项 7/7；Bus 桥接专项 1/1；库回归 225/225；bring-up 3/3。
 - 风险/未完成项：
+
   - 当前 guest memory 仍仅桥接 RAM 区，不覆盖跨外设/复杂 IOMMU 场景。
   - desc 校验策略仍为最小实现（缺少更严格的 flags/len/环一致性检查）。
   - xv6 文件系统镜像和 shell 交互路径仍未打通。
 - 上下文压缩（供下一步直接续做）：
+
   - 下一项优先：补齐 descriptor flags/len 边界校验 + OUT 路径专项测试，再推进 xv6 镜像接入验证。
 
 ### 2026-04-01 Phase-2-04（desc 边界校验 + OUT 路径专项）
 
 - 完成内容：
+
   - 在 `VirtioBlock` 的 descriptor 处理路径补齐最小边界校验：
     - 描述符索引必须落在 `queue_num` 范围内；
     - request 描述符长度需满足最小请求头长度（16 字节）；
@@ -143,36 +151,34 @@
     - status 描述符长度至少 1 字节。
   - 强化异常健壮性：desc 链异常时不再向上抛出总线错误，而是写回 IOERR 状态并推进 used ring（避免 guest 错误导致宿主侧中断式失败）。
   - 补充 OUT 路径专项测试（descriptor OUT 写盘后再 IN 读回）并增加 Bus 侧 OUT→IN 桥接验证。
-- 变更文件：
-  - `src/peripheral/virtio_block.rs`
-  - `src/memory/bus.rs`
-  - `docs/design/ROADMAP.md`
 - 验收命令：
+
   - `cargo test virtio_block::tests --lib`
   - `cargo test memory::bus::tests::test_bus_virtio_descriptor_notify_bridge --lib`
   - `cargo test memory::bus::tests::test_bus_virtio_descriptor_notify_bridge_out_then_in --lib`
   - `cargo test --lib`
   - `cargo test --test bringup_smoke`
 - 验收结果：
+
   - 通过：VirtIO 专项 9/9；Bus 桥接专项 2/2；库回归 228/228；bring-up 3/3。
 - 风险/未完成项：
+
   - 目前仍未覆盖完整 virtio 标准语义（如更完整 flags 组合、间接描述符、event idx 等）。
   - xv6 文件系统镜像接入与 shell 交互尚未验证。
 - 上下文压缩（供下一步直接续做）：
+
   - 下一项优先：推进 xv6 镜像接入验证（加载镜像、启动参数与最小块设备对接）。
 
 ### 2026-04-01 Phase-2-05（xv6 镜像接入前置：CLI 磁盘预载）
 
 - 完成内容：
+
   - 为 `run/debug/visualize` 三个子命令新增 `--virtio-disk <path>` 参数。
   - `create_bus` 新增可选磁盘镜像加载路径：根据镜像大小自动扩展 VirtIO 磁盘扇区（最小 1024 sectors），并预载原始镜像字节。
   - `VirtioBlock` 新增磁盘镜像接口：`disk_size_bytes()` 与 `load_disk_image(&[u8])`。
   - 新增镜像加载单测（正常读回 + 超容量失败）。
-- 变更文件：
-  - `src/main.rs`
-  - `src/peripheral/virtio_block.rs`
-  - `docs/design/ROADMAP.md`
 - 验收命令：
+
   - `cargo build`
   - `cargo test virtio_block::tests --lib`
   - `cargo test memory::bus::tests::test_bus_virtio_descriptor_notify_bridge --lib`
@@ -180,31 +186,35 @@
   - `cargo test --lib`
   - `cargo test --test bringup_smoke`
 - 验收结果：
+
   - 通过：构建通过；VirtIO 专项 11/11；Bus 桥接专项 2/2；库回归 230/230；bring-up 3/3。
 - 风险/未完成项：
+
   - 当前只完成“镜像可挂载”的前置链路，尚未进行真实 xv6 镜像启动到 shell 的端到端验收。
 - 上下文压缩（供下一步直接续做）：
+
   - 下一项优先：接入真实 xv6 kernel/fs 镜像并执行首次端到端启动验证（串口输出与 trap 日志）。
 
 ### 2026-04-01 Phase-2-06（保留 xv6 源码 + 端到端启动验证）
 
 - 完成内容：
+
   - 将 xv6 源码保留在 `third_party/xv6-riscv`（不再使用 `.workbuddy` 路径）。
   - 通过 WSL 构建真实镜像产物：`kernel/kernel` 与 `fs.img`。
   - 使用 `mycpu run --virtio-disk` 执行端到端启动尝试，验证镜像可加载路径。
-- 变更文件：
-  - `.gitignore`
-  - `scripts/cleanup_workspace.ps1`
-  - `docs/MILESTONE_EXECUTION.md`
 - 验收命令：
+
   - `wsl -e bash -lc "cd /mnt/d/code/myCPU/third_party/xv6-riscv && make kernel/kernel fs.img"`
   - `cargo run -- run --count 50000 --memory 128 D:\\code\\myCPU\\third_party\\xv6-riscv\\kernel\\kernel --virtio-disk D:\\code\\myCPU\\third_party\\xv6-riscv\\fs.img`
 - 验收结果：
+
   - xv6 构建通过；镜像加载成功。
   - 启动被 ELF 位宽检查拦截：`Expected 32-bit ELF for RV32I, got 64-bit`。
 - 风险/未完成项：
+
   - 当前模拟器为 RV32I 路线，而 `xv6-riscv` 默认产物为 RV64，位宽不匹配。
 - 上下文压缩（供下一步直接续做）：
+
   - 下一项优先：二选一推进
     1) 引入 RV64 ELF/执行支持（工作量大）；
     2) 切换到可用的 RV32 RISC-V OS 镜像进行 bring-up（工作量较小）。
@@ -1122,3 +1132,284 @@
   - 报告中“历史测试数（185/193）”为当时快照，当前基线请以 `ROADMAP` 最新同步校验口径为准。
 - 上下文压缩（供下一步直接续做）：
   - 后续新增调研报告时，先并入 `ROADMAP` 的“调研结论并入”章节，再保留原文作详细证据归档。
+
+### 2026-04-16 Phase-5-05（LPU 语言化迁移：ByteTokenize MVP）
+
+- 完成内容：
+  - 将 `LPU` 从“纯逻辑协处理器”升级为 **Language Processing Unit**（保留 legacy 逻辑 opcode 兼容）。
+  - 新增 Language MVP opcode：`ByteTokenize (0x10)`，支持：
+    - `CUSTOM-0` fast-path（`funct3=1` 路由 LPU）；
+    - descriptor 批处理路径（`DESC_ADDR/DESC_LEN/DESC_NOTIFY`）。
+  - 增加语言统计快照：`bytes_processed`、`tokens_generated`，并接入 `lpu state` 协议与前端面板展示。
+- 变更文件：
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/mod.rs`
+  - `src/instruction/execute.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `frontend/src/types/snapshot.ts`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `frontend/src/components/PipelineVisualizer.tsx`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+  - `docs/guides/DEMO_GUIDE.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo test`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`cargo test --lib`，`395 passed; 0 failed`。
+  - 通过：`cargo test`（含 lib/main/integration/doc tests），全部通过：
+    - lib: `395 passed`
+    - main: `11 passed`
+    - integration: `3 + 3 + 1 passed`
+    - doc-tests: `5 passed`
+  - 通过：`frontend` 构建成功（`tsc -b && vite build`），产物输出到 `frontend/dist/`。
+- 风险/未完成项：
+  - `GreedyDecode` 待下一阶段；当前 `EmbeddingBag` 已在同一阶段以 MVP 方式补齐。
+- 上下文压缩（供下一步直接续做）：
+  - LPU 语言化基础骨架已就位（`ByteTokenize + EmbeddingBag`），下一阶段可在同一 descriptor 协议下增量扩展 `GreedyDecode`。
+
+### 2026-04-16 Phase-5-06（LPU 语言化迁移：EmbeddingBag MVP）
+
+- 完成内容：
+  - 新增 Language opcode：`EmbeddingBag (0x11)`。
+  - 执行语义（MVP）：
+    - 单次模式：`op_a` 作为 token id，返回固定 embedding 表 lookup 值；
+    - descriptor 模式：`[opcode, input_addr, bag_len, output_addr]`，对 u32 token id 序列执行 sum pooling。
+  - 新增语言统计：`embedding_lookups`、`embedding_bags`，贯通后端 `lpu_state` 与前端展示。
+  - `CUSTOM-0` fast-path 新增 `0x11` 放行并补回归。
+- 变更文件：
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/mod.rs`
+  - `src/instruction/execute.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `frontend/src/types/snapshot.ts`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo test`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`cargo test --lib`，`399 passed; 0 failed`。
+  - 通过：`cargo test`（含 lib/main/integration/doc tests），全部通过：
+    - lib: `399 passed`
+    - main: `11 passed`
+    - integration: `3 + 3 + 1 passed`
+    - doc-tests: `5 passed`
+  - 通过：`frontend` 构建成功（`tsc -b && vite build`），产物输出到 `frontend/dist/`。
+- 风险/未完成项：
+  - 当前 EmbeddingBag 为固定 embedding 表 MVP；可配置 embedding table / 多维向量池化待后续阶段。
+- 上下文压缩（供下一步直接续做）：
+  - 语言路径现已具备 tokenizer + bag pooling 的最小闭环，下一步可在此基础上增加 decode 类算子与可配置词表。
+
+### 2026-04-16 Phase-5-07（LPU 语言化迁移：GreedyDecode MVP）
+
+- 完成内容：
+  - 新增 Language opcode：`GreedyDecode (0x12)`。
+  - 执行语义（MVP）：
+    - 单次模式：`op_a/op_b` 作为两个候选分数，输出 token id `0|1`（二元 argmax）；
+    - descriptor 模式：`[opcode, input_addr, vocab_size, output_addr]`，对 `vocab_size` 个 u32 分数执行 argmax，写回 token id。
+  - 新增解码统计：`decode_candidates_evaluated`、`decoded_tokens`，贯通后端 `lpu_state` 与前端展示。
+  - `CUSTOM-0` fast-path 新增 `0x12` 放行并补回归。
+- 变更文件：
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/mod.rs`
+  - `src/instruction/execute.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `frontend/src/types/snapshot.ts`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo test`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`cargo test --lib`，`403 passed; 0 failed`。
+  - 通过：`cargo test`（含 lib/main/integration/doc tests），全部通过：
+    - lib: `403 passed`
+    - main: `11 passed`
+    - integration: `3 + 3 + 1 passed`
+    - doc-tests: `5 passed`
+  - 通过：`frontend` 构建成功（`tsc -b && vite build`），产物输出到 `frontend/dist/`。
+- 风险/未完成项：
+  - 当前 GreedyDecode 为 argmax MVP；采样策略（top-k/top-p/temperature）与可配置词表待后续阶段。
+- 上下文压缩（供下一步直接续做）：
+  - LPU 语言路径已形成 `tokenize + embedding + decode` 最小闭环，下一步建议扩展可配置词表与采样解码策略。
+
+### 2026-04-16 Phase-5-08（LPU 语言化迁移：TopKSampleDecode MVP）
+
+- 完成内容：
+  - 新增 Language opcode：`TopKSampleDecode (0x13)`。
+  - 执行语义（MVP）：
+    - 单次模式：在二元候选（`op_a/op_b`）上执行可配置 top-k + temperature 采样；
+    - descriptor 模式：`[opcode, input_addr, vocab_size, output_addr]`，在 `vocab_size` 个候选分数上执行 top-k + temperature 采样。
+  - 新增采样解码参数寄存器：
+    - `decode_top_k`（`0x3C`）
+    - `decode_temperature_milli`（`0x40`，1000=1.0）
+    - `decode_seed`（`0x44`）
+  - 新增采样统计：`sampled_decodes`，并贯通后端 `lpu_state` 与前端展示。
+  - `CUSTOM-0` fast-path 新增 `0x13` 放行并补回归。
+- 变更文件：
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/mod.rs`
+  - `src/instruction/execute.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `frontend/src/types/snapshot.ts`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo test`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`cargo test --lib`，`407 passed; 0 failed`。
+  - 通过：`cargo test`（含 lib/main/integration/doc tests），全部通过：
+    - lib: `407 passed`
+    - main: `11 passed`
+    - integration: `3 + 3 + 1 passed`
+    - doc-tests: `5 passed`
+  - 通过：`frontend` 构建成功（`tsc -b && vite build`），产物输出到 `frontend/dist/`。
+- 风险/未完成项：
+  - 当前为线性权重近似采样 MVP；softmax / top-p 采样与可配置词表仍在后续阶段。
+- 上下文压缩（供下一步直接续做）：
+  - LPU 语言路径已具备 `argmax + top-k/temperature 采样` 两类解码策略，下一步可扩展 top-p 与词表管理。
+
+### 2026-04-16 Phase-5-09（LPU 语言化迁移：TopPSampleDecode MVP）
+
+- 完成内容：
+  - 新增 Language opcode：`TopPSampleDecode (0x14)`。
+  - 执行语义（MVP）：
+    - 单次模式：在二元候选（`op_a/op_b`）上执行可配置 top-p (nucleus) + temperature 采样；
+    - descriptor 模式：`[opcode, input_addr, vocab_size, output_addr]`，在 `vocab_size` 个候选分数上执行 top-p 采样。
+  - 新增 Top-p 配置/统计寄存器：
+    - `decode_top_p_milli`（`0x4C`，900=0.9）
+    - `nucleus_decodes`（`0x50`）
+  - 贯通后端 `lpu_state` 与前端展示字段；`CUSTOM-0` fast-path 新增 `0x14` 放行并补回归。
+- 变更文件：
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/mod.rs`
+  - `src/instruction/execute.rs`
+  - `src/memory/bus.rs`
+  - `src/visualize/server.rs`
+  - `frontend/src/types/snapshot.ts`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo test`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过（本条目对应代码与测试已补齐，回归结果见本次执行记录）。
+- 风险/未完成项：
+  - 当前为线性权重近似 nucleus 采样 MVP；softmax/logit 归一化与动态词表管理仍在后续阶段。
+- 上下文压缩（供下一步直接续做）：
+  - LPU 语言路径已具备 `argmax + top-k + top-p` 三类解码策略，下一步可聚焦词表管理、softmax 采样精度与批量性能优化。
+
+### 2026-04-16 Phase-5-10（LPU 去 Legacy + 协处理器拓扑 V2 规划）
+
+- 完成内容：
+  - 移除 LPU legacy 逻辑 opcode（`0~5`）执行路径：
+    - descriptor 模式不再 fallback 到逻辑运算；未知 opcode 计入 `tasks_error`；
+    - 单次模式未知 opcode 计入 `tasks_error` 并返回 `result=0`。
+  - `CUSTOM-0` LPU fast-path 移除 legacy 放行，仅允许语言 opcode（`0x10~0x14`）。
+  - 前端 `CoprocessorPanel` 移除 LPU legacy opcode 名称映射。
+  - 架构层面完成 NPU/LPU/GPU/TPU V2 规划并写入 `ARCHITECTURE.md`：
+    - 控制面 / 数据面 / 事件面分离；
+    - 统一 `ACC_CTRL_ROOT + ACC_DOORBELL + Engine CTRL` 映射；
+    - 明确 V1→V2 双地址窗口迁移策略。
+- 变更文件：
+  - `src/peripheral/lpu.rs`
+  - `src/instruction/execute.rs`
+  - `src/memory/bus.rs`
+  - `frontend/src/components/CoprocessorPanel.tsx`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `npm run build`（`frontend/`）
+- 验收结果：
+  - 通过：`cargo test --lib`，`410 passed; 0 failed`。
+  - 通过：`frontend` 构建成功（`tsc -b && vite build`，`built in 362ms`）。
+- 风险/未完成项：
+  - V2 拓扑与新地址映射目前是文档规划，尚未进入运行时代码迁移；
+  - 仍需在后续阶段落地 Doorbell 汇聚中断与双地址窗口别名。
+- 上下文压缩（供下一步直接续做）：
+  - 语义层已完成“LPU 纯语言化”；下一步可按 `P5.3` 清单实现 V2 控制面与地址映射迁移。
+
+### 2026-04-16 Phase-5-11（V2 双窗口 + 统一 Doorbell ABI 落地）
+
+- 完成内容：
+  - 在 `Bus` 引入统一控制面寄存器窗口：
+    - `ACC_CTRL_ROOT`（`0x2000_0000`，保留低 `0x100` legacy NPU 子窗口）；
+    - `ACC_DOORBELL`（`0x2000_1000`，保留低 `0x100` legacy LPU 子窗口）。
+  - 落地 V2 engine overlay 双地址窗口（由 `ACC_CTRL_ROOT.MODE[0]` 控制）：
+    - `0x2001_0000`→NPU、`0x2001_1000`→LPU、`0x2001_2000`→GPU、`0x2001_3000`→TPU。
+  - 落地 Doorbell 统一提交 ABI：`engine + desc_addr + desc_len + notify`，并桥接到各引擎 descriptor 通知寄存器。
+  - `ACC_CTRL_ROOT` 增加统一汇总寄存器：`engine_mask`、`irq_summary`、`doorbell_submits/completes/errors`。
+- 变更文件：
+  - `src/memory/bus.rs`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/design/ROADMAP.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+- 验收结果：
+  - 通过：`cargo test --lib`，`413 passed; 0 failed`。
+  - 新增用例通过：
+    - `memory::bus::tests::test_bus_acc_v2_overlay_window_for_npu`
+    - `memory::bus::tests::test_bus_acc_doorbell_submit_npu_descriptor`
+    - `memory::bus::tests::test_bus_acc_doorbell_invalid_engine_records_error`
+- 风险/未完成项：
+  - 当前仍处于迁移态，V1 alias 尚未移除（`P5.3` 最后一项仍待完成）。
+- 上下文压缩（供下一步直接续做）：
+  - V2 控制面与双窗口已可运行，下一步可进入“工具链默认切 V2 + 收敛移除 V1 alias”的收口阶段。
+
+### 2026-04-16 Phase-5-12（P5.3 收敛：移除 V1 alias，切换纯 V2 拓扑）
+
+- 完成内容：
+  - 协处理器基址统一切换到纯 V2 拓扑：
+    - `NPU_BASE=0x2001_0000`
+    - `LPU_BASE=0x2001_1000`
+    - `GPU_BASE=0x2001_2000`
+    - `TPU_BASE=0x2001_3000`
+  - `Bus` 移除 V1 alias/overlay 迁移逻辑：
+    - 删除 `translate_v2_engine_addr()` 迁移翻译路径；
+    - `ACC_CTRL_ROOT/ACC_DOORBELL` 低 `0x100` 子窗口不再透传 legacy engine 寄存器。
+  - `ACC_CTRL_ROOT.MODE` 收敛为固定 V2 启用态（写入不再关闭 V2）。
+  - 回归测试更新为纯 V2 语义：
+    - `test_bus_acc_pure_v2_window_for_npu`（替代原 overlay 启用测试）。
+- 变更文件：
+  - `src/peripheral/npu.rs`
+  - `src/peripheral/lpu.rs`
+  - `src/peripheral/gpu.rs`
+  - `src/peripheral/tpu.rs`
+  - `src/memory/bus.rs`
+  - `docs/design/ROADMAP.md`
+  - `docs/design/ARCHITECTURE.md`
+  - `docs/guides/GPU_TPU_API.md`
+  - `docs/development/MILESTONE_EXECUTION.md`
+- 验收命令：
+  - `cargo test --lib`
+  - `cargo test`
+- 验收结果：
+  - 通过：`cargo test --lib`，`413 passed; 0 failed`。
+  - 通过：`cargo test` 全通过（lib/main/integration/doc-tests）。
+- 风险/未完成项：
+  - 无阻塞项；P5.3 最后一项已完成。
+- 上下文压缩（供下一步直接续做）：
+  - 协处理器控制面已稳定在纯 V2 拓扑，可进入后续 Hybrid Offload 与性能优化阶段。

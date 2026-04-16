@@ -4,14 +4,14 @@
 
 ### 目标架构: RISC-V RV32I
 
-| 特性       | 说明                                |
-| ---------- | ----------------------------------- |
-| 基础指令集 | RV32I (40 条指令)                   |
-| 扩展指令集 | M (乘除法), C (压缩, 可选)          |
-| 特权级     | M-mode + S-mode + U-mode            |
-| 流水线     | 6 级流水线 (pre-IF/IF/ID/EX/MEM/WB) |
-| 地址宽度   | 32 位                               |
-| 内存管理   | Sv32 分页 (可选)                    |
+| 特性       | 说明                                  |
+| ---------- | ------------------------------------- |
+| 基础指令集 | RV32I (40 条指令)                     |
+| 扩展指令集 | M (乘除法), C (压缩, 可选)            |
+| 特权级     | M-mode + S-mode + U-mode              |
+| 流水线     | 伪6 级流水线 (pre-IF/IF/ID/EX/MEM/WB) |
+| 地址宽度   | 32 位                                 |
+| 内存管理   | Sv32 分页 (可选)                      |
 
 ### 选型理由
 
@@ -206,6 +206,7 @@ PredictorManager
 | Global (gshare) | 10-bit GHR + 1024 × 2-bit (PHT)          | 捕获分支间相关性 (GHR XOR PC 索引)  |
 
 **BTB 设计**：
+
 - 256 项直接映射缓存 (PC[9:2] 索引，PC[31:10] 作为 tag)
 - 每次 taken 分支/跳转更新 BTB 条目
 - 预测 taken 时查询 BTB 获取目标地址
@@ -233,6 +234,7 @@ Cycle N+1:
 ##### 前端可视化
 
 `PredictorPanel` 组件显示：
+
 - 预测器类型选择器 (下拉框切换)
 - 预测准确率 (带颜色编码: 绿>90%, 黄70-90%, 红<70%)
 - BTB 命中率统计
@@ -519,13 +521,19 @@ src/interrupt/
 ```
 src/peripheral/
 ├── npu.rs           # NPU: Add/Mul/Max/Relu
-└── lpu.rs           # LPU: And/Or/Xor/Shifts
+└── lpu.rs           # LPU: Language Processing Unit（纯语言 opcode）
 ```
 
-- NPU 基地址：`0x2000_0000`
-- LPU 基地址：`0x2000_1000`
+- NPU 基地址：`0x2001_0000`
+- LPU 基地址：`0x2001_1000`
 - 统一寄存器风格：`CONTROL/STATUS/OP_A/OP_B/RESULT/OPCODE/CYCLES`
 - 中断模型：计算完成后置位 `IRQ_PENDING`，CPU 可通过总线轮询并确认
+- LPU 当前能力：
+  - `ByteTokenize`（opcode `0x10`，支持单次与 descriptor 批处理）
+  - `EmbeddingBag`（opcode `0x11`，固定 embedding 表 + descriptor sum pooling）
+  - `GreedyDecode`（opcode `0x12`，argmax 解码，支持单次与 descriptor）
+  - `TopKSampleDecode`（opcode `0x13`，top-k + temperature 采样，支持单次与 descriptor）
+  - `TopPSampleDecode`（opcode `0x14`，top-p (nucleus) + temperature 采样，支持单次与 descriptor）
 
 ### 4.2 GPU/TPU 模拟加速器
 
@@ -537,13 +545,56 @@ src/traits/
 └── accelerator.rs   # Accelerator trait + KernelType/Precision/TensorDescriptor
 ```
 
-- GPU 基地址：`0x2001_0000`（4 KB MMIO），IRQ 源：PLIC #13
-- TPU 基地址：`0x2002_0000`（4 KB MMIO），IRQ 源：PLIC #14
+- GPU 基地址：`0x2001_2000`（4 KB MMIO），IRQ 源：PLIC #13
+- TPU 基地址：`0x2001_3000`（4 KB MMIO），IRQ 源：PLIC #14
 - GPU 支持 15 种内核：MatMul、Conv2d、Pool2dMax/Avg、VectorAdd/Mul/Dot/Scale、Relu/Relu6/LeakyRelu/Sigmoid/Tanh/Softmax
 - TPU 专注 INT8 量化矩阵乘，支持 per-tensor 量化参数
 - 共享内存模型：加速器通过 DMA 风格直接访问 guest RAM（无独立 VRAM）
 - `pending_start` 机制：寄存器写入 START 位 → Bus 检测 → 调用 `execute_with_memory` 并传入 RAM 区域
 - 详细 API 见 `docs/guides/GPU_TPU_API.md`
+
+### 4.3 协处理器优化设计（V2 落地进展）
+
+> 说明：控制面/事件面与 Doorbell 汇聚已落地，当前已收敛到纯 V2 拓扑。
+
+#### 挂载方式重构（控制面 / 数据面 / 事件面分离）
+
+1. **控制面（MMIO）**
+   - 每个加速器保留独立控制寄存器页（配置、启动、状态、统计）。
+   - 增加 `ACC_CTRL_ROOT` 统一能力发现（版本、特性位、engine mask）。
+2. **数据面（共享内存 + 描述符队列）**
+   - 统一 descriptor ring 结构，按 engine 使用不同 opcode 子空间。
+   - 大数据仅走 guest RAM（DMA 风格），MMIO 仅传控制参数与指针。
+3. **事件面（中断/门铃）**
+   - 为 NPU/LPU/GPU/TPU 分配稳定 PLIC 中断源，新增 Doorbell/Completion 汇总寄存器。
+   - 支持“每 engine 细粒度中断 + 全局摘要中断”双模式。
+
+#### 地址映射重构（V2 目标）
+
+```text
+0x2000_0000 ─ 0x2000_0FFF  ACC_CTRL_ROOT（能力发现/版本/全局状态）
+0x2000_1000 ─ 0x2000_1FFF  ACC_DOORBELL（统一任务提交/完成队列）
+0x2001_0000 ─ 0x2001_0FFF  NPU_CTRL
+0x2001_1000 ─ 0x2001_1FFF  LPU_CTRL
+0x2001_2000 ─ 0x2001_2FFF  GPU_CTRL
+0x2001_3000 ─ 0x2001_3FFF  TPU_CTRL
+0x2002_0000 ─ 0x2002_FFFF  Accelerator Reserved（后续 VPU/ISP/NIC Offload）
+```
+
+#### 当前实现状态（2026-04-16-R3）
+
+- `ACC_CTRL_ROOT` / `ACC_DOORBELL` 已在总线层实现统一控制面寄存器窗口。
+- `ACC_CTRL_ROOT.MODE` 固定为 V2 启用态（`0x2001_xxxx` 四个 engine 窗口始终生效）。
+- Doorbell 统一提交 ABI 已落地：`engine + desc_addr + desc_len + notify`。
+- Root 汇总寄存器已落地：`engine_mask`、`irq_summary`、`doorbell_submits/completes/errors`。
+- V1 alias 已移除，`ACC_CTRL_ROOT/ACC_DOORBELL` 低 `0x100` 子窗口不再透传 legacy 引擎寄存器。
+
+#### 迁移策略（执行结果）
+
+- **阶段 A（文档与接口冻结）**：已完成。
+- **阶段 B（双地址窗口）**：已完成（迁移期过渡）。
+- **阶段 C（收敛）**：已完成（仅保留 V2 拓扑）。
+- **LPU 语义约束**：LPU 仅保留语言 opcode（`0x10~0x14`），不再接受历史逻辑 opcode（`0~5`）。
 
 ### 5. 外设模块
 
@@ -562,6 +613,8 @@ src/peripheral/
 
 ## 六、内存地址映射
 
+### 当前实现（纯 V2 拓扑）
+
 ```
 地址空间布局 (Sv32 物理地址):
 
@@ -571,13 +624,28 @@ src/peripheral/
 0x0C00_0000 ─ 0x0FFF_FFFF  PLIC (Platform Level Interrupt Controller)
 0x1000_1000 ─ 0x1000_1FFF  UART (Serial Port)
 0x1000_2000 ─ 0x1000_2FFF  Input Device (MMIO)
-0x2000_0000 ─ 0x2000_0FFF  NPU (MMIO Coprocessor)
-0x2000_1000 ─ 0x2000_1FFF  LPU (MMIO Coprocessor)
-0x2001_0000 ─ 0x2001_0FFF  GPU (Simulated Accelerator, PLIC #13)
-0x2002_0000 ─ 0x2002_0FFF  TPU (Simulated Accelerator, PLIC #14)
+0x2000_0000 ─ 0x2000_0FFF  ACC_CTRL_ROOT
+0x2000_1000 ─ 0x2000_1FFF  ACC_DOORBELL
+0x2001_0000 ─ 0x2001_0FFF  NPU_CTRL
+0x2001_1000 ─ 0x2001_1FFF  LPU_CTRL
+0x2001_2000 ─ 0x2001_2FFF  GPU_CTRL (Simulated Accelerator, PLIC #13)
+0x2001_3000 ─ 0x2001_3FFF  TPU_CTRL (Simulated Accelerator, PLIC #14)
 0x3000_0000 ─ 0x3FFF_FFFF  VirtIO Devices
 0x8000_0000 ─ 0xFFFF_FFFF  Reserved / Expansion
 ```
+
+### V2 协处理器地址映射（当前生效拓扑）
+
+```text
+0x2000_0000 ─ 0x2000_0FFF  ACC_CTRL_ROOT
+0x2000_1000 ─ 0x2000_1FFF  ACC_DOORBELL
+0x2001_0000 ─ 0x2001_0FFF  NPU_CTRL
+0x2001_1000 ─ 0x2001_1FFF  LPU_CTRL
+0x2001_2000 ─ 0x2001_2FFF  GPU_CTRL
+0x2001_3000 ─ 0x2001_3FFF  TPU_CTRL
+```
+
+> 当前策略：V2 拓扑始终启用；V1 alias 已移除。
 
 ### Sv32 当前实现边界（里程碑）
 

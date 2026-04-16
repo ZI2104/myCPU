@@ -10,8 +10,8 @@ use crate::traits::Peripheral;
 use crate::types::Addr;
 use std::collections::VecDeque;
 
-/// NPU base address.
-pub const NPU_BASE: u32 = 0x2000_0000;
+/// NPU base address (V2 topology).
+pub const NPU_BASE: u32 = 0x2001_0000;
 /// NPU MMIO region size.
 pub const NPU_SIZE: usize = 0x100;
 

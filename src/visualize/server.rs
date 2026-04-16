@@ -1728,6 +1728,18 @@ impl VisualizeServer {
                             "tasks_error": state.tasks_error,
                             "desc_notify_count": state.desc_notify_count,
                             "pending_desc_notify": state.pending_desc_notify,
+                            "bytes_processed": state.bytes_processed,
+                            "tokens_generated": state.tokens_generated,
+                            "embedding_lookups": state.embedding_lookups,
+                            "embedding_bags": state.embedding_bags,
+                            "decode_candidates_evaluated": state.decode_candidates_evaluated,
+                            "decoded_tokens": state.decoded_tokens,
+                            "decode_top_k": state.decode_top_k,
+                            "decode_temperature_milli": state.decode_temperature_milli,
+                            "decode_seed": state.decode_seed,
+                            "sampled_decodes": state.sampled_decodes,
+                            "decode_top_p_milli": state.decode_top_p_milli,
+                            "nucleus_decodes": state.nucleus_decodes,
                         })
                     } else {
                         serde_json::json!({

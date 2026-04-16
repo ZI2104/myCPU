@@ -14,8 +14,8 @@ use crate::types::Addr;
 use std::any::Any;
 use std::collections::VecDeque;
 
-/// GPU base address.
-pub const GPU_BASE: u32 = 0x2001_0000;
+/// GPU base address (V2 topology).
+pub const GPU_BASE: u32 = 0x2001_2000;
 /// GPU MMIO region size (4KB).
 pub const GPU_SIZE: usize = 0x1000;
 

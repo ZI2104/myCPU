@@ -28,7 +28,11 @@ mod virtio_block;
 
 pub use gpu::{Gpu, GpuSnapshot, GPU_BASE, GPU_SIZE};
 pub use input::{InputDevice, INPUT_BASE, INPUT_SIZE};
-pub use lpu::{Lpu, LpuSnapshot, LPU_BASE, LPU_SIZE};
+pub use lpu::{
+    Lpu, LpuSnapshot, LPU_BASE, LPU_OPCODE_BYTE_TOKENIZE, LPU_OPCODE_EMBEDDING_BAG,
+    LPU_OPCODE_GREEDY_DECODE, LPU_OPCODE_TOPK_SAMPLE_DECODE, LPU_OPCODE_TOPP_SAMPLE_DECODE,
+    LPU_SIZE,
+};
 pub use npu::{Npu, NpuSnapshot, NPU_BASE, NPU_SIZE};
 pub use tpu::{Tpu, TpuSnapshot, TPU_BASE, TPU_SIZE};
 pub use uart::{OutputCallback, Uart, UART_BASE, UART_IRQ, UART_SIZE};

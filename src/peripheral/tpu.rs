@@ -14,8 +14,8 @@ use crate::types::Addr;
 use std::any::Any;
 use std::collections::VecDeque;
 
-/// TPU base address.
-pub const TPU_BASE: u32 = 0x2002_0000;
+/// TPU base address (V2 topology).
+pub const TPU_BASE: u32 = 0x2001_3000;
 /// TPU MMIO region size (4KB).
 pub const TPU_SIZE: usize = 0x1000;
 

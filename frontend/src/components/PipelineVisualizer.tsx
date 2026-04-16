@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { ExStageInfo, ForwardSourceSnapshot, ForwardingInfo, IdStageInfo, IfStageInfo, MemStageInfo, PipelineSnapshot, PreIfStageInfo, StallType, WbStageInfo } from '../types/snapshot';
+import type { ExStageInfo, ForwardSourceSnapshot, ForwardingInfo, IdStageInfo, IfStageInfo, MemStageInfo, PipelineSnapshot, PreIfStageInfo, WbStageInfo } from '../types/snapshot';
 import { formatShortHex } from '../utils/format';
 
 interface PipelineVisualizerProps {
@@ -16,6 +16,13 @@ interface HistoryEntry {
   timestamp: number;
   cycle: number;
   resetSequence: number;
+}
+
+interface CellContent {
+  pc: string;
+  detail: string;
+  highlight: boolean;
+  badges?: string[];
 }
 
 // Reduced high-contrast palette for instruction tracing.
@@ -307,7 +314,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
   }
 
   // 获取单元格内容
-  const getCellContent = (stageKey: string, entry: HistoryEntry): { pc: string; detail: string; highlight: boolean } => {
+  const getCellContent = (stageKey: string, entry: HistoryEntry): CellContent => {
     const p = entry.pipeline;
     switch (stageKey) {
       case 'preIF': return getPreIfDetail(p.pre_if_stage);

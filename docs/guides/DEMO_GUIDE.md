@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.
 
 已验证结果（2026-04-02）：
 
-- `-EnableLinux` 全量模式 PASS（xv6、Linux、Phase4 host/guest、NPU/LPU、GPU/TPU、frontend build 全通过）。
+- `-EnableLinux` 全量模式 PASS（xv6、Linux、Phase4 host/guest、NPU/LPU〔含 LPU Language 迁移能力〕、GPU/TPU、frontend build 全通过）。
 
 说明：
 

@@ -6,11 +6,91 @@
 use crate::error::{check_alignment, Result, SimError};
 use crate::peripheral::{
     Gpu, GpuSnapshot, InputDevice, Lpu, LpuSnapshot, Npu, NpuSnapshot, Tpu, TpuSnapshot, Uart,
-    VirtioBlock,
+    GPU_BASE, LPU_BASE, NPU_BASE, TPU_BASE,
 };
 use crate::traits::{Memory, Peripheral};
 use crate::types::{Addr, Byte, Half, Word};
 use std::fmt;
+
+const ACC_CTRL_ROOT_BASE: u32 = 0x2000_0000;
+const ACC_DOORBELL_BASE: u32 = 0x2000_1000;
+const ACC_REGION_SIZE: u32 = 0x1000;
+
+const ACC_ENGINE_NPU: u32 = 0;
+const ACC_ENGINE_LPU: u32 = 1;
+const ACC_ENGINE_GPU: u32 = 2;
+const ACC_ENGINE_TPU: u32 = 3;
+const ACC_ENGINE_MASK: u32 = (1 << ACC_ENGINE_NPU)
+    | (1 << ACC_ENGINE_LPU)
+    | (1 << ACC_ENGINE_GPU)
+    | (1 << ACC_ENGINE_TPU);
+
+const ACC_MODE_V2_OVERLAY_ENABLE: u32 = 1 << 0;
+
+mod acc_root_regs {
+    pub const VERSION: u32 = 0x100;
+    pub const ENGINE_MASK: u32 = 0x104;
+    pub const IRQ_SUMMARY: u32 = 0x108;
+    pub const DOORBELL_SUBMITS_LOW: u32 = 0x10C;
+    pub const DOORBELL_SUBMITS_HIGH: u32 = 0x110;
+    pub const DOORBELL_COMPLETES_LOW: u32 = 0x114;
+    pub const DOORBELL_COMPLETES_HIGH: u32 = 0x118;
+    pub const MODE: u32 = 0x11C;
+    pub const DOORBELL_ERRORS_LOW: u32 = 0x120;
+    pub const DOORBELL_ERRORS_HIGH: u32 = 0x124;
+}
+
+mod acc_doorbell_regs {
+    pub const CONTROL: u32 = 0x100;
+    pub const STATUS: u32 = 0x104;
+    pub const ENGINE: u32 = 0x108;
+    pub const DESC_ADDR_LOW: u32 = 0x10C;
+    pub const DESC_ADDR_HIGH: u32 = 0x110;
+    pub const DESC_LEN: u32 = 0x114;
+    pub const NOTIFY: u32 = 0x118;
+    pub const SUBMIT_COUNT_LOW: u32 = 0x11C;
+    pub const SUBMIT_COUNT_HIGH: u32 = 0x120;
+    pub const ERROR_COUNT_LOW: u32 = 0x124;
+    pub const ERROR_COUNT_HIGH: u32 = 0x128;
+}
+
+mod acc_doorbell_status_bits {
+    pub const BUSY: u32 = 1 << 0;
+    pub const DONE: u32 = 1 << 1;
+    pub const ERROR: u32 = 1 << 2;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AccRootState {
+    version: u32,
+    mode: u32,
+    doorbell_submits: u64,
+    doorbell_completes: u64,
+    doorbell_errors: u64,
+}
+
+impl Default for AccRootState {
+    fn default() -> Self {
+        Self {
+            version: 0x0002_0000,
+            mode: ACC_MODE_V2_OVERLAY_ENABLE,
+            doorbell_submits: 0,
+            doorbell_completes: 0,
+            doorbell_errors: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AccDoorbellState {
+    control: u32,
+    status: u32,
+    engine: u32,
+    desc_addr: u64,
+    desc_len: u32,
+    submit_count: u64,
+    error_count: u64,
+}
 
 /// A memory region mapping in the bus.
 #[derive(Debug)]
@@ -45,6 +125,10 @@ pub struct Bus {
     peripheral_regions: Vec<(Addr, usize, Box<dyn Peripheral>)>,
     /// Memory map for debugging
     memory_map: Vec<MemoryRegion>,
+    /// Unified accelerator control root register state.
+    acc_root: AccRootState,
+    /// Unified accelerator doorbell register state.
+    acc_doorbell: AccDoorbellState,
 }
 
 impl fmt::Debug for Bus {
@@ -53,6 +137,8 @@ impl fmt::Debug for Bus {
             .field("ram_regions", &self.ram_regions.len())
             .field("peripheral_regions", &self.peripheral_regions.len())
             .field("memory_map", &self.memory_map)
+            .field("acc_root", &self.acc_root)
+            .field("acc_doorbell", &self.acc_doorbell)
             .finish()
     }
 }
@@ -71,7 +157,247 @@ impl Bus {
             ram_regions: Vec::new(),
             peripheral_regions: Vec::new(),
             memory_map: Vec::new(),
+            acc_root: AccRootState::default(),
+            acc_doorbell: AccDoorbellState::default(),
         }
+    }
+
+    fn reg_u8(value: u32, off: u32) -> u8 {
+        ((value >> ((off & 0x3) * 8)) & 0xFF) as u8
+    }
+
+    fn set_reg_u8(value: &mut u32, off: u32, byte: u8) {
+        let shift = (off & 0x3) * 8;
+        *value &= !(0xFF << shift);
+        *value |= (byte as u32) << shift;
+    }
+
+    fn build_acc_irq_summary(&self) -> u32 {
+        let mut summary = 0u32;
+        if self.has_peripheral_interrupt("NPU") {
+            summary |= 1 << ACC_ENGINE_NPU;
+        }
+        if self.has_peripheral_interrupt("LPU") {
+            summary |= 1 << ACC_ENGINE_LPU;
+        }
+        if self.has_peripheral_interrupt("GPU") {
+            summary |= 1 << ACC_ENGINE_GPU;
+        }
+        if self.has_peripheral_interrupt("TPU") {
+            summary |= 1 << ACC_ENGINE_TPU;
+        }
+        summary
+    }
+
+    fn read_acc_root_u32(&self, reg: u32) -> u32 {
+        match reg {
+            acc_root_regs::VERSION => self.acc_root.version,
+            acc_root_regs::ENGINE_MASK => ACC_ENGINE_MASK,
+            acc_root_regs::IRQ_SUMMARY => self.build_acc_irq_summary(),
+            acc_root_regs::DOORBELL_SUBMITS_LOW => self.acc_root.doorbell_submits as u32,
+            acc_root_regs::DOORBELL_SUBMITS_HIGH => (self.acc_root.doorbell_submits >> 32) as u32,
+            acc_root_regs::DOORBELL_COMPLETES_LOW => self.acc_root.doorbell_completes as u32,
+            acc_root_regs::DOORBELL_COMPLETES_HIGH => {
+                (self.acc_root.doorbell_completes >> 32) as u32
+            }
+            acc_root_regs::MODE => self.acc_root.mode,
+            acc_root_regs::DOORBELL_ERRORS_LOW => self.acc_root.doorbell_errors as u32,
+            acc_root_regs::DOORBELL_ERRORS_HIGH => (self.acc_root.doorbell_errors >> 32) as u32,
+            _ => 0,
+        }
+    }
+
+    fn write_acc_root_u32(&mut self, reg: u32, value: u32) {
+        if reg == acc_root_regs::MODE {
+            let _ = value;
+            self.acc_root.mode = ACC_MODE_V2_OVERLAY_ENABLE;
+        }
+    }
+
+    fn read_acc_doorbell_u32(&self, reg: u32) -> u32 {
+        match reg {
+            acc_doorbell_regs::CONTROL => self.acc_doorbell.control,
+            acc_doorbell_regs::STATUS => self.acc_doorbell.status,
+            acc_doorbell_regs::ENGINE => self.acc_doorbell.engine,
+            acc_doorbell_regs::DESC_ADDR_LOW => self.acc_doorbell.desc_addr as u32,
+            acc_doorbell_regs::DESC_ADDR_HIGH => (self.acc_doorbell.desc_addr >> 32) as u32,
+            acc_doorbell_regs::DESC_LEN => self.acc_doorbell.desc_len,
+            acc_doorbell_regs::SUBMIT_COUNT_LOW => self.acc_doorbell.submit_count as u32,
+            acc_doorbell_regs::SUBMIT_COUNT_HIGH => (self.acc_doorbell.submit_count >> 32) as u32,
+            acc_doorbell_regs::ERROR_COUNT_LOW => self.acc_doorbell.error_count as u32,
+            acc_doorbell_regs::ERROR_COUNT_HIGH => (self.acc_doorbell.error_count >> 32) as u32,
+            _ => 0,
+        }
+    }
+
+    fn read_engine_task_counters(&self, engine: u32) -> Result<(u32, u32)> {
+        let (base, done_off, err_off) = match engine {
+            ACC_ENGINE_NPU => (NPU_BASE, 0x30, 0x34),
+            ACC_ENGINE_LPU => (LPU_BASE, 0x30, 0x34),
+            ACC_ENGINE_GPU => (GPU_BASE, 0x84, 0x88),
+            ACC_ENGINE_TPU => (TPU_BASE, 0x94, 0x98),
+            _ => {
+                return Err(SimError::Peripheral(format!(
+                    "Invalid accelerator engine id: {}",
+                    engine
+                )));
+            }
+        };
+
+        let done = self.read_word(Addr::new(base + done_off))?.raw();
+        let err = self.read_word(Addr::new(base + err_off))?.raw();
+        Ok((done, err))
+    }
+
+    fn submit_acc_doorbell(&mut self) -> Result<()> {
+        let engine = self.acc_doorbell.engine;
+        let desc_addr = self.acc_doorbell.desc_addr;
+        let desc_len = self.acc_doorbell.desc_len;
+
+        self.acc_doorbell.status = acc_doorbell_status_bits::BUSY;
+        self.acc_doorbell.submit_count = self.acc_doorbell.submit_count.wrapping_add(1);
+        self.acc_root.doorbell_submits = self.acc_root.doorbell_submits.wrapping_add(1);
+
+        if engine > ACC_ENGINE_TPU {
+            self.acc_doorbell.status = acc_doorbell_status_bits::ERROR;
+            self.acc_doorbell.error_count = self.acc_doorbell.error_count.wrapping_add(1);
+            self.acc_root.doorbell_errors = self.acc_root.doorbell_errors.wrapping_add(1);
+            return Err(SimError::Peripheral(format!(
+                "Invalid accelerator engine id: {}",
+                engine
+            )));
+        }
+
+        let before = self.read_engine_task_counters(engine)?;
+
+        match engine {
+            ACC_ENGINE_NPU | ACC_ENGINE_LPU => {
+                let base = if engine == ACC_ENGINE_NPU {
+                    NPU_BASE
+                } else {
+                    LPU_BASE
+                };
+                self.write_word(Addr::new(base + 0x20), Word::new(desc_addr as u32))?;
+                self.write_word(Addr::new(base + 0x24), Word::new((desc_addr >> 32) as u32))?;
+                self.write_word(Addr::new(base + 0x28), Word::new(desc_len))?;
+                self.write_word(Addr::new(base + 0x2C), Word::new(1))?;
+            }
+            ACC_ENGINE_GPU => {
+                self.write_word(Addr::new(GPU_BASE + 0x50), Word::new(desc_addr as u32))?;
+                self.write_word(Addr::new(GPU_BASE + 0x54), Word::new((desc_addr >> 32) as u32))?;
+                self.write_word(Addr::new(GPU_BASE + 0x58), Word::new(desc_len))?;
+                self.write_word(Addr::new(GPU_BASE + 0x5C), Word::new(1))?;
+            }
+            ACC_ENGINE_TPU => {
+                self.write_word(Addr::new(TPU_BASE + 0x80), Word::new(desc_addr as u32))?;
+                self.write_word(Addr::new(TPU_BASE + 0x84), Word::new((desc_addr >> 32) as u32))?;
+                self.write_word(Addr::new(TPU_BASE + 0x88), Word::new(desc_len))?;
+                self.write_word(Addr::new(TPU_BASE + 0x8C), Word::new(1))?;
+            }
+            _ => unreachable!("invalid engine id is guarded above"),
+        }
+
+        let after = self.read_engine_task_counters(engine)?;
+        let done_delta = after.0.wrapping_sub(before.0) as u64;
+        let err_delta = after.1.wrapping_sub(before.1) as u64;
+
+        self.acc_root.doorbell_completes = self.acc_root.doorbell_completes.wrapping_add(done_delta);
+        self.acc_root.doorbell_errors = self.acc_root.doorbell_errors.wrapping_add(err_delta);
+        self.acc_doorbell.error_count = self.acc_doorbell.error_count.wrapping_add(err_delta);
+
+        self.acc_doorbell.status = if err_delta > 0 {
+            acc_doorbell_status_bits::DONE | acc_doorbell_status_bits::ERROR
+        } else {
+            acc_doorbell_status_bits::DONE
+        };
+
+        Ok(())
+    }
+
+    fn write_acc_doorbell_u32(&mut self, reg: u32, value: u32) -> Result<()> {
+        match reg {
+            acc_doorbell_regs::CONTROL => {
+                self.acc_doorbell.control = value;
+                Ok(())
+            }
+            acc_doorbell_regs::STATUS => {
+                if (value & acc_doorbell_status_bits::DONE) != 0 {
+                    self.acc_doorbell.status &= !acc_doorbell_status_bits::DONE;
+                }
+                if (value & acc_doorbell_status_bits::ERROR) != 0 {
+                    self.acc_doorbell.status &= !acc_doorbell_status_bits::ERROR;
+                }
+                Ok(())
+            }
+            acc_doorbell_regs::ENGINE => {
+                self.acc_doorbell.engine = value;
+                Ok(())
+            }
+            acc_doorbell_regs::DESC_ADDR_LOW => {
+                self.acc_doorbell.desc_addr =
+                    (self.acc_doorbell.desc_addr & 0xFFFF_FFFF_0000_0000) | value as u64;
+                Ok(())
+            }
+            acc_doorbell_regs::DESC_ADDR_HIGH => {
+                self.acc_doorbell.desc_addr =
+                    (self.acc_doorbell.desc_addr & 0x0000_0000_FFFF_FFFF) | ((value as u64) << 32);
+                Ok(())
+            }
+            acc_doorbell_regs::DESC_LEN => {
+                self.acc_doorbell.desc_len = value;
+                Ok(())
+            }
+            acc_doorbell_regs::NOTIFY => {
+                if value != 0 {
+                    self.submit_acc_doorbell()?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn try_read_acc_mmio(&self, addr: Addr) -> Option<Result<Byte>> {
+        let raw = addr.raw();
+
+        if (ACC_CTRL_ROOT_BASE..(ACC_CTRL_ROOT_BASE + ACC_REGION_SIZE)).contains(&raw) {
+            let off = raw - ACC_CTRL_ROOT_BASE;
+            let reg = off & !0x3;
+            let val = self.read_acc_root_u32(reg);
+            return Some(Ok(Byte::new(Self::reg_u8(val, off))));
+        }
+
+        if (ACC_DOORBELL_BASE..(ACC_DOORBELL_BASE + ACC_REGION_SIZE)).contains(&raw) {
+            let off = raw - ACC_DOORBELL_BASE;
+            let reg = off & !0x3;
+            let val = self.read_acc_doorbell_u32(reg);
+            return Some(Ok(Byte::new(Self::reg_u8(val, off))));
+        }
+
+        None
+    }
+
+    fn try_write_acc_mmio(&mut self, addr: Addr, value: Byte) -> Option<Result<()>> {
+        let raw = addr.raw();
+
+        if (ACC_CTRL_ROOT_BASE..(ACC_CTRL_ROOT_BASE + ACC_REGION_SIZE)).contains(&raw) {
+            let off = raw - ACC_CTRL_ROOT_BASE;
+            let reg = off & !0x3;
+            let mut current = self.read_acc_root_u32(reg);
+            Self::set_reg_u8(&mut current, off, value.raw());
+            self.write_acc_root_u32(reg, current);
+            return Some(Ok(()));
+        }
+
+        if (ACC_DOORBELL_BASE..(ACC_DOORBELL_BASE + ACC_REGION_SIZE)).contains(&raw) {
+            let off = raw - ACC_DOORBELL_BASE;
+            let reg = off & !0x3;
+            let mut current = self.read_acc_doorbell_u32(reg);
+            Self::set_reg_u8(&mut current, off, value.raw());
+            return Some(self.write_acc_doorbell_u32(reg, current));
+        }
+
+        None
     }
 
     /// Attach a memory region to the bus.
@@ -107,6 +433,10 @@ impl Bus {
     ///
     /// Routes the request to the appropriate memory or peripheral region.
     pub fn read_byte(&self, addr: Addr) -> Result<Byte> {
+        if let Some(result) = self.try_read_acc_mmio(addr) {
+            return result;
+        }
+
         // Check peripheral regions first
         for (base, size, peripheral) in &self.peripheral_regions {
             let base_addr = base.raw() as usize;
@@ -128,13 +458,20 @@ impl Bus {
             }
         }
 
-        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+        Err(SimError::MemoryOutOfBounds {
+            addr,
+            size: 1,
+        })
     }
 
     /// Write a byte to the bus.
     ///
     /// Routes the request to the appropriate memory or peripheral region.
     pub fn write_byte(&mut self, addr: Addr, value: Byte) -> Result<()> {
+        if let Some(result) = self.try_write_acc_mmio(addr, value) {
+            return result;
+        }
+
         // Check peripheral regions first
         for (base, size, peripheral) in &mut self.peripheral_regions {
             let base_addr = base.raw() as usize;
@@ -164,7 +501,10 @@ impl Bus {
             }
         }
 
-        Err(SimError::MemoryOutOfBounds { addr, size: 1 })
+        Err(SimError::MemoryOutOfBounds {
+            addr,
+            size: 1,
+        })
     }
 
     /// Read a half-word from the bus.
@@ -632,7 +972,11 @@ impl Default for Bus {
 mod tests {
     use super::*;
     use crate::memory::Ram;
-    use crate::peripheral::{Lpu, Npu, VirtioBlock, LPU_BASE, NPU_BASE, VIRTIO_BLK_BASE};
+    use crate::peripheral::{
+        Lpu, Npu, VirtioBlock, LPU_BASE, LPU_OPCODE_BYTE_TOKENIZE, LPU_OPCODE_EMBEDDING_BAG,
+        LPU_OPCODE_GREEDY_DECODE, LPU_OPCODE_TOPK_SAMPLE_DECODE, LPU_OPCODE_TOPP_SAMPLE_DECODE,
+        NPU_BASE, VIRTIO_BLK_BASE,
+    };
 
     #[test]
     fn test_bus_basic() {
@@ -895,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bus_lpu_descriptor_notify_bridge() {
+    fn test_bus_lpu_invalid_descriptor_opcode_counts_error() {
         const RAM_BASE: u32 = 0x8000_0000;
 
         let mut bus = Bus::new();
@@ -903,24 +1247,322 @@ mod tests {
         bus.attach_peripheral(Lpu::new());
 
         let desc_addr = RAM_BASE + 0x1100;
-        let op_a = RAM_BASE + 0x2100;
-        let op_b = RAM_BASE + 0x2104;
         let out = RAM_BASE + 0x2108;
 
-        write_u32(&mut bus, desc_addr, 2); // Xor
-        write_u32(&mut bus, desc_addr + 4, op_a);
-        write_u32(&mut bus, desc_addr + 8, op_b);
+        write_u32(&mut bus, desc_addr, 2); // removed legacy opcode
+        write_u32(&mut bus, desc_addr + 4, 0);
+        write_u32(&mut bus, desc_addr + 8, 0);
         write_u32(&mut bus, desc_addr + 12, out);
-
-        write_u32(&mut bus, op_a, 0b1010);
-        write_u32(&mut bus, op_b, 0b1100);
 
         write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
         write_u32(&mut bus, LPU_BASE + 0x28, 1);
         write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
         write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
 
-        assert_eq!(read_u32(&bus, out), 0b0110);
+        assert_eq!(read_u32(&bus, out), 0);
+        assert_eq!(read_u32(&bus, LPU_BASE + 0x34), 1);
         assert!(bus.has_peripheral_interrupt("LPU"));
+    }
+
+    #[test]
+    fn test_bus_lpu_byte_tokenize_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Lpu::new());
+
+        let desc_addr = RAM_BASE + 0x1200;
+        let input_addr = RAM_BASE + 0x2200;
+        let out_addr = RAM_BASE + 0x2300;
+
+        // descriptor: [opcode, input_addr, input_len, out_addr]
+        write_u32(&mut bus, desc_addr, LPU_OPCODE_BYTE_TOKENIZE);
+        write_u32(&mut bus, desc_addr + 4, input_addr);
+        write_u32(&mut bus, desc_addr + 8, 4);
+        write_u32(&mut bus, desc_addr + 12, out_addr);
+
+        bus.write_byte(Addr::new(input_addr), Byte::new(b'A')).unwrap();
+        bus.write_byte(Addr::new(input_addr + 1), Byte::new(b'1'))
+            .unwrap();
+        bus.write_byte(Addr::new(input_addr + 2), Byte::new(b' '))
+            .unwrap();
+        bus.write_byte(Addr::new(input_addr + 3), Byte::new(b'?'))
+            .unwrap();
+
+        write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, LPU_BASE + 0x28, 1);
+        write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out_addr), 1);
+        assert_eq!(read_u32(&bus, out_addr + 4), 2);
+        assert_eq!(read_u32(&bus, out_addr + 8), 0);
+        assert_eq!(read_u32(&bus, out_addr + 12), 3);
+        assert!(bus.has_peripheral_interrupt("LPU"));
+    }
+
+    #[test]
+    fn test_bus_lpu_embedding_bag_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Lpu::new());
+
+        let desc_addr = RAM_BASE + 0x1300;
+        let input_addr = RAM_BASE + 0x2400;
+        let out_addr = RAM_BASE + 0x2500;
+
+        // descriptor: [opcode, input_addr, bag_len, out_addr]
+        write_u32(&mut bus, desc_addr, LPU_OPCODE_EMBEDDING_BAG);
+        write_u32(&mut bus, desc_addr + 4, input_addr);
+        write_u32(&mut bus, desc_addr + 8, 4);
+        write_u32(&mut bus, desc_addr + 12, out_addr);
+
+        // token ids: [1,2,3,1] => embeddings [4,6,3,4] => pooled 17
+        write_u32(&mut bus, input_addr, 1);
+        write_u32(&mut bus, input_addr + 4, 2);
+        write_u32(&mut bus, input_addr + 8, 3);
+        write_u32(&mut bus, input_addr + 12, 1);
+
+        write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, LPU_BASE + 0x28, 1);
+        write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out_addr), 17);
+        assert!(bus.has_peripheral_interrupt("LPU"));
+    }
+
+    #[test]
+    fn test_bus_lpu_greedy_decode_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Lpu::new());
+
+        let desc_addr = RAM_BASE + 0x1400;
+        let logits_addr = RAM_BASE + 0x2600;
+        let out_addr = RAM_BASE + 0x2700;
+
+        // descriptor: [opcode, logits_addr, vocab_size, out_addr]
+        write_u32(&mut bus, desc_addr, LPU_OPCODE_GREEDY_DECODE);
+        write_u32(&mut bus, desc_addr + 4, logits_addr);
+        write_u32(&mut bus, desc_addr + 8, 4);
+        write_u32(&mut bus, desc_addr + 12, out_addr);
+
+        // scores: [10, 7, 21, 3] => argmax id 2
+        write_u32(&mut bus, logits_addr, 10);
+        write_u32(&mut bus, logits_addr + 4, 7);
+        write_u32(&mut bus, logits_addr + 8, 21);
+        write_u32(&mut bus, logits_addr + 12, 3);
+
+        write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, LPU_BASE + 0x28, 1);
+        write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out_addr), 2);
+        assert!(bus.has_peripheral_interrupt("LPU"));
+    }
+
+    #[test]
+    fn test_bus_lpu_topk_sample_decode_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Lpu::new());
+
+        let desc_addr = RAM_BASE + 0x1500;
+        let logits_addr = RAM_BASE + 0x2800;
+        let out_addr = RAM_BASE + 0x2900;
+
+        // descriptor: [opcode, logits_addr, vocab_size, out_addr]
+        write_u32(&mut bus, desc_addr, LPU_OPCODE_TOPK_SAMPLE_DECODE);
+        write_u32(&mut bus, desc_addr + 4, logits_addr);
+        write_u32(&mut bus, desc_addr + 8, 4);
+        write_u32(&mut bus, desc_addr + 12, out_addr);
+
+        // scores: id0=100, id1=90 are top-2 candidates
+        write_u32(&mut bus, logits_addr, 100);
+        write_u32(&mut bus, logits_addr + 4, 90);
+        write_u32(&mut bus, logits_addr + 8, 80);
+        write_u32(&mut bus, logits_addr + 12, 10);
+
+        // deterministic sampling config: seed=5, top_k=2, temperature=10000
+        write_u32(&mut bus, LPU_BASE + 0x3C, 2);
+        write_u32(&mut bus, LPU_BASE + 0x40, 10_000);
+        write_u32(&mut bus, LPU_BASE + 0x44, 5);
+
+        write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, LPU_BASE + 0x28, 1);
+        write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out_addr), 1);
+        assert!(bus.has_peripheral_interrupt("LPU"));
+    }
+
+    #[test]
+    fn test_bus_lpu_topp_sample_decode_descriptor_notify_bridge() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Lpu::new());
+
+        let desc_addr = RAM_BASE + 0x1600;
+        let logits_addr = RAM_BASE + 0x2A00;
+        let out_addr = RAM_BASE + 0x2B00;
+
+        // descriptor: [opcode, logits_addr, vocab_size, out_addr]
+        write_u32(&mut bus, desc_addr, LPU_OPCODE_TOPP_SAMPLE_DECODE);
+        write_u32(&mut bus, desc_addr + 4, logits_addr);
+        write_u32(&mut bus, desc_addr + 8, 4);
+        write_u32(&mut bus, desc_addr + 12, out_addr);
+
+        // scores: id0=100, id1=90, id2=80, id3=10
+        write_u32(&mut bus, logits_addr, 100);
+        write_u32(&mut bus, logits_addr + 4, 90);
+        write_u32(&mut bus, logits_addr + 8, 80);
+        write_u32(&mut bus, logits_addr + 12, 10);
+
+        // deterministic sampling config: p=0.5, temperature=10000, seed=5
+        write_u32(&mut bus, LPU_BASE + 0x4C, 500);
+        write_u32(&mut bus, LPU_BASE + 0x40, 10_000);
+        write_u32(&mut bus, LPU_BASE + 0x44, 5);
+
+        write_u32(&mut bus, LPU_BASE + 0x20, desc_addr);
+        write_u32(&mut bus, LPU_BASE + 0x28, 1);
+        write_u32(&mut bus, LPU_BASE + 0x00, 0x2); // IRQ_EN
+        write_u32(&mut bus, LPU_BASE + 0x2C, 1); // DESC_NOTIFY
+
+        assert_eq!(read_u32(&bus, out_addr), 0);
+        assert!(bus.has_peripheral_interrupt("LPU"));
+    }
+
+    #[test]
+    fn test_bus_acc_pure_v2_window_for_npu() {
+        const V2_NPU_BASE: u32 = 0x2001_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(0x8000_0000), Ram::new(0x4000), "RAM");
+        bus.attach_peripheral(Npu::new());
+
+        // V2 window is always enabled in pure topology.
+        write_u32(&mut bus, V2_NPU_BASE + 0x08, 11);
+        write_u32(&mut bus, V2_NPU_BASE + 0x0C, 31);
+        write_u32(&mut bus, V2_NPU_BASE + 0x14, 0); // Add
+        write_u32(&mut bus, V2_NPU_BASE + 0x00, 1); // START
+
+        assert_eq!(read_u32(&bus, V2_NPU_BASE + 0x10), 42);
+        assert_eq!(read_u32(&bus, NPU_BASE + 0x10), 42);
+
+        // Legacy V1 base no longer aliases NPU registers.
+        write_u32(&mut bus, ACC_CTRL_ROOT_BASE + 0x08, 99);
+        assert_eq!(read_u32(&bus, NPU_BASE + 0x08), 11);
+
+        // MODE register is fixed to V2 enabled.
+        write_u32(&mut bus, ACC_CTRL_ROOT_BASE + acc_root_regs::MODE, 0);
+        assert_eq!(
+            read_u32(&bus, ACC_CTRL_ROOT_BASE + acc_root_regs::MODE),
+            ACC_MODE_V2_OVERLAY_ENABLE
+        );
+    }
+
+    #[test]
+    fn test_bus_acc_doorbell_submit_npu_descriptor() {
+        const RAM_BASE: u32 = 0x8000_0000;
+
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(RAM_BASE), Ram::new(0x8000), "RAM");
+        bus.attach_peripheral(Npu::new());
+
+        let desc_addr = RAM_BASE + 0x1800;
+        let op_a = RAM_BASE + 0x1900;
+        let op_b = RAM_BASE + 0x1904;
+        let out = RAM_BASE + 0x1908;
+
+        write_u32(&mut bus, desc_addr, 0); // Add
+        write_u32(&mut bus, desc_addr + 4, op_a);
+        write_u32(&mut bus, desc_addr + 8, op_b);
+        write_u32(&mut bus, desc_addr + 12, out);
+        write_u32(&mut bus, op_a, 7);
+        write_u32(&mut bus, op_b, 35);
+
+        write_u32(
+            &mut bus,
+            ACC_DOORBELL_BASE + acc_doorbell_regs::ENGINE,
+            ACC_ENGINE_NPU,
+        );
+        write_u32(
+            &mut bus,
+            ACC_DOORBELL_BASE + acc_doorbell_regs::DESC_ADDR_LOW,
+            desc_addr,
+        );
+        write_u32(
+            &mut bus,
+            ACC_DOORBELL_BASE + acc_doorbell_regs::DESC_ADDR_HIGH,
+            0,
+        );
+        write_u32(
+            &mut bus,
+            ACC_DOORBELL_BASE + acc_doorbell_regs::DESC_LEN,
+            1,
+        );
+        write_u32(
+            &mut bus,
+            ACC_DOORBELL_BASE + acc_doorbell_regs::NOTIFY,
+            1,
+        );
+
+        assert_eq!(read_u32(&bus, out), 42);
+        assert_eq!(
+            read_u32(&bus, ACC_CTRL_ROOT_BASE + acc_root_regs::DOORBELL_SUBMITS_LOW),
+            1
+        );
+        assert_eq!(
+            read_u32(&bus, ACC_CTRL_ROOT_BASE + acc_root_regs::DOORBELL_COMPLETES_LOW),
+            1
+        );
+        assert_eq!(
+            read_u32(&bus, ACC_DOORBELL_BASE + acc_doorbell_regs::STATUS)
+                & acc_doorbell_status_bits::DONE,
+            acc_doorbell_status_bits::DONE
+        );
+    }
+
+    #[test]
+    fn test_bus_acc_doorbell_invalid_engine_records_error() {
+        let mut bus = Bus::new();
+        bus.attach_memory(Addr::new(0x8000_0000), Ram::new(0x4000), "RAM");
+        bus.attach_peripheral(Npu::new());
+
+        write_u32(&mut bus, ACC_DOORBELL_BASE + acc_doorbell_regs::ENGINE, 99);
+        write_u32(&mut bus, ACC_DOORBELL_BASE + acc_doorbell_regs::DESC_ADDR_LOW, 0);
+        write_u32(&mut bus, ACC_DOORBELL_BASE + acc_doorbell_regs::DESC_LEN, 0);
+
+        let err = bus.write_word(
+            Addr::new(ACC_DOORBELL_BASE + acc_doorbell_regs::NOTIFY),
+            Word::new(1),
+        );
+        assert!(err.is_err());
+
+        assert_eq!(
+            read_u32(&bus, ACC_DOORBELL_BASE + acc_doorbell_regs::ERROR_COUNT_LOW),
+            1
+        );
+        assert_eq!(
+            read_u32(&bus, ACC_CTRL_ROOT_BASE + acc_root_regs::DOORBELL_ERRORS_LOW),
+            1
+        );
+        assert_eq!(
+            read_u32(&bus, ACC_DOORBELL_BASE + acc_doorbell_regs::STATUS)
+                & acc_doorbell_status_bits::ERROR,
+            acc_doorbell_status_bits::ERROR
+        );
     }
 }

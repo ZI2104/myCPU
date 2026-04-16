@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type {
-  GpuStateResponse,
-  LpuStateResponse,
-  NpuStateResponse,
-  TpuStateResponse,
+    GpuStateResponse,
+    LpuStateResponse,
+    NpuStateResponse,
+    TpuStateResponse,
 } from '../types/snapshot';
 import { formatHex, formatHex64 } from '../utils/format';
 
@@ -36,6 +36,26 @@ interface CoprocessorCardProps {
   renderTimeline: (timeline: TimelinePoint[]) => React.ReactNode;
 }
 
+function isLpuState(state: NpuStateResponse | LpuStateResponse | null): state is LpuStateResponse {
+  return Boolean(state && state.type === 'lpu_state');
+}
+
+function formatLpuOpcode(opcode: number | undefined): string {
+  if (opcode === undefined) {
+    return '--';
+  }
+
+  const language: Record<number, string> = {
+    16: 'ByteTokenize',
+    17: 'EmbeddingBag',
+    18: 'GreedyDecode',
+    19: 'TopKSampleDecode',
+    20: 'TopPSampleDecode',
+  };
+
+  return language[opcode] ?? String(opcode);
+}
+
 function CoprocessorCard({
   title,
   state,
@@ -62,7 +82,10 @@ function CoprocessorCard({
           <div className="coproc-grid">
             <div><span>control</span><strong>{formatHex(state.control)}</strong></div>
             <div><span>status</span><strong>{formatHex(state.status)}</strong></div>
-            <div><span>opcode</span><strong>{state.opcode ?? '--'}</strong></div>
+            <div>
+              <span>opcode</span>
+              <strong>{isLpuState(state) ? formatLpuOpcode(state.opcode) : (state.opcode ?? '--')}</strong>
+            </div>
             <div><span>cycles</span><strong>{state.cycles ?? '--'}</strong></div>
             <div><span>desc_addr</span><strong>{formatHex64(state.desc_addr)}</strong></div>
             <div><span>desc_len</span><strong>{state.desc_len ?? '--'}</strong></div>
@@ -70,6 +93,22 @@ function CoprocessorCard({
             <div><span>tasks_error</span><strong>{state.tasks_error ?? '--'}</strong></div>
             <div><span>notify_count</span><strong>{state.desc_notify_count ?? '--'}</strong></div>
             <div><span>pending</span><strong>{state.pending_desc_notify ? 'YES' : 'NO'}</strong></div>
+            {isLpuState(state) && (
+              <>
+                <div><span>bytes_processed</span><strong>{state.bytes_processed ?? '--'}</strong></div>
+                <div><span>tokens_generated</span><strong>{state.tokens_generated ?? '--'}</strong></div>
+                <div><span>embedding_lookups</span><strong>{state.embedding_lookups ?? '--'}</strong></div>
+                <div><span>embedding_bags</span><strong>{state.embedding_bags ?? '--'}</strong></div>
+                <div><span>decode_candidates</span><strong>{state.decode_candidates_evaluated ?? '--'}</strong></div>
+                <div><span>decoded_tokens</span><strong>{state.decoded_tokens ?? '--'}</strong></div>
+                <div><span>decode_top_k</span><strong>{state.decode_top_k ?? '--'}</strong></div>
+                <div><span>decode_top_p_milli</span><strong>{state.decode_top_p_milli ?? '--'}</strong></div>
+                <div><span>decode_temp_milli</span><strong>{state.decode_temperature_milli ?? '--'}</strong></div>
+                <div><span>decode_seed</span><strong>{state.decode_seed ?? '--'}</strong></div>
+                <div><span>sampled_decodes</span><strong>{state.sampled_decodes ?? '--'}</strong></div>
+                <div><span>nucleus_decodes</span><strong>{state.nucleus_decodes ?? '--'}</strong></div>
+              </>
+            )}
           </div>
 
           <div className="coproc-timeline-block">
@@ -281,7 +320,7 @@ export function CoprocessorPanel({ sendCommand, npuState, lpuState, gpuState, tp
       </div>
       <div className="coproc-cards">
         <CoprocessorCard title="NPU" state={npuState} refreshCommand="npu state" timeline={npuTimeline} onRefresh={handleRefresh} renderTimeline={renderTimeline} />
-        <CoprocessorCard title="LPU" state={lpuState} refreshCommand="lpu state" timeline={lpuTimeline} onRefresh={handleRefresh} renderTimeline={renderTimeline} />
+        <CoprocessorCard title="LPU (Language)" state={lpuState} refreshCommand="lpu state" timeline={lpuTimeline} onRefresh={handleRefresh} renderTimeline={renderTimeline} />
         <GpuCard state={gpuState} onRefresh={handleRefresh} />
         <TpuCard state={tpuState} onRefresh={handleRefresh} />
       </div>

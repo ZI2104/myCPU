@@ -51,21 +51,16 @@ Phase 7: CI/发布工程化（规划）
 > - 🟡 部分完成
 > - ⏳ 未完成
 
-| 阶段      | 目标（用户要求）                                           | 当前状态   | 验收标准                                              | 当前证据                                                                                                                                                                  |
-| --------- | ---------------------------------------------------------- | ---------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase 0   | 冻结可用基线 + OS bring-up 专项测试入口                    | ✅ 已完成   | xv6 到 shell prompt 作为首个里程碑                    | 基线与 bring-up smoke 测试入口已落地，且已在长窗口运行中稳定看到 xv6 shell 提示符 `$`                                                                                     |
-| Phase 1   | xv6 启动关键能力补齐（RV32M、Trap闭环、Sv32、MMU统一路径） | ✅ 已完成   | xv6 内核入口与串口输出稳定                            | RV32M/Trap/Sv32/MMU 路径均已实现并有测试，详见本文件 P1/P3 验收段                                                                                                         |
-| Phase 2   | xv6 可交互运行（CLINT/PLIC 稳定 + 最小块设备）             | ✅ 已完成   | xv6 文件系统镜像进入 shell 可交互                     | 已完成 PLIC/SIP 兼容修复与 VirtIO 描述符传输修复（含 1KiB 场景），并新增 `scripts/run_xv6_shell_smoke.ps1` 自动验收流程；200M 窗口稳定通过 `echo/ls/cat/grep/wc` 命令矩阵 |
-| Phase 3   | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | 🟡 部分完成 | Buildroot Linux 进入 init/userland                    | 模拟器侧链路能力已齐全（SBI/FDT/bootargs/payload）；默认仓库不内置完整 Linux 工件，需通过脚本准备 OpenSBI/Buildroot 工件后完成终验                                        |
-| Phase 4   | Linux 用户态 SDL/FB 游戏演示                               | ✅ 已完成   | 简化 2D 游戏跑通 + 输入设备 + Overlay                 | `fb_game` 游戏流程控制（init/step/run/reset）+ 输入面板 + Framebuffer Overlay 已落地；host/guest 自动验收脚本通过，库测 274/274 与前端构建通过                            |
-| Phase 5   | NPU/LPU 模拟（MMIO 优先）                                  | ✅ 已完成   | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU 已补齐 DESC_ADDR/描述符 DMA/Bus 桥接、可视化状态面板、CUSTOM-0 自定义指令 fast-path 与任务时间线                                                                  |
-| Phase 5.2 | GPU/TPU 模拟加速器                                         | ✅ 已完成   | Conv2d/Pool2d/INT8量化 + 可视化 + 集成测试            | GPU (15 内核) + TPU (INT8 量化) 已实现，304 库测试 + 3 集成测试通过，前端 GPU/TPU 面板已落地，API 文档已完成                                                              |
-| Phase 6   | 亮点封装发布（脚本化演示+回归矩阵）                        | ✅ 已完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 在具备 Linux 工件并启用 `-EnableLinux` 的条件下，`run_phase6_showcase_pipeline.ps1` 全链路通过：xv6、Linux、Phase4 host/guest、NPU/LPU 回归与前端构建均 PASS              |
-
-> 最新进展（2026-04-01）：在补齐 PLIC S 态窗口与 `SIP` 机器态 `SSIP` 语义后，进一步完成 RV32C 兼容修复与 VirtIO 描述符传输长度修复（避免 512B 截断导致用户程序加载不完整）。UART 注入升级为 prompt 逐命令自适应分片注入，并与会话状态机断言结合，`scripts/run_xv6_shell_smoke.ps1` 在 200M 长窗口下 `echo/ls/cat/grep/wc` 命令矩阵稳定通过（5/5）。此外，`run` 子命令已支持 Linux 启动上下文注入（`--linux-boot`、`--linux-hartid`、`--linux-dtb*`、`--linux-bootargs*`）、`--linux-sbi/--linux-sbi-addr/--linux-payload-addr` 双镜像加载，以及 `--linux-auto-dtb` 自动 FDT 生成，链路级实跑验收通过；并已新增 MMIO 输入外设（`0x10002000`）+ 可视化输入命令（`input ...`）+ 前端 `InputPanel`。当前已补齐 `GameFlowPanel`（`fb_game` 流程控制）、`Framebuffer` Overlay HUD（FPS/IPC/Stalls/Tick/Score/InputBits），并增强 `scripts/run_phase4_input_framebuffer_acceptance.ps1` 的 host/guest 断言（`fb_game state` 与 `stepn executed`）。针对 Phase 3，新增 `scripts/setup_phase3_artifacts.ps1`（自动下载 OpenSBI）、`scripts/build_phase3_buildroot_artifacts.ps1`（Buildroot qemu_riscv32_virt 工件产出）与 `run_linux_phase3_acceptance.ps1` 工件自动探测/前置校验（ELF payload 拦截），可在缺失 Linux Image 时给出明确阻塞诊断。`cargo test --lib` 当前 `274/274` 通过，前端 `npm run build` 通过。
-> 复验同步（2026-04-01）：已基于当前工作区状态再次执行 Phase 4 host/guest 双模式验收，结果均 PASS；并复跑 `cargo test --lib`（274/274）与前端 `npm run build`，结果均通过。
-> 本轮同步校验（2026-04-02）：再次执行 `cargo test --lib`，结果 `274 passed, 0 failed`；工作区最近一次 `cargo test --test npu_elf_integration -- --nocapture` 退出码为 `0`。
-> GPU/TPU 同步校验（2026-04-09）：新增 GPU/TPU 模拟加速器（Phase 5.2），`cargo test --lib` 通过（304 passed, 0 failed），`cargo test --test gpu_tpu_integration` 通过（3 passed, 0 failed），前端 `npm run build` 通过。
+| 阶段      | 目标（用户要求）                                           | 当前状态   | 验收标准                                              | 当前证据                                                                                                                                                                                                                                                      |
+| --------- | ---------------------------------------------------------- | ---------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0   | 冻结可用基线 + OS bring-up 专项测试入口                    | ✅ 已完成   | xv6 到 shell prompt 作为首个里程碑                    | 基线与 bring-up smoke 测试入口已落地，且已在长窗口运行中稳定看到 xv6 shell 提示符 `$`                                                                                                                                                                         |
+| Phase 1   | xv6 启动关键能力补齐（RV32M、Trap闭环、Sv32、MMU统一路径） | ✅ 已完成   | xv6 内核入口与串口输出稳定                            | RV32M/Trap/Sv32/MMU 路径均已实现并有测试，详见本文件 P1/P3 验收段                                                                                                                                                                                             |
+| Phase 2   | xv6 可交互运行（CLINT/PLIC 稳定 + 最小块设备）             | ✅ 已完成   | xv6 文件系统镜像进入 shell 可交互                     | 已完成 PLIC/SIP 兼容修复与 VirtIO 描述符传输修复（含 1KiB 场景），并新增 `scripts/run_xv6_shell_smoke.ps1` 自动验收流程；200M 窗口稳定通过 `echo/ls/cat/grep/wc` 命令矩阵                                                                                     |
+| Phase 3   | 精简 Linux 启动链路（SBI + FDT + 启动参数）                | 🟡 部分完成 | Buildroot Linux 进入 init/userland                    | 模拟器侧链路能力已齐全（SBI/FDT/bootargs/payload）；默认仓库不内置完整 Linux 工件，需通过脚本准备 OpenSBI/Buildroot 工件后完成终验                                                                                                                            |
+| Phase 4   | Linux 用户态 SDL/FB 游戏演示                               | ✅ 已完成   | 简化 2D 游戏跑通 + 输入设备 + Overlay                 | `fb_game` 游戏流程控制（init/step/run/reset）+ 输入面板 + Framebuffer Overlay 已落地；host/guest 自动验收脚本通过，库测 274/274 与前端构建通过                                                                                                                |
+| Phase 5   | NPU/LPU 模拟（MMIO 优先）                                  | ✅ 已完成   | CTRL/STATUS/DESC_ADDR/IRQ + 描述符/DMA + IRQ 完整闭环 | NPU/LPU 已补齐 DESC_ADDR/描述符 DMA/Bus 桥接、可视化状态面板、CUSTOM-0 自定义指令 fast-path 与任务时间线；LPU 已迁移为 Language Processing Unit（仅支持语言 opcode，MVP 含 ByteTokenize + EmbeddingBag + GreedyDecode + TopKSampleDecode + TopPSampleDecode） |
+| Phase 5.2 | GPU/TPU 模拟加速器                                         | ✅ 已完成   | Conv2d/Pool2d/INT8量化 + 可视化 + 集成测试            | GPU (15 内核) + TPU (INT8 量化) 已实现，304 库测试 + 3 集成测试通过，前端 GPU/TPU 面板已落地，API 文档已完成                                                                                                                                                  |
+| Phase 6   | 亮点封装发布（脚本化演示+回归矩阵）                        | ✅ 已完成   | xv6→Linux→游戏→NPU 对比演示可复现                     | 在具备 Linux 工件并启用 `-EnableLinux` 的条件下，`run_phase6_showcase_pipeline.ps1` 全链路通过：xv6、Linux、Phase4 host/guest、NPU/LPU 回归与前端构建均 PASS                                                                                                  |
 
 ### 执行约定（从本次开始）
 
@@ -400,31 +395,21 @@ Phase 7: CI/发布工程化（规划）
 
 #### P3 当前里程碑验收（2026-03-31）
 
-- 已实现内容：
-  - `satp` CSR（RV32: MODE/ASID/PPN）接入 `CsrFile`
-  - `src/cpu/mmu.rs`：Sv32 软件页表遍历（Bare 直通）
-  - 单周期 CPU 取指、Load/Store 统一接入地址翻译入口
-  - 页故障从错误返回改为 trap 路径（`mcause/mtval/mepc` 正确写入）
-- 验收测试：
-  - `cargo test --lib` 通过（202 passed, 0 failed）
-  - 新增验收用例：
-    - `test_sv32_instruction_page_fault_enters_trap`
-    - `test_sv32_load_page_fault_enters_trap`
-- 当前边界：
-  - 暂未实现 TLB
-  - 暂未实现 A/D 位硬件更新语义与权限细则（SUM/MXR 等）
+- [X] 核心产出：Sv32 基线链路打通（`satp` + 页表遍历 + 取指/访存翻译入口）。
+- [X] 核心产出：页故障语义收敛到 trap 路径（`mcause/mtval/mepc` 写入正确）。
+- [X] 工程落位：`src/cpu/mmu.rs`、CSR 路径、单周期 CPU 地址翻译接线。
+- [X] 验收结论：`cargo test --lib` 通过（202 passed, 0 failed），页故障验收用例通过。
+- [ ] 当前边界：TLB 尚未实现。
+- [ ] 当前边界：A/D 位自动更新与 SUM/MXR 权限细则尚未实现。
 
 #### P3 同步校验（2026-04-09）
 
-- 新增能力：
-  - `src/cpu/tlb.rs` TLB 已接入并具备 ASID 隔离、按地址/ASID/全量刷新能力；
-  - MMU + Pipeline 翻译路径已接入 TLB 命中/未命中采样；
-  - PerfCollector/PerfReport/可视化快照与前端面板已暴露 `cache_hits/cache_misses/tlb_hits/tlb_misses`。
-- 验收测试：
-  - `cargo test --lib` 通过（386 passed, 0 failed）；
-  - TLB 单测通过（`cpu::tlb::*`）。
-- 现状边界：
-  - A/D 位硬件自动更新语义与更细粒度权限策略（SUM/MXR）仍在后续优化清单。
+- [X] 核心产出：TLB 已接入（ASID 隔离 + 按地址/ASID/全量刷新）。
+- [X] 核心产出：MMU/Pipeline 翻译路径接入 TLB 命中-未命中采样。
+- [X] 核心产出：性能与可视化链路暴露 `cache_hits/cache_misses/tlb_hits/tlb_misses`。
+- [X] 工程落位：`src/cpu/tlb.rs`、MMU/Pipeline、PerfCollector/PerfReport、可视化快照与前端面板。
+- [X] 验收结论：`cargo test --lib` 通过（386 passed, 0 failed），TLB 单测通过。
+- [ ] 当前边界：A/D 位自动更新与 SUM/MXR 细粒度权限仍在后续优化清单。
 
 ### P4: 多核支持 (可选)
 
@@ -432,129 +417,108 @@ Phase 7: CI/发布工程化（规划）
 - [ ] 核间中断 (IPI)
 - [ ] 共享内存
 
-### P5: NPU/LPU 协处理器 (MMIO 路径)（已完成）
+### P5: 协处理器能力（NPU/LPU + GPU/TPU + V2 拓扑）（已完成）
 
-- [X] NPU MMIO 外设骨架（`0x2000_0000`）
-- [X] LPU MMIO 外设骨架（`0x2000_1000`）
-- [X] 启动命令默认挂载到系统总线（CLI 运行/调试/可视化）
-- [X] 中断查询与确认接口（`has_interrupt` / `acknowledge_interrupt`）
-- [X] 单元测试覆盖基础算子和中断行为
-- [X] DESC_ADDR + 描述符批处理（任务队列）
-- [X] Bus 侧 DMA 桥接触发（notify -> RAM 访存执行）
-- [X] 可视化前端寄存器面板（NPU/LPU state）
-- [X] 自定义指令加速路径（CUSTOM-0，CPU -> NPU/LPU）
-- [X] 任务时间线（notify/done/error）
+#### P5 合并后能力总览（截至 2026-04-16）
+
+- [X] P5.0（NPU/LPU）主链路闭环：MMIO 外设、描述符批处理、Bus DMA 桥接、IRQ、可视化状态面板、`CUSTOM-0` 快路径与任务时间线。
+- [X] P5.2（GPU/TPU）模拟加速器完成：Kernel 抽象 + MMIO + 命令队列 + DMA 桥接 + 前端状态面板 + API 文档。
+- [X] P5.3（拓扑优化）收敛完成：协处理器地址空间切换为纯 V2 拓扑。
+- [X] 当前基址口径（纯 V2）：
+  - [X] NPU `0x2001_0000`
+  - [X] LPU `0x2001_1000`
+  - [X] GPU `0x2001_2000`
+  - [X] TPU `0x2001_3000`
+- [X] 最新同步校验：`cargo test --lib` 持续通过（413 passed, 0 failed）；关键拓扑回归用例已覆盖 pure V2 窗口与 Doorbell 提交/错误路径。
 
 #### P5 里程碑验收（时间线）
 
+> 说明：本时间线保留阶段快照；早期里程碑中的“当前边界”若已在后续版本关闭，会显式标记为“已关闭”。
+
 #### P5 当前里程碑验收（2026-03-31）
 
-- 新增文件：
-  - `src/peripheral/npu.rs`
-  - `src/peripheral/lpu.rs`
-- 验收测试：
-  - `cargo test --lib` 通过（208 passed, 0 failed）
-  - `cargo build` 通过
+- [X] 核心产出：NPU/LPU 外设骨架落地，P5 协处理器主线启动。
+- [X] 工程落位：`src/peripheral/npu.rs`、`src/peripheral/lpu.rs`。
+- [X] 验收结论：`cargo test --lib`（208 passed, 0 failed）与 `cargo build` 均通过。
 
 #### P5 当前里程碑验收（2026-04-02）
 
-- 新增能力：
-  - NPU/LPU 新增描述符寄存器：`DESC_ADDR/DESC_LEN/DESC_NOTIFY` 与任务统计寄存器。
-  - NPU/LPU 支持按描述符批处理执行（opcode + opA_addr + opB_addr + dst_addr）。
-  - `Bus::write_byte` 新增 NPU/LPU pending-notify 桥接：通知触发后由总线代执行 RAM 读写（DMA 风格）。
-  - PLIC pending 同步新增 NPU/LPU IRQ 源映射（保留 VirtIO/UART 兼容行为）。
-- 新增测试：
-  - `peripheral::npu::tests::test_npu_descriptor_dma_batch`
-  - `peripheral::lpu::tests::test_lpu_descriptor_dma_batch`
-  - `memory::bus::tests::test_bus_npu_descriptor_notify_bridge`
-  - `memory::bus::tests::test_bus_lpu_descriptor_notify_bridge`
-- 验收测试：
-  - `cargo test --lib` 通过（267 passed, 0 failed）
-- 当前边界：
-  - 前端尚未提供 NPU/LPU 寄存器面板与任务时间线；
-  - 自定义加速指令路径尚未接入。
+- [X] 核心产出：NPU/LPU 描述符批处理链路落地（寄存器、批执行、任务统计）。
+- [X] 核心产出：总线接入 pending-notify DMA 风格桥接，PLIC 补齐 NPU/LPU IRQ 源映射。
+- [X] 工程落位：`src/peripheral/{npu,lpu}.rs`、`src/memory/bus.rs`、PLIC 路径。
+- [X] 验收结论：`cargo test --lib` 通过（267 passed, 0 failed）。
 
 #### P5 当前里程碑验收（2026-04-02-R2）
 
-- 新增能力：
-  - 可视化后端新增命令：`npu state`、`lpu state`，返回结构化协处理器状态快照。
-  - 总线新增快照查询接口：`get_npu_snapshot()`、`get_lpu_snapshot()`。
-  - 前端新增 Coprocessor 页签与 `CoprocessorPanel`，可手动/批量刷新 NPU/LPU 关键寄存器与任务统计。
-- 新增测试：
-  - `visualize::server::tests::test_parse_npu_lpu_state_commands`
-- 验收测试：
-  - `cargo test --lib` 通过（268 passed, 0 failed）
-  - `frontend` 构建通过（`npm run build`）
-- 当前边界：
-  - “任务时间线”仍为后续增强项；
-  - 自定义加速指令路径尚未接入。
+- [X] 核心产出：后端支持 `npu state` / `lpu state`，前端新增 `CoprocessorPanel` 状态面板。
+- [X] 核心产出：总线补齐协处理器快照查询接口，打通“后端状态 → 前端展示”。
+- [X] 工程落位：`src/visualize/server`、`src/memory/bus.rs`、`frontend/src/components/CoprocessorPanel.tsx`。
+- [X] 验收结论：`cargo test --lib` 通过（268 passed, 0 failed），`frontend` 构建通过。
 
 #### P5 当前里程碑验收（2026-04-02-R3）
 
-- 新增能力：
-  - 新增 `CUSTOM-0 (0x0B)` 指令路径，编码采用 R-type 布局：`funct3=0` 路由 NPU、`funct3=1` 路由 LPU。
-  - `funct7[4:0]` 作为协处理器 opcode，`rs1/rs2` 作为输入操作数，执行结果回写 `rd`。
-  - CPU 执行路径在通用解码前接入 `execute_custom0()`，通过 MMIO 快速驱动 NPU/LPU 完成一次同步运算。
-- 新增测试：
-  - `instruction::execute::tests::test_custom0_npu_add_fast_path`
-  - `instruction::execute::tests::test_custom0_lpu_xor_fast_path`
-  - `instruction::execute::tests::test_custom0_invalid_opcode_rejected`
-- 验收测试：
-  - `cargo test --lib` 通过（271 passed, 0 failed）
-- 当前边界：
-  - “任务时间线”仍为后续增强项。
+- [X] 核心产出：`CUSTOM-0 (0x0B)` 快路径落地，CPU 可直接触发 NPU/LPU 同步运算并回写 `rd`。
+- [X] 核心产出：R-type 编码规范化（`funct3` 路由引擎，`funct7[4:0]` 作为协处理器 opcode）。
+- [X] 工程落位：`src/instruction/execute.rs`（`execute_custom0()`）及 CPU 执行路径接线。
+- [X] 验收结论：`cargo test --lib` 通过（271 passed, 0 failed）。
 
 #### P5 当前里程碑验收（2026-04-02-R4）
 
-- 新增能力：
-  - 前端 `CoprocessorPanel` 新增任务时间线视图，按时间记录 `notify/done/error/pending` 变化。
-  - 协处理器页签新增自动轮询刷新（1s），持续沉淀时间线点位。
-  - 时间线采用增量去重与最近窗口保留（最近 24 条），便于观察任务趋势。
-- 变更文件：
-  - `frontend/src/components/CoprocessorPanel.tsx`
-  - `frontend/src/App.tsx`
-  - `frontend/src/App.css`
-- 验收测试：
-  - `cargo test --lib` 通过（271 passed, 0 failed）
-  - `frontend` 构建通过（`npm run build`）
-- 当前边界：
-  - Phase 5 主链路能力已闭环，后续以性能优化与可观测性增强为主。
+- [X] 核心产出：协处理器任务时间线面板落地（`notify/done/error/pending` 事件可视）。
+- [X] 核心产出：新增自动轮询 + 增量去重 + 最近窗口保留，便于演示与回归观察。
+- [X] 工程落位：`frontend/src/components/CoprocessorPanel.tsx`、`frontend/src/App.tsx`、`frontend/src/App.css`。
+- [X] 验收结论：`cargo test --lib` 与 `frontend` 构建均通过。
+- [X] 阶段结论：P5 主链路能力闭环完成，后续聚焦性能与可观测性增强。
 
-### P5.2: GPU/TPU 模拟加速器 ✅ 完成
+#### P5 分项状态（已完成 / 规划中）
 
-> 新增时间：2026-04-08 ~ 2026-04-09
+##### P5.2：GPU/TPU 模拟加速器（已完成）
 
-- [X] Accelerator trait 抽象（KernelType/Precision/TensorDescriptor）
-- [X] GPU MMIO 外设（`0x2001_0000`，4KB，PLIC #13）
-- [X] TPU MMIO 外设（`0x2002_0000`，4KB，PLIC #14）
-- [X] GPU 基础内核：MatMul (FP32/INT8)、VectorAdd/Mul/Dot、Relu/Sigmoid/Softmax
-- [X] TPU 量化内核：INT8 矩阵乘、量化/反量化/重量化
-- [X] GPU Conv2d（直接卷积，多通道/padding/stride）
-- [X] GPU Pool2d（MaxPool、AvgPool）
-- [X] GPU 额外激活：Tanh、LeakyRelu、Relu6、VectorScale
-- [X] 命令队列模式（批量提交）
-- [X] pending_start DMA 桥接（Bus 检测 → execute_with_memory）
-- [X] 可视化后端 gpu state / tpu state 命令
-- [X] 前端 CoprocessorPanel GPU/TPU 状态面板
-- [X] 集成测试：CNN 前向传播、TPU INT8 端到端、GPU+TPU 流水线
-- [X] 软件 API 文档：`docs/guides/GPU_TPU_API.md`
+> 时间范围：2026-04-08 ~ 2026-04-09
 
-#### P5.2 里程碑验收（2026-04-09）
+- [X] 能力收敛：GPU/TPU MMIO、命令队列、DMA 桥接、状态面板与 API 文档已闭环。
+- [X] 内核覆盖：GPU（线代/激活/卷积/池化），TPU（INT8 量化矩阵乘）。
+- [X] 证据口径：详见下方 `P5.2 里程碑验收（2026-04-09）`。
 
-- 新增文件：
-  - `src/traits/accelerator.rs`
-  - `src/peripheral/gpu.rs`
-  - `src/peripheral/tpu.rs`
-  - `tests/gpu_tpu_integration.rs`
-  - `docs/guides/GPU_TPU_API.md`
-- 验收测试：
-  - `cargo test --lib` 通过（304 passed, 0 failed）
-  - `cargo test --test gpu_tpu_integration` 通过（3 passed, 0 failed）
-  - `frontend` 构建通过（`npm run build`）
-- GPU 支持内核：MatMul、MatAdd、VectorAdd、VectorMul、VectorDot、VectorScale、Relu、Relu6、LeakyRelu、Sigmoid、Tanh、Softmax、Conv2d、Pool2dMax、Pool2dAvg
-- TPU 支持内核：INT8 量化矩阵乘（per-tensor 量化参数）
+##### P5.2 里程碑验收（2026-04-09）
 
-### P5.1: Hybrid Offload（规划中）
+- [X] 核心产出：GPU/TPU 模拟加速器主链路完成（trait 抽象 + MMIO 外设 + 命令队列 + DMA 桥接）。
+- [X] 核心产出：推理内核族完成（GPU：线代/激活/卷积/池化；TPU：INT8 量化矩阵乘）。
+- [X] 工程落位：`src/traits/accelerator.rs`、`src/peripheral/{gpu,tpu}.rs`、`tests/gpu_tpu_integration.rs`、`docs/guides/GPU_TPU_API.md`。
+- [X] 验收结论：`cargo test --lib`（304 passed）/ `cargo test --test gpu_tpu_integration`（3 passed）/ `frontend` 构建全部通过。
+- [X] 阶段结论：P5.2 进入稳定可复用状态，可支撑课程演示与后续异构协同优化。
+
+##### P5.3：异构协处理器拓扑优化（V2，已完成）
+
+> 时间范围：2026-04-16
+
+- [X] LPU 清理 legacy 逻辑 opcode（`0~5`）执行路径，仅保留语言 opcode（`0x10~0x14`）
+- [X] 形成控制面/数据面/事件面三平面架构方案
+- [X] 形成 V2 地址映射草案（`ACC_CTRL_ROOT + ACC_DOORBELL + NPU/LPU/GPU/TPU CTRL`）
+- [X] 落地双地址窗口（V1 alias + V2 primary，`ACC_CTRL_ROOT.MODE` 控制 V2 overlay）
+- [X] 完成 Doorbell 汇聚中断与 descriptor ring 统一 ABI（统一提交寄存器 + root 汇总计数）
+- [X] 收敛并移除 V1 alias，切换到 V2 拓扑
+
+##### P5.3 里程碑验收（2026-04-16-R2）
+
+- [X] 核心产出：统一控制面 `ACC_CTRL_ROOT` + 统一提交面 `ACC_DOORBELL` 落地，形成 V2 拓扑迁移路径。
+- [X] 核心产出：Doorbell 统一 ABI（engine/desc_addr/desc_len/notify）打通四类协处理器。
+- [X] 工程落位：`src/memory/bus.rs` 统一窗口、提交桥接与汇总计数逻辑。
+- [X] 验收结论：阶段验收记录 `cargo test --lib` 全通过（413 passed, 0 failed）。
+- [X] 阶段结论：R2 进入“双窗口迁移期”，为 R3 纯 V2 收敛做铺垫。
+- [X] 后续收敛状态：该迁移期边界已在 R3 关闭，当前为纯 V2 稳定态。
+
+##### P5.3 里程碑验收（2026-04-16-R3）
+
+- [X] 核心产出：协处理器地址空间完成纯 V2 收敛（NPU/LPU/GPU/TPU 基址统一为 `0x2001_x000`）。
+- [X] 核心产出：V1 alias/overlay 迁移逻辑移除，`ACC_CTRL_ROOT.MODE` 固定 V2 启用态。
+- [X] 工程落位：`src/memory/bus.rs` 与各协处理器基址常量（`src/peripheral/{npu,lpu,gpu,tpu}.rs`）。
+- [X] 验收结论：`cargo test --lib` 与 `cargo test` 均通过；纯 V2 关键回归测试通过。
+- [X] 阶段结论：P5.3 收敛完成，拓扑进入“纯 V2 稳定态”。
+
+#### 规划中项
+
+##### P5.1：Hybrid Offload（规划中）
 
 > 来源：`docs/HYBRID_OFFLOAD.md`（草案，2026-04-03 并入路线图）
 
@@ -564,13 +528,13 @@ Phase 7: CI/发布工程化（规划）
 - [ ] 完善错误上报与回退语义（`tasks_error`/`REG_STATUS`/IRQ + CPU fallback）
 - [ ] 建立批量阈值基准（建议从 `>128` 元素起测）并形成调优策略
 
-#### P5.1 最小可行实施分期
+##### P5.1 最小可行实施分期
 
 - **Phase A（文档/ABI）**：先引入 `ASYNC_FLAG` 定义，不改变默认同步执行语义。
 - **Phase B（运行时）**：当设置 `ASYNC_FLAG` 时，descriptor 入后台队列并立即返回；worker 完成后更新 `REG_TASKS_DONE/REG_STATUS` 并置 IRQ pending。
 - **Phase C（性能）**：按批量大小做基准，确定 offload 阈值与小批次合并策略。
 
-#### P5.1 兼容性约束
+##### P5.1 兼容性约束
 
 - 默认路径保持现有同步行为，不破坏已落地测试与演示链路。
 - 新能力通过标志位渐进启用，支持快速回滚到同步路径。
@@ -589,44 +553,25 @@ Phase 7: CI/发布工程化（规划）
 
 #### P6 当前里程碑验收（2026-04-01）
 
-- 新增能力：
-  - WebSocket 命令：`framebuffer <addr> <width> <height> [format]`
-  - Linux 预设命令：`fb linux` / `framebuffer linux`（默认 `0x80E00000`, `320x240`, `rgb565`）
-  - 前端可视化：Framebuffer Tab，支持手动刷新与自动刷新
-  - 内置 RV32I 帧缓冲写入程序（`visualize --linux-fb-demo --warmup <N>`）
-  - 一键演示脚本内置 WebSocket 探针验收（确认 `fb linux` 返回非零像素）
-- 验收结论：
-  - 已完成“程序写帧缓冲 → 后端读取转换 → 前端渲染”的端到端闭环
-  - 图案命令模式（`fb_demo`）保留用于小游戏画面演示
+- [X] 核心产出：帧缓冲可视化链路完成（命令入口 + 后端转换 + 前端渲染）。
+- [X] 核心产出：Linux 预设命令与 `fb_demo` 演示模式并存，兼顾验收与展示。
+- [X] 工程落位：`visualize` WebSocket 命令、Framebuffer 面板、演示脚本探针。
+- [X] 验收结论：已验证“程序写帧缓冲 → 后端读取转换 → 前端渲染”端到端闭环。
 
 #### P6 当前里程碑验收（2026-04-02）
 
-- 新增能力：
-  - 新增 Phase6 编排脚本：`scripts/run_phase6_showcase_pipeline.ps1`。
-  - 支持一键串联阶段：`xv6 shell smoke`、`Linux Phase3 acceptance`（可选启用）、`Phase4 host/guest acceptance`、`NPU/LPU 回归`、`frontend build`。
-  - 提供阶段化开关与统一日志汇总（`target/phase6-demo-logs`），便于课程演示与回归复现。
-- 验收测试：
-  - 轻量烟测通过：`-SkipBuild -SkipXv6 -SkipPhase4 -SkipFrontendBuild`（协处理器回归阶段 PASS）。
-- 当前边界：
-  - 默认仓库不内置完整 Linux 工件，复现实测前需先准备工件；在具备工件并启用 `-EnableLinux` 的条件下，全链路 required stages 已验证 PASS（见上文“Phase 6 全链路终验”）。
+- [X] 核心产出：Phase6 编排脚本落地，实现多阶段一键串联与统一日志汇总。
+- [X] 核心产出：支持按开关裁剪阶段，形成“轻量烟测 / 全链路演示”两种运行档位。
+- [X] 工程落位：`scripts/run_phase6_showcase_pipeline.ps1` 与 `target/phase6-demo-logs`。
+- [X] 验收结论：轻量烟测路径通过，协处理器回归阶段 PASS。
+- [ ] 当前边界：默认仓库不内置完整 Linux 工件，全链路演示依赖预置工件。
 
 #### Phase 6 全链路终验（2026-04-02）
 
-- 新增能力：
-  - 新增统一编排脚本：`scripts/run_phase6_showcase_pipeline.ps1`。
-  - 一条命令串联并验收：
-    - `build-release`
-    - `xv6-shell-matrix`
-    - `phase4-host-demo`
-    - `phase4-guest-demo`
-    - `linux-phase3-acceptance`
-    - `coprocessor-fastpath-tests`
-    - `coprocessor-dma-bridge-tests`
-    - `frontend-build`
-- 验收命令：
-  - `powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.ps1 -EnableLinux`
-- 验收结果：
-  - 全部 required stage PASS。
+- [X] 核心产出：构建、xv6、Phase4、Linux Phase3、协处理器回归与前端构建已纳入统一编排验收。
+- [X] 核心产出：形成可复现的一键演示/回归入口，覆盖课程展示主链路。
+- [X] 工程落位：`scripts/run_phase6_showcase_pipeline.ps1` 串联 `run_linux_phase3_acceptance.ps1`、`run_phase4_input_framebuffer_acceptance.ps1` 等脚本。
+- [X] 验收结论：`-EnableLinux` 全链路 required stages PASS。
 
 ---
 

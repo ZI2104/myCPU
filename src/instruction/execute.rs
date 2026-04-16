@@ -8,7 +8,10 @@ use super::opcode::{funct3, funct7, opcode};
 use crate::cpu::csr::{CsrOp, ExceptionCause};
 use crate::cpu::Cpu;
 use crate::error::{Result, SimError};
-use crate::peripheral::{LPU_BASE, NPU_BASE};
+use crate::peripheral::{
+    LPU_BASE, LPU_OPCODE_BYTE_TOKENIZE, LPU_OPCODE_EMBEDDING_BAG, LPU_OPCODE_GREEDY_DECODE,
+    LPU_OPCODE_TOPK_SAMPLE_DECODE, LPU_OPCODE_TOPP_SAMPLE_DECODE, NPU_BASE,
+};
 use crate::types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
 
 impl Cpu {
@@ -49,7 +52,12 @@ impl Cpu {
                 NPU_BASE
             }
             1 => {
-                if cop_op > 5 {
+                let is_language = cop_op == LPU_OPCODE_BYTE_TOKENIZE
+                    || cop_op == LPU_OPCODE_EMBEDDING_BAG
+                    || cop_op == LPU_OPCODE_GREEDY_DECODE
+                    || cop_op == LPU_OPCODE_TOPK_SAMPLE_DECODE
+                    || cop_op == LPU_OPCODE_TOPP_SAMPLE_DECODE;
+                if !is_language {
                     return Err(SimError::UnsupportedInstruction {
                         pc: self.pc(),
                         message: format!("Invalid LPU custom opcode: {}", cop_op),
@@ -1415,18 +1423,108 @@ mod tests {
     }
 
     #[test]
-    fn test_custom0_lpu_xor_fast_path() {
+    fn test_custom0_lpu_legacy_opcode_rejected() {
         let mut cpu = create_test_cpu_with_coprocessors();
         cpu.registers_mut().write(RegIdx::new(1), Word::new(0b1010));
         cpu.registers_mut().write(RegIdx::new(2), Word::new(0b1100));
 
-        // custom0: funct3=001 (LPU), funct7=2 (Xor), rd=x3, rs1=x1, rs2=x2, opcode=0x0B
+        // custom0: funct3=001 (LPU), funct7=2 is a removed legacy opcode
         let instr = (2u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
+
+        let err = cpu.execute_custom0(instr).unwrap_err();
+        assert!(matches!(err, SimError::UnsupportedInstruction { .. }));
+    }
+
+    #[test]
+    fn test_custom0_lpu_byte_tokenize_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new('A' as u32));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(0));
+
+        // custom0: funct3=001 (LPU), funct7=0x10 (ByteTokenize)
+        let instr = (0x10u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
 
         cpu.execute_custom0(instr).unwrap();
 
-        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 0b0110);
-        assert_eq!(cpu.read_word(Addr::new(LPU_BASE + 0x18)).unwrap().raw(), 1);
+        // alphabetic => token class 1
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 1);
+    }
+
+    #[test]
+    fn test_custom0_lpu_embedding_bag_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(2));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(0));
+
+        // custom0: funct3=001 (LPU), funct7=0x11 (EmbeddingBag)
+        let instr =
+            (0x11u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
+
+        cpu.execute_custom0(instr).unwrap();
+
+        // token id 2 => embedding value 6
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 6);
+    }
+
+    #[test]
+    fn test_custom0_lpu_greedy_decode_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(7));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(9));
+
+        // custom0: funct3=001 (LPU), funct7=0x12 (GreedyDecode)
+        let instr =
+            (0x12u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
+
+        cpu.execute_custom0(instr).unwrap();
+
+        // score1 > score0 => token id 1
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 1);
+    }
+
+    #[test]
+    fn test_custom0_lpu_topk_sample_decode_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        // Configure decode params on LPU MMIO.
+        cpu.write_word(Addr::new(LPU_BASE + 0x3C), Word::new(2)).unwrap(); // top_k
+        cpu.write_word(Addr::new(LPU_BASE + 0x40), Word::new(10_000))
+            .unwrap(); // temperature milli
+        cpu.write_word(Addr::new(LPU_BASE + 0x44), Word::new(5)).unwrap(); // seed
+
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(100));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(90));
+
+        // custom0: funct3=001 (LPU), funct7=0x13 (TopKSampleDecode)
+        let instr =
+            (0x13u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
+
+        cpu.execute_custom0(instr).unwrap();
+
+        // With seed=5 and weights [2,1], sampling selects token id 1
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 1);
+    }
+
+    #[test]
+    fn test_custom0_lpu_topp_sample_decode_fast_path() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        // Configure decode params on LPU MMIO.
+        cpu.write_word(Addr::new(LPU_BASE + 0x4C), Word::new(1000))
+            .unwrap(); // top_p milli
+        cpu.write_word(Addr::new(LPU_BASE + 0x40), Word::new(10_000))
+            .unwrap(); // temperature milli
+        cpu.write_word(Addr::new(LPU_BASE + 0x44), Word::new(5)).unwrap(); // seed
+
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(100));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(90));
+
+        // custom0: funct3=001 (LPU), funct7=0x14 (TopPSampleDecode)
+        let instr =
+            (0x14u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
+
+        cpu.execute_custom0(instr).unwrap();
+
+        // With seed=5 and weights [2,1], sampling selects token id 1
+        assert_eq!(cpu.registers().read(RegIdx::new(3)).raw(), 1);
     }
 
     #[test]
@@ -1437,6 +1535,19 @@ mod tests {
 
         // funct3=000 (NPU), funct7=31 -> invalid for current NPU op set
         let instr = (31u32 << 25) | (2u32 << 20) | (1u32 << 15) | (0u32 << 12) | (3u32 << 7) | 0x0B;
+
+        let err = cpu.execute_custom0(instr).unwrap_err();
+        assert!(matches!(err, SimError::UnsupportedInstruction { .. }));
+    }
+
+    #[test]
+    fn test_custom0_invalid_lpu_opcode_rejected() {
+        let mut cpu = create_test_cpu_with_coprocessors();
+        cpu.registers_mut().write(RegIdx::new(1), Word::new(1));
+        cpu.registers_mut().write(RegIdx::new(2), Word::new(2));
+
+        // funct3=001 (LPU), funct7=31 -> invalid for current LPU op set
+        let instr = (31u32 << 25) | (2u32 << 20) | (1u32 << 15) | (1u32 << 12) | (3u32 << 7) | 0x0B;
 
         let err = cpu.execute_custom0(instr).unwrap_err();
         assert!(matches!(err, SimError::UnsupportedInstruction { .. }));
