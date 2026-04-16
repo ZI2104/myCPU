@@ -1,5 +1,14 @@
 // CPU state types for visualization
 
+export type ForwardSourceSnapshot = 'none' | 'ex_mem' | 'mem_wb';
+
+export interface ForwardingInfo {
+  rs1: ForwardSourceSnapshot;
+  rs2: ForwardSourceSnapshot;
+}
+
+export type StallType = 'load_use' | 'branch_data';
+
 export interface CpuSnapshot {
   registers: number[];
   pc: number;
@@ -22,6 +31,8 @@ export interface PipelineSnapshot {
   wb_stage: WbStageInfo | null;
   stall: boolean;
   flush: boolean;
+  stall_type: StallType | null;
+  control_hazard: boolean;
 }
 
 export interface PreIfStageInfo {
@@ -46,6 +57,7 @@ export interface IdStageInfo {
   branch_taken: boolean;
   branch_target: number;
   is_branch: boolean;
+  forwarding?: ForwardingInfo | null;
 }
 
 export interface ExStageInfo {
@@ -55,6 +67,7 @@ export interface ExStageInfo {
   branch_taken: boolean;
   branch_target: number;
   is_branch: boolean;
+  forwarding?: ForwardingInfo | null;
 }
 
 export interface MemStageInfo {

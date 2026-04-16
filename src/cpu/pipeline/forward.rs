@@ -130,6 +130,32 @@ impl ForwardUnit {
         (fwd_rs1, fwd_rs2)
     }
 
+    /// Determine forwarding source for a single operand in the ID stage.
+    ///
+    /// Returns the `ForwardSource` (not the value) for visualization.
+    /// Priority: ex_mem (non-load) > mem_wb > register file.
+    pub fn forward_source_for_decode(
+        reg: RegIdx,
+        ex_mem: &ExMemRegister,
+        mem_wb: &MemWbRegister,
+    ) -> ForwardSource {
+        if reg.is_zero() {
+            return ForwardSource::None;
+        }
+        // Priority 1: ex_mem (non-load only)
+        if ex_mem.ctrl.reg_write && !ex_mem.rd.is_zero() && ex_mem.rd == reg {
+            if !ex_mem.ctrl.mem_read {
+                return ForwardSource::ExMem;
+            }
+            // ex_mem is a load — data not available for forwarding
+        }
+        // Priority 2: mem_wb
+        if mem_wb.ctrl.reg_write && !mem_wb.rd.is_zero() && mem_wb.rd == reg {
+            return ForwardSource::MemWb;
+        }
+        ForwardSource::None
+    }
+
     /// Forward a single operand for the ID stage.
     ///
     /// Priority: ex_mem (non-load) > mem_wb > register file.

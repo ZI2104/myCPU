@@ -5,6 +5,7 @@
 //! fetch design and the EX/MEM data path.
 
 use crate::cpu::pipeline::control::{ExControlSignals, MemControlSignals, WbControlSignals};
+use crate::cpu::pipeline::forward::ForwardSource;
 use crate::cpu::pipeline::predictor::PredictionResult;
 use crate::types::{Addr, RegIdx, Word};
 
@@ -158,6 +159,11 @@ pub struct IdExRegister {
     /// Used to detect mispredictions when branch resolves in ID.
     pub prediction: Option<PredictionResult>,
 
+    /// Forwarding source for rs1 during ID-stage branch resolution (visualization).
+    pub id_forward_rs1: ForwardSource,
+    /// Forwarding source for rs2 during ID-stage branch resolution (visualization).
+    pub id_forward_rs2: ForwardSource,
+
     /// Whether this register contains valid data.
     pub valid: bool,
 }
@@ -178,6 +184,8 @@ impl Default for IdExRegister {
             branch_taken: false,
             branch_target: Addr::new(0),
             prediction: None,
+            id_forward_rs1: ForwardSource::None,
+            id_forward_rs2: ForwardSource::None,
             valid: false,
         }
     }
@@ -227,6 +235,11 @@ pub struct ExMemRegister {
     /// Branch/jump target address.
     pub branch_target: Addr,
 
+    /// Forwarding source applied to rs1 during EX stage (visualization).
+    pub forward_rs1: ForwardSource,
+    /// Forwarding source applied to rs2 during EX stage (visualization).
+    pub forward_rs2: ForwardSource,
+
     /// Whether this register contains valid data.
     pub valid: bool,
 }
@@ -242,6 +255,8 @@ impl Default for ExMemRegister {
             ctrl: MemControlSignals::default(),
             branch_taken: false,
             branch_target: Addr::new(0),
+            forward_rs1: ForwardSource::None,
+            forward_rs2: ForwardSource::None,
             valid: false,
         }
     }

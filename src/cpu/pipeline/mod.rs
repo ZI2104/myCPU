@@ -30,8 +30,9 @@ pub use registers::{
 
 // Re-export for visualization
 use crate::visualize::snapshot::{
-    disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, IdStageInfo, IfStageInfo,
-    MemStageInfo, PerfSnapshot, PipelineSnapshot, PreIfStageInfo, PredictorSnapshot, WbStageInfo,
+    disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, ForwardSourceSnapshot,
+    ForwardingInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot,
+    PreIfStageInfo, PredictorSnapshot, StallType, WbStageInfo,
 };
 
 use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
@@ -101,6 +102,10 @@ pub struct PipelineCpu {
     instructions_executed: u64,
     cycles: u64,
     halted: bool,
+
+    // Visualization: whether a control hazard (misprediction) redirect
+    // occurred in the last clock() cycle.
+    control_hazard: bool,
 }
 
 impl PipelineCpu {
@@ -139,6 +144,7 @@ impl PipelineCpu {
             instructions_executed: 0,
             cycles: 0,
             halted: false,
+            control_hazard: false,
         }
     }
 
@@ -422,22 +428,79 @@ impl PipelineCpu {
                     None
                 },
                 id_stage: if self.id_ex.valid {
+                    // ID-stage forwarding labels reflect the STAGE THAT PRODUCED
+                    // the data, not the display column after register shift:
+                    //   ExMem → data from EX/MEM register (EX stage output)
+                    //   MemWb → data from MEM/WB register (MEM stage output)
+                    let fwd_rs1 = match self.id_ex.id_forward_rs1 {
+                        ForwardSource::ExMem => ForwardSourceSnapshot::ExMem,
+                        ForwardSource::MemWb => ForwardSourceSnapshot::MemWb,
+                        ForwardSource::None => ForwardSourceSnapshot::None,
+                    };
+                    let fwd_rs2 = match self.id_ex.id_forward_rs2 {
+                        ForwardSource::ExMem => ForwardSourceSnapshot::ExMem,
+                        ForwardSource::MemWb => ForwardSourceSnapshot::MemWb,
+                        ForwardSource::None => ForwardSourceSnapshot::None,
+                    };
+                    let id_fwd = if matches!(fwd_rs1, ForwardSourceSnapshot::None)
+                        && matches!(fwd_rs2, ForwardSourceSnapshot::None)
+                    {
+                        None
+                    } else {
+                        Some(ForwardingInfo {
+                            rs1: fwd_rs1,
+                            rs2: fwd_rs2,
+                        })
+                    };
+                    // Compute the actual operand values AFTER forwarding.
+                    // stored ExMem  → source was ex_mem_start → now in self.mem_wb
+                    // stored MemWb  → source was mem_wb_start → now in self.wb_input
+                    let rs1_val = match self.id_ex.id_forward_rs1 {
+                        ForwardSource::ExMem => self.mem_wb.write_data.raw(),
+                        ForwardSource::MemWb => self.wb_input.write_data.raw(),
+                        ForwardSource::None => self.id_ex.rs1_val.raw(),
+                    };
+                    let rs2_val = match self.id_ex.id_forward_rs2 {
+                        ForwardSource::ExMem => self.mem_wb.write_data.raw(),
+                        ForwardSource::MemWb => self.wb_input.write_data.raw(),
+                        ForwardSource::None => self.id_ex.rs2_val.raw(),
+                    };
+                    // During a branch-data stall, the ID stage computed
+                    // branch_taken/target using stale register-file values.
+                    // Suppress those so the timeline doesn't show a misleading
+                    // branch decision that will be recomputed next cycle.
+                    let (branch_taken, branch_target, is_branch) =
+                        if self.hazard_unit.stall
+                            && !self.hazard_unit.flush_id_ex
+                        {
+                            (false, 0u32, self.id_ex.ctrl.branch || self.id_ex.ctrl.jump)
+                        } else {
+                            (
+                                self.id_ex.branch_taken,
+                                self.id_ex.branch_target.raw(),
+                                self.id_ex.ctrl.branch || self.id_ex.ctrl.jump,
+                            )
+                        };
                     Some(IdStageInfo {
                         pc: self.id_ex.pc.raw(),
                         rs1: self.id_ex.rs1.raw(),
                         rs2: self.id_ex.rs2.raw(),
                         rd: self.id_ex.rd.raw(),
-                        rs1_val: self.id_ex.rs1_val.raw(),
-                        rs2_val: self.id_ex.rs2_val.raw(),
+                        rs1_val,
+                        rs2_val,
                         imm: self.id_ex.imm,
-                        branch_taken: self.id_ex.branch_taken,
-                        branch_target: self.id_ex.branch_target.raw(),
-                        is_branch: self.id_ex.ctrl.branch || self.id_ex.ctrl.jump,
+                        branch_taken,
+                        branch_target,
+                        is_branch,
+                        forwarding: id_fwd,
                     })
                 } else {
                     None
                 },
                 ex_stage: if self.ex_mem.valid {
+                    // EX-stage forwarding badge is suppressed: branches are
+                    // resolved in ID, so the stored forward_rs1/rs2 values are
+                    // just historical artefacts carried from the ID stage.
                     Some(ExStageInfo {
                         pc: self.ex_mem.pc.raw(),
                         alu_result: self.ex_mem.alu_result.raw(),
@@ -445,6 +508,7 @@ impl PipelineCpu {
                         branch_taken: self.ex_mem.branch_taken,
                         branch_target: self.ex_mem.branch_target.raw(),
                         is_branch: self.ex_mem.branch_taken,
+                        forwarding: None,
                     })
                 } else {
                     None
@@ -472,6 +536,16 @@ impl PipelineCpu {
                 },
                 stall: self.hazard_unit.stall,
                 flush: self.hazard_unit.flush_id_ex,
+                stall_type: if self.hazard_unit.stall {
+                    if self.hazard_unit.flush_id_ex {
+                        Some(StallType::LoadUse)
+                    } else {
+                        Some(StallType::BranchData)
+                    }
+                } else {
+                    None
+                },
+                control_hazard: self.control_hazard,
             },
             perf: PerfSnapshot {
                 cycles: perf.cycles,
@@ -905,6 +979,7 @@ impl PipelineCpu {
 
         // Control hazard: flush wrong-path IF/ID only on misprediction.
         let branch_redirect = control_mispredict;
+        self.control_hazard = control_mispredict && !self.hazard_unit.stall;
 
         // ID/EX is always updated (flush_id_ex controls if it becomes a bubble)
         self.id_ex = new_id_ex;

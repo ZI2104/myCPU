@@ -318,13 +318,14 @@ body {
   --timeline-header-height: 36px;
   --timeline-cell-height: 64px;
   --timeline-column-width: 120px;
+  --stall-legend-height: 28px;
 }
 
 /* 左侧阶段标签列 */
 .timeline-stage-labels {
   /* Use a grid so rows align exactly with timeline-column rows */
   display: grid;
-  grid-template-rows: var(--timeline-header-height) repeat(5, var(--timeline-cell-height));
+  grid-template-rows: var(--timeline-header-height) repeat(6, var(--timeline-cell-height)) var(--stall-legend-height);
   gap: var(--timeline-gap);
   flex-shrink: 0;
   width: 60px;
@@ -368,7 +369,7 @@ body {
 .timeline-column {
   /* Use a grid to match rows exactly to the labels column */
   display: grid;
-  grid-template-rows: var(--timeline-header-height) repeat(5, var(--timeline-cell-height));
+  grid-template-rows: var(--timeline-header-height) repeat(6, var(--timeline-cell-height)) var(--stall-legend-height);
   gap: var(--timeline-gap);
   /* Flexible columns: expand to fill available space when few columns, but keep a min width so many columns produce a scrollbar */
   flex: 1 1 var(--timeline-column-width);
@@ -409,11 +410,8 @@ body {
   color: #111827;
 }
 
-.timeline-cell.highlight {
-  background: #ff9442;
-  color: #111827;
-  box-shadow: none;
-}
+/* highlight class removed — branch-taken info is now shown via detail text
+   and control hazard stripe/legend visualization */
 
 .cell-pc {
   font-weight: bold;
@@ -502,9 +500,112 @@ body {
   color: #e65100;
 }
 
+.status.stall.branch-data {
+  background: #fce4ec;
+  color: #c2185b;
+}
+
 .status.flush {
   background: #ffe0e0;
   color: #c00;
+}
+
+.status.control-hazard {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+/* === Stall cell stripe overlays === */
+
+.timeline-cell.stall-load-use {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 152, 0, 0.12),
+    rgba(255, 152, 0, 0.12) 4px,
+    rgba(255, 152, 0, 0.04) 4px,
+    rgba(255, 152, 0, 0.04) 8px
+  );
+}
+
+.timeline-cell.stall-branch-data {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(233, 30, 99, 0.12),
+    rgba(233, 30, 99, 0.12) 4px,
+    rgba(233, 30, 99, 0.04) 4px,
+    rgba(233, 30, 99, 0.04) 8px
+  );
+}
+
+/* Control hazard (misprediction) cell stripe overlay - orange */
+.timeline-cell.stall-control-hazard {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 152, 0, 0.18),
+    rgba(255, 152, 0, 0.18) 4px,
+    rgba(255, 152, 0, 0.06) 4px,
+    rgba(255, 152, 0, 0.06) 8px
+  );
+}
+
+/* === Stall legend row === */
+
+.stall-label-col {
+  height: var(--stall-legend-height) !important;
+  font-size: 11px !important;
+  color: #6b7280;
+}
+
+.timeline-stall-legend {
+  height: var(--stall-legend-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stall-label {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.stall-label.load_use {
+  color: #FF9800;
+  background: rgba(255, 152, 0, 0.1);
+}
+
+.stall-label.branch_data {
+  color: #E91E63;
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.stall-label.control-hazard {
+  color: #E65100;
+  background: rgba(255, 152, 0, 0.12);
+}
+
+/* === Forwarding badges === */
+
+.cell-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.forward-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(76, 175, 80, 0.15);
+  color: #2e7d32;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  white-space: nowrap;
 }
 
 /* Register Panel - 双列紧凑布局 */

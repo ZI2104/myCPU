@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { ExStageInfo, IdStageInfo, IfStageInfo, MemStageInfo, PipelineSnapshot, PreIfStageInfo, WbStageInfo } from '../types/snapshot';
+import type { ExStageInfo, ForwardSourceSnapshot, ForwardingInfo, IdStageInfo, IfStageInfo, MemStageInfo, PipelineSnapshot, PreIfStageInfo, StallType, WbStageInfo } from '../types/snapshot';
 import { formatShortHex } from '../utils/format';
 
 interface PipelineVisualizerProps {
@@ -44,6 +44,27 @@ const getInstructionColorByPc = (pcHex: string): string => {
   return INSTRUCTION_COLORS[idx];
 };
 
+// Format forwarding badge text.
+const formatForwardBadge = (reg: string, source: ForwardSourceSnapshot): string | null => {
+  if (source === 'none') return null;
+  // Label reflects the pipeline stage that PRODUCED the data:
+  //   ex_mem → EX stage output (1-cycle-old result)
+  //   mem_wb → MEM stage output (2-cycle-old result)
+  const label = source === 'ex_mem' ? 'EX' : 'MEM';
+  return `${reg}←${label}`;
+};
+
+// Extract forwarding badges from a ForwardingInfo object.
+const getForwardingBadges = (fwd: ForwardingInfo | null | undefined): string[] => {
+  if (!fwd) return [];
+  const badges: string[] = [];
+  const b1 = formatForwardBadge('rs1', fwd.rs1);
+  const b2 = formatForwardBadge('rs2', fwd.rs2);
+  if (b1) badges.push(b1);
+  if (b2) badges.push(b2);
+  return badges;
+};
+
 // 获取各阶段的详情信息
 const getPreIfDetail = (stage: PreIfStageInfo | null): { pc: string; detail: string; highlight: boolean } => {
   if (!stage) return { pc: '', detail: '', highlight: false };
@@ -67,16 +88,33 @@ const getIfDetail = (stage: IfStageInfo | null): { pc: string; detail: string } 
   };
 };
 
-const getIdDetail = (stage: IdStageInfo | null): { pc: string; detail: string; highlight: boolean } => {
-  if (!stage) return { pc: '', detail: '', highlight: false };
+const getIdDetail = (stage: IdStageInfo | null): { pc: string; detail: string; highlight: boolean; badges: string[] } => {
+  if (!stage) return { pc: '', detail: '', highlight: false, badges: [] };
+
+  const badges = getForwardingBadges(stage.forwarding);
 
   if (stage.is_branch) {
+    // Show branch target (or "not taken") and, when forwarding occurred,
+    // the actual forwarded operand value so the user can verify it.
+    const fwd = stage.forwarding;
+    const fwdParts: string[] = [];
+    if (fwd && fwd.rs1 !== 'none' && stage.rs1 !== 0) {
+      fwdParts.push(`x${stage.rs1}=${formatShortHex(stage.rs1_val)}`);
+    }
+    if (fwd && fwd.rs2 !== 'none' && stage.rs2 !== 0) {
+      fwdParts.push(`x${stage.rs2}=${formatShortHex(stage.rs2_val)}`);
+    }
+    const base = stage.branch_taken
+      ? `-> ${formatShortHex(stage.branch_target)}`
+      : 'branch: not taken';
+    const detail = fwdParts.length > 0
+      ? `${base} (${fwdParts.join(', ')})`
+      : base;
     return {
       pc: formatShortHex(stage.pc),
-      detail: stage.branch_taken
-        ? `-> ${formatShortHex(stage.branch_target)}`
-        : 'branch: not taken',
+      detail,
       highlight: stage.branch_taken,
+      badges,
     };
   }
 
@@ -87,11 +125,12 @@ const getIdDetail = (stage: IdStageInfo | null): { pc: string; detail: string; h
     pc: formatShortHex(stage.pc),
     detail: parts.length > 0 ? parts.join(', ') : '-',
     highlight: false,
+    badges,
   };
 };
 
-const getExDetail = (stage: ExStageInfo | null): { pc: string; detail: string; highlight: boolean } => {
-  if (!stage) return { pc: '', detail: '', highlight: false };
+const getExDetail = (stage: ExStageInfo | null): { pc: string; detail: string; highlight: boolean; badges: string[] } => {
+  if (!stage) return { pc: '', detail: '', highlight: false, badges: [] };
   return {
     pc: formatShortHex(stage.pc),
     detail: stage.branch_taken
@@ -99,6 +138,7 @@ const getExDetail = (stage: ExStageInfo | null): { pc: string; detail: string; h
       : `alu: ${formatShortHex(stage.alu_result)}`,
     // Branch is resolved in ID stage now; EX stays informational.
     highlight: false,
+    badges: getForwardingBadges(stage.forwarding),
   };
 };
 
@@ -215,6 +255,8 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
               wb_stage: null,
               stall: false,
               flush: false,
+              stall_type: null,
+              control_hazard: false,
             },
             timestamp: Date.now() + c,
             cycle: c,
@@ -293,6 +335,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
               {stage.label}
             </div>
           ))}
+          <div className="timeline-stage-label stall-label-col">Stall</div>
         </div>
 
         {/* 时间轴（从左到右，最新在右边） - 横向可滚动，用户可拖动来改变时间窗口 */}
@@ -318,10 +361,23 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
                 const content = getCellContent(stage.key, entry);
                 const hasData = content.pc !== '';
                 const instructionColor = hasData ? getInstructionColorByPc(content.pc) : undefined;
+
+                // Stall cell styling: IF and ID are frozen during stalls
+                const isFrozenStage = entry.pipeline.stall && (stage.key === 'IF' || stage.key === 'ID');
+                const stallClass = isFrozenStage
+                  ? entry.pipeline.stall_type === 'load_use'
+                    ? 'stall-load-use'
+                    : 'stall-branch-data'
+                  : '';
+
+                // Control hazard styling: IF cell flushed by misprediction
+                const isControlHazard = entry.pipeline.control_hazard && stage.key === 'IF';
+                const hazardClass = isControlHazard ? 'stall-control-hazard' : '';
+
                 return (
                   <div
                     key={stage.key}
-                    className={`timeline-cell ${hasData ? 'has-data' : 'empty'} ${content.highlight ? 'highlight' : ''}`}
+                    className={`timeline-cell ${hasData ? 'has-data' : 'empty'} ${stallClass} ${hazardClass}`}
                     style={
                       hasData
                         ? ({ border: `2px solid ${instructionColor}` } as React.CSSProperties)
@@ -332,6 +388,13 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
                       <>
                         <div className="cell-pc">{content.pc}</div>
                         <div className="cell-detail">{content.detail}</div>
+                        {content.badges && content.badges.length > 0 && (
+                          <div className="cell-badges">
+                            {content.badges.map((b, i) => (
+                              <span key={i} className="forward-badge">{b}</span>
+                            ))}
+                          </div>
+                        )}
                       </>
                     ) : (
                       // render a small bubble for empty cycles so "空拍" 可见
@@ -340,6 +403,18 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
                   </div>
                 );
               })}
+              {/* Stall legend row */}
+              <div className="timeline-stall-legend">
+                {entry.pipeline.stall_type ? (
+                  <span className={`stall-label ${entry.pipeline.stall_type}`}>
+                    {entry.pipeline.stall_type === 'load_use' ? 'Load-Use' : 'Branch Data'}
+                  </span>
+                ) : entry.pipeline.control_hazard ? (
+                  <span className="stall-label control-hazard">
+                    Control Hazard
+                  </span>
+                ) : null}
+              </div>
             </div>
           ))}
         </div>
@@ -349,8 +424,13 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
 
       {/* 状态标签 */}
       <div className="pipeline-status">
-        {pipeline.stall && <span className="status stall">STALL (Load-Use)</span>}
+        {pipeline.stall && (
+          <span className={`status stall ${pipeline.stall_type === 'branch_data' ? 'branch-data' : ''}`}>
+            STALL ({pipeline.stall_type === 'load_use' ? 'Load-Use' : 'Branch Data'})
+          </span>
+        )}
         {pipeline.flush && <span className="status flush">FLUSH</span>}
+        {pipeline.control_hazard && !pipeline.stall && <span className="status control-hazard">CONTROL HAZARD</span>}
       </div>
     </div>
   );

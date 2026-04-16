@@ -6,6 +6,47 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Forwarding source for visualization (serde-friendly).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForwardSourceSnapshot {
+    /// No forwarding (register file value used).
+    None,
+    /// Forwarded from EX/MEM pipeline register.
+    ExMem,
+    /// Forwarded from MEM/WB pipeline register.
+    MemWb,
+}
+
+impl From<crate::cpu::pipeline::ForwardSource> for ForwardSourceSnapshot {
+    fn from(src: crate::cpu::pipeline::ForwardSource) -> Self {
+        match src {
+            crate::cpu::pipeline::ForwardSource::None => ForwardSourceSnapshot::None,
+            crate::cpu::pipeline::ForwardSource::ExMem => ForwardSourceSnapshot::ExMem,
+            crate::cpu::pipeline::ForwardSource::MemWb => ForwardSourceSnapshot::MemWb,
+        }
+    }
+}
+
+/// Forwarding info for a single pipeline stage cell.
+#[derive(Debug, Clone, Serialize)]
+pub struct ForwardingInfo {
+    /// Forwarding source for rs1.
+    pub rs1: ForwardSourceSnapshot,
+    /// Forwarding source for rs2.
+    pub rs2: ForwardSourceSnapshot,
+}
+
+/// Stall type classification.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StallType {
+    /// Load-Use data hazard stall.
+    LoadUse,
+    /// Branch data hazard stall.
+    BranchData,
+}
+
 /// CPU state snapshot for visualization.
 #[derive(Debug, Clone, Serialize)]
 pub struct CpuSnapshot {
@@ -47,6 +88,10 @@ pub struct PipelineSnapshot {
     pub stall: bool,
     /// Whether the pipeline is being flushed
     pub flush: bool,
+    /// Stall type classification (present when stalled).
+    pub stall_type: Option<StallType>,
+    /// Whether a control hazard (branch misprediction) redirect occurred.
+    pub control_hazard: bool,
 }
 
 /// pre-IF (Instruction Fetch Request) stage information.
@@ -94,6 +139,8 @@ pub struct IdStageInfo {
     pub branch_target: u32,
     /// Whether this instruction is a branch/jump control-flow instruction.
     pub is_branch: bool,
+    /// Forwarding applied during ID-stage branch resolution.
+    pub forwarding: Option<ForwardingInfo>,
 }
 
 /// EX (Execute) stage information.
@@ -111,6 +158,8 @@ pub struct ExStageInfo {
     pub branch_target: u32,
     /// Whether this is a branch instruction
     pub is_branch: bool,
+    /// Forwarding applied during EX stage.
+    pub forwarding: Option<ForwardingInfo>,
 }
 
 /// MEM (Memory) stage information.
@@ -367,6 +416,8 @@ impl Default for PipelineSnapshot {
             wb_stage: None,
             stall: false,
             flush: false,
+            stall_type: None,
+            control_hazard: false,
         }
     }
 }
@@ -587,5 +638,35 @@ mod tests {
         assert_eq!(snapshot.pc, 0);
         assert_eq!(snapshot.registers.len(), 32);
         assert!(!snapshot.halted);
+    }
+
+    #[test]
+    fn test_pipeline_snapshot_serializes_stall_type() {
+        let snap = PipelineSnapshot::default();
+        let json = serde_json::to_string(&snap).unwrap();
+        // Should contain stall_type field
+        assert!(json.contains("stall_type"));
+        assert!(json.contains("null"));
+    }
+
+    #[test]
+    fn test_forwarding_info_serializes() {
+        let info = ForwardingInfo {
+            rs1: ForwardSourceSnapshot::ExMem,
+            rs2: ForwardSourceSnapshot::MemWb,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("ex_mem"));
+        assert!(json.contains("mem_wb"));
+    }
+
+    #[test]
+    fn test_stall_type_serializes() {
+        let st = StallType::LoadUse;
+        let json = serde_json::to_string(&st).unwrap();
+        assert_eq!(json, "\"load_use\"");
+        let st2 = StallType::BranchData;
+        let json2 = serde_json::to_string(&st2).unwrap();
+        assert_eq!(json2, "\"branch_data\"");
     }
 }

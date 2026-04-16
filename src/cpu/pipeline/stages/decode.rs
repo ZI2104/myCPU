@@ -58,6 +58,8 @@ impl DecodeStage {
                 branch_taken: false,
                 branch_target: Addr::new(0),
                 prediction: None,
+                id_forward_rs1: crate::cpu::pipeline::forward::ForwardSource::None,
+                id_forward_rs2: crate::cpu::pipeline::forward::ForwardSource::None,
                 valid: false,
             });
         }
@@ -69,6 +71,10 @@ impl DecodeStage {
         let rs1 = Decoder::rs1(if_id.instruction);
         let rs2 = Decoder::rs2(if_id.instruction);
         let rd = Decoder::rd(if_id.instruction);
+
+        // Capture ID-stage forwarding sources for visualization.
+        let id_forward_rs1 = ForwardUnit::forward_source_for_decode(rs1, ex_mem, mem_wb);
+        let id_forward_rs2 = ForwardUnit::forward_source_for_decode(rs2, ex_mem, mem_wb);
 
         // Read register values from register file
         let rs1_val = regs.read(rs1);
@@ -146,6 +152,8 @@ impl DecodeStage {
             branch_taken,
             branch_target,
             prediction: None,
+            id_forward_rs1,
+            id_forward_rs2,
             valid: true,
         })
     }

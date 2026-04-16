@@ -262,6 +262,8 @@ mod tests {
             },
             branch_taken: false,
             branch_target: Addr::new(0),
+            forward_rs1: crate::cpu::pipeline::forward::ForwardSource::None,
+            forward_rs2: crate::cpu::pipeline::forward::ForwardSource::None,
             valid: true,
         }
     }
@@ -282,6 +284,8 @@ mod tests {
             },
             branch_taken: false,
             branch_target: Addr::new(0),
+            forward_rs1: crate::cpu::pipeline::forward::ForwardSource::None,
+            forward_rs2: crate::cpu::pipeline::forward::ForwardSource::None,
             valid: true,
         }
     }
@@ -499,6 +503,8 @@ mod tests {
             ctrl: MemControlSignals::none(),
             branch_taken: false,
             branch_target: Addr::new(0),
+            forward_rs1: crate::cpu::pipeline::forward::ForwardSource::None,
+            forward_rs2: crate::cpu::pipeline::forward::ForwardSource::None,
             valid: true,
         };
 

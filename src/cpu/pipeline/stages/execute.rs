@@ -59,9 +59,15 @@ impl ExecuteStage {
                 ctrl: MemControlSignals::default(),
                 branch_taken: false,
                 branch_target: Addr::new(0),
+                forward_rs1: crate::cpu::pipeline::forward::ForwardSource::None,
+                forward_rs2: crate::cpu::pipeline::forward::ForwardSource::None,
                 valid: false,
             });
         }
+
+        // Capture forwarding sources for visualization
+        let forward_rs1 = ForwardUnit::forward_rs1_source(id_ex, ex_mem, mem_wb);
+        let forward_rs2 = ForwardUnit::forward_rs2_source(id_ex, ex_mem, mem_wb);
 
         // Apply forwarding to get actual operand values
         let (rs1_val, rs2_val) = ForwardUnit::apply_forwarding(id_ex, ex_mem, mem_wb);
@@ -118,6 +124,8 @@ impl ExecuteStage {
             ctrl: id_ex.mem_ctrl,
             branch_taken,
             branch_target,
+            forward_rs1,
+            forward_rs2,
             valid: true,
         })
     }
@@ -189,6 +197,8 @@ mod tests {
             branch_taken: false,
             branch_target: Addr::new(0),
             prediction: None,
+            id_forward_rs1: crate::cpu::pipeline::forward::ForwardSource::None,
+            id_forward_rs2: crate::cpu::pipeline::forward::ForwardSource::None,
             valid: true,
         }
     }
