@@ -125,6 +125,12 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
               <span>{formatNumber(safe(perf.cache_misses))}</span>
             </div>
           )}
+          {typeof perf.cache_writebacks === 'number' && (
+            <div className="detail-row">
+              <span>Cache Writebacks:</span>
+              <span>{formatNumber(safe(perf.cache_writebacks))}</span>
+            </div>
+          )}
           {typeof perf.tlb_hits === 'number' && (
             <div className="detail-row">
               <span>TLB Hits:</span>

@@ -30,9 +30,9 @@ pub use registers::{
 
 // Re-export for visualization
 use crate::visualize::snapshot::{
-    disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, ForwardSourceSnapshot,
-    ForwardingInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot,
-    PreIfStageInfo, PredictorSnapshot, StallType, WbStageInfo,
+    disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, ForwardSourceSnapshot, ForwardingInfo,
+    IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot, PreIfStageInfo,
+    PredictorSnapshot, StallType, WbStageInfo,
 };
 
 use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
@@ -404,6 +404,17 @@ impl PipelineCpu {
         } else {
             0.0
         };
+        let tlb_stats = self.tlb.stats();
+        let tlb_active = self.privilege != PrivilegeLevel::Machine && self.csr.satp.is_sv32();
+        let tlb_bypass_reason = if tlb_active {
+            None
+        } else if self.privilege == PrivilegeLevel::Machine {
+            Some("Machine mode bypasses page translation".to_string())
+        } else if !self.csr.satp.is_sv32() {
+            Some("satp.MODE=Bare, Sv32 translation disabled".to_string())
+        } else {
+            Some("TLB path inactive".to_string())
+        };
 
         CpuSnapshot {
             registers: self.regs.as_slice().try_into().unwrap_or([0; 32]),
@@ -470,9 +481,7 @@ impl PipelineCpu {
                     // Suppress those so the timeline doesn't show a misleading
                     // branch decision that will be recomputed next cycle.
                     let (branch_taken, branch_target, is_branch) =
-                        if self.hazard_unit.stall
-                            && !self.hazard_unit.flush_id_ex
-                        {
+                        if self.hazard_unit.stall && !self.hazard_unit.flush_id_ex {
                             (false, 0u32, self.id_ex.ctrl.branch || self.id_ex.ctrl.jump)
                         } else {
                             (
@@ -563,6 +572,10 @@ impl PipelineCpu {
                 memory_writes: perf.memory_writes,
                 cache_hits: perf.cache_hits,
                 cache_misses: perf.cache_misses,
+                cache_writebacks: perf.cache_writebacks,
+                tlb_lookups: tlb_stats.lookups,
+                tlb_active,
+                tlb_bypass_reason,
                 tlb_hits: perf.tlb_hits,
                 tlb_misses: perf.tlb_misses,
             },
@@ -664,8 +677,11 @@ impl PipelineCpu {
         let privilege_for_mem = self.privilege;
         let sstatus_sum = self.csr.sstatus.sum();
         let sstatus_mxr = self.csr.sstatus.mxr();
-        let new_mem_wb = match self.memory_stage.execute_with_latch(
-            &self.ex_mem,
+        let mut ex_mem_for_mem = self.ex_mem.clone();
+        ex_mem_for_mem.ctrl.mem_write = false;
+
+        let mut new_mem_wb = match self.memory_stage.execute_with_latch(
+            &ex_mem_for_mem,
             &self.data_latch,
             &mut self.bus,
             |bus, vaddr, access| {
@@ -704,20 +720,51 @@ impl PipelineCpu {
         }
         if self.ex_mem.ctrl.mem_write {
             self.perf.record(PerfEvent::MemoryWrites);
-            // Store currently writes through bus in MEM stage; invalidate D-cache line
-            // to avoid stale cached data until a dedicated store-through cache path is added.
+
             let vaddr = Addr::new(self.ex_mem.alu_result.raw());
-            if let Ok(paddr) = mmu::translate_addr(
-                &mut self.bus,
-                &satp_for_mem,
-                privilege_for_mem,
-                vaddr,
-                MemoryAccessType::Store,
-                sstatus_sum,
-                sstatus_mxr,
-            ) {
-                self.d_cache.invalidate(paddr);
+            let paddr = match self.translate_with_tlb(vaddr, MemoryAccessType::Store) {
+                Ok(paddr) => paddr,
+                Err(SimError::PageFault { addr, access }) => {
+                    self.take_trap(Trap::exception(
+                        Self::page_fault_cause(access),
+                        self.ex_mem.pc,
+                        addr.raw(),
+                    ));
+                    self.cycles += 1;
+                    self.perf.record(PerfEvent::Cycles);
+                    self.perf.record(PerfEvent::PipelineFlushes);
+                    self.csr.perf.tick();
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
+            };
+
+            let stats_before = self.d_cache.stats().clone();
+            match self.ex_mem.ctrl.mem_width {
+                control::mem_width::BYTE => {
+                    self.d_cache.write_byte(
+                        paddr,
+                        crate::types::Byte::new(self.ex_mem.store_data.byte()),
+                        &mut self.bus,
+                    )?;
+                }
+                control::mem_width::HALF => {
+                    self.d_cache.write_half(
+                        paddr,
+                        crate::types::Half::new(self.ex_mem.store_data.half()),
+                        &mut self.bus,
+                    )?;
+                }
+                _ => {
+                    self.d_cache
+                        .write_word(paddr, self.ex_mem.store_data, &mut self.bus)?;
+                }
             }
+            let stats_after = self.d_cache.stats().clone();
+            Self::record_cache_delta(&mut self.perf, &stats_before, &stats_after);
+
+            // Preserve MEM stage telemetry for visualization.
+            new_mem_wb.mem_write = true;
         }
 
         // 2c. Execute stage - perform ALU operations and branch evaluation
@@ -759,42 +806,24 @@ impl PipelineCpu {
                 Ok(paddr) => {
                     let raw_data = match new_ex_mem.ctrl.mem_width {
                         control::mem_width::BYTE => {
-                            let hits_before = self.d_cache.stats().hits;
-                            let misses_before = self.d_cache.stats().misses;
+                            let stats_before = self.d_cache.stats().clone();
                             let byte = self.d_cache.read_byte(paddr, &mut self.bus)?;
-                            Self::record_cache_delta(
-                                &mut self.perf,
-                                hits_before,
-                                misses_before,
-                                self.d_cache.stats().hits,
-                                self.d_cache.stats().misses,
-                            );
+                            let stats_after = self.d_cache.stats().clone();
+                            Self::record_cache_delta(&mut self.perf, &stats_before, &stats_after);
                             Word::from_byte_zero(byte.raw())
                         }
                         control::mem_width::HALF => {
-                            let hits_before = self.d_cache.stats().hits;
-                            let misses_before = self.d_cache.stats().misses;
+                            let stats_before = self.d_cache.stats().clone();
                             let half = self.d_cache.read_half(paddr, &mut self.bus)?;
-                            Self::record_cache_delta(
-                                &mut self.perf,
-                                hits_before,
-                                misses_before,
-                                self.d_cache.stats().hits,
-                                self.d_cache.stats().misses,
-                            );
+                            let stats_after = self.d_cache.stats().clone();
+                            Self::record_cache_delta(&mut self.perf, &stats_before, &stats_after);
                             Word::from_half_zero(half.raw())
                         }
                         _ => {
-                            let hits_before = self.d_cache.stats().hits;
-                            let misses_before = self.d_cache.stats().misses;
+                            let stats_before = self.d_cache.stats().clone();
                             let word = self.d_cache.read_word(paddr, &mut self.bus)?;
-                            Self::record_cache_delta(
-                                &mut self.perf,
-                                hits_before,
-                                misses_before,
-                                self.d_cache.stats().hits,
-                                self.d_cache.stats().misses,
-                            );
+                            let stats_after = self.d_cache.stats().clone();
+                            Self::record_cache_delta(&mut self.perf, &stats_before, &stats_after);
                             word
                         }
                     };
@@ -1080,6 +1109,7 @@ impl ExecutionModel for PipelineCpu {
         self.hazard_unit.reset();
         self.predictor.reset();
         self.tlb.reset();
+        let _ = self.d_cache.flush_all_with_bus(&mut self.bus);
         self.i_cache.reset();
         self.d_cache.reset();
         self.wb_input = MemWbRegister::default();
@@ -1152,16 +1182,17 @@ impl PipelineCpu {
     #[inline]
     fn record_cache_delta(
         perf: &mut PerfCollector,
-        hits_before: u64,
-        misses_before: u64,
-        hits_after: u64,
-        misses_after: u64,
+        before: &crate::cpu::cache::CacheStats,
+        after: &crate::cpu::cache::CacheStats,
     ) {
-        if hits_after > hits_before {
+        if after.hits > before.hits {
             perf.record_cache_hit();
         }
-        if misses_after > misses_before {
+        if after.misses > before.misses {
             perf.record_cache_miss();
+        }
+        if after.writebacks > before.writebacks {
+            perf.record_cache_writeback();
         }
     }
 
@@ -1171,16 +1202,10 @@ impl PipelineCpu {
         bus: &mut Bus,
         paddr: Addr,
     ) -> Result<Word> {
-        let hits_before = cache.stats().hits;
-        let misses_before = cache.stats().misses;
+        let stats_before = cache.stats().clone();
         let word = cache.read_word(paddr, bus)?;
-        Self::record_cache_delta(
-            perf,
-            hits_before,
-            misses_before,
-            cache.stats().hits,
-            cache.stats().misses,
-        );
+        let stats_after = cache.stats().clone();
+        Self::record_cache_delta(perf, &stats_before, &stats_after);
         Ok(word)
     }
 

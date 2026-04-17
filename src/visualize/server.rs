@@ -1233,6 +1233,14 @@ impl VisualizeServer {
                 modified_snapshot.perf.branch_accuracy = None;
                 modified_snapshot.perf.memory_reads = 0;
                 modified_snapshot.perf.memory_writes = 0;
+                modified_snapshot.perf.cache_hits = 0;
+                modified_snapshot.perf.cache_misses = 0;
+                modified_snapshot.perf.cache_writebacks = 0;
+                modified_snapshot.perf.tlb_lookups = 0;
+                modified_snapshot.perf.tlb_active = false;
+                modified_snapshot.perf.tlb_bypass_reason = None;
+                modified_snapshot.perf.tlb_hits = 0;
+                modified_snapshot.perf.tlb_misses = 0;
 
                 let _ = ctx.state_tx.send(modified_snapshot.clone());
                 // Also send the modified snapshot directly to the requesting client

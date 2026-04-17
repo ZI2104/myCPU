@@ -377,6 +377,14 @@ pub struct PerfSnapshot {
     pub cache_hits: u64,
     /// Cache misses (if cache simulation enabled)
     pub cache_misses: u64,
+    /// Cache writebacks (write-back policy)
+    pub cache_writebacks: u64,
+    /// TLB lookup attempts.
+    pub tlb_lookups: u64,
+    /// Whether TLB translation path is currently active (Sv32 + non-M mode).
+    pub tlb_active: bool,
+    /// Human-readable bypass reason when TLB is inactive.
+    pub tlb_bypass_reason: Option<String>,
     /// TLB hits (if TLB simulation enabled)
     pub tlb_hits: u64,
     /// TLB misses (if TLB simulation enabled)
@@ -440,6 +448,10 @@ impl Default for PerfSnapshot {
             memory_writes: 0,
             cache_hits: 0,
             cache_misses: 0,
+            cache_writebacks: 0,
+            tlb_lookups: 0,
+            tlb_active: false,
+            tlb_bypass_reason: None,
             tlb_hits: 0,
             tlb_misses: 0,
         }
@@ -638,6 +650,9 @@ mod tests {
         assert_eq!(snapshot.pc, 0);
         assert_eq!(snapshot.registers.len(), 32);
         assert!(!snapshot.halted);
+        assert_eq!(snapshot.perf.tlb_lookups, 0);
+        assert!(!snapshot.perf.tlb_active);
+        assert!(snapshot.perf.tlb_bypass_reason.is_none());
     }
 
     #[test]

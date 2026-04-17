@@ -45,6 +45,8 @@ pub struct PerfCollector {
     pub cache_hits: u64,
     /// Cache misses (if cache simulation enabled)
     pub cache_misses: u64,
+    /// Cache line writebacks to memory (write-back policy)
+    pub cache_writebacks: u64,
     /// TLB hits (if TLB simulation enabled)
     pub tlb_hits: u64,
     /// TLB misses (if TLB simulation enabled)
@@ -93,6 +95,12 @@ impl PerfCollector {
     #[inline]
     pub fn record_cache_miss(&mut self) {
         self.cache_misses += 1;
+    }
+
+    /// Record cache writeback
+    #[inline]
+    pub fn record_cache_writeback(&mut self) {
+        self.cache_writebacks += 1;
     }
 
     /// Record TLB hit
@@ -197,6 +205,7 @@ impl PerfCollector {
         self.branch_mispredictions += other.branch_mispredictions;
         self.cache_hits += other.cache_hits;
         self.cache_misses += other.cache_misses;
+        self.cache_writebacks += other.cache_writebacks;
         self.tlb_hits += other.tlb_hits;
         self.tlb_misses += other.tlb_misses;
     }

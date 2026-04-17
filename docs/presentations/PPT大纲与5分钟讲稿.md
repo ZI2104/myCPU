@@ -16,12 +16,13 @@
 | P2   | 技术选型               | 40 s |
 | P3   | 系统架构总览           | 40 s |
 | P4   | 6 级流水线设计         | 50 s |
-| P5   | 特权级与异常中断       | 40 s |
-| P6   | 四大技术亮点           | 50 s |
-| P7   | 已完成工作 · 测试数据  | 30 s |
-| P8   | 项目进度规划           | 25 s |
-| P9   | 扩展亮点（NPU/GPU/OS） | 20 s |
-| P10  | 总结                   | 15 s |
+| P5   | TLB 与 Cache 结构      | 35 s |
+| P6   | 特权级与异常中断       | 40 s |
+| P7   | 四大技术亮点           | 50 s |
+| P8   | 已完成工作 · 测试数据  | 30 s |
+| P9   | 项目进度规划           | 25 s |
+| P10  | 扩展亮点（NPU/GPU/OS） | 20 s |
+| P11  | 总结                   | 15 s |
 
 ---
 
@@ -211,7 +212,7 @@ flowchart TD
 
 ---
 
-## P5 · 特权级与异常中断（约 40 秒）
+## P6 · 特权级与异常中断（约 40 秒）
 
 ### 标题
 
@@ -269,7 +270,7 @@ sequenceDiagram
 
 ---
 
-## P6 · 四大技术亮点（约 50 秒）
+## P7 · 四大技术亮点（约 50 秒）
 
 ### 标题
 
@@ -332,7 +333,7 @@ pub trait CsrRegister { fn address(&self) -> u16; }
 
 ---
 
-## P7 · 已完成工作 · 测试数据（约 30 秒）
+## P8 · 已完成工作 · 测试数据（约 30 秒）
 
 ### 标题
 
@@ -374,7 +375,7 @@ pub trait CsrRegister { fn address(&self) -> u16; }
 
 ---
 
-## P8 · 项目进度规划（约 25 秒）
+## P9 · 项目进度规划（约 25 秒）
 
 ### 标题
 
@@ -410,7 +411,7 @@ Phase 6    → xv6 shell 200M 窗口命令矩阵 5/5；386 tests；一键演示�
 
 ---
 
-## P9 · 扩展亮点（约 20 秒）
+## P10 · 扩展亮点（约 20 秒）
 
 ### 标题
 
@@ -450,7 +451,7 @@ WebSocket → 前端 React 面板
 
 ---
 
-## P10 · 总结（约 15 秒）
+## P11 · 总结（约 15 秒）
 
 ### 标题
 
@@ -513,7 +514,44 @@ ISA 选 **RISC-V RV32I**，核心原因是规范开放、指令格式规整（�
 
 ---
 
-**【P5 · 特权级，约 40 秒】**
+## P5 · TLB 与 Cache 结构（约 35 秒）
+
+### 标题
+
+**内存层次结构：TLB + 组相联 Cache，兼顾地址翻译与访存性能**
+
+### 页面核心内容
+
+- **TLB**：32 项全相联（ASID 隔离），缓存 `VPN→PPN + RWXU`，支持 `flush_all / flush_asid / flush_vaddr`。
+- **I-Cache**：16B line，组相联（默认 4-way），Round-Robin 替换。
+- **D-Cache**：16B line，组相联（默认 4-way），**Write-Back + Write-Allocate**。
+- **写回路径**：脏行替换或显式 flush 时回写总线，前端可观察 `cache_writebacks` 与命中率。
+
+### 图表建议（结构图）
+
+```text
+VA --(TLB hit?)--> PA --> I-Cache / D-Cache
+                    | miss             | miss
+                    v                  v
+            Sv32 Walk         Bus / RAM / MMIO
+
+D-Cache (Set-Associative)
+    Set0: [Way0][Way1][Way2][Way3]
+    Set1: [Way0][Way1][Way2][Way3]
+    ...
+    Policy: Write-Back + Write-Allocate + Round-Robin
+```
+
+### 前端演示要点
+
+- 展示 `Cache Hit/Miss`、`TLB Hit/Miss`。
+- 增加策略对比卡：
+    - 当前：Set-Assoc + WB+WA
+    - 基线演示：Direct-Mapped + WT（以写流量估算对比）
+
+---
+
+**【P6 · 特权级，约 40 秒】**
 
 特权级完整实现了 **M/S/U 三种模式**，以及 ecall/mret/sret 的切换语义。Trap 处理按规范写入 xepc（保存故障 PC）、xcause（记录原因）、xtval（附加信息），更新 xstatus，然后跳转 xtvec 入口。处理完成后用 xret 恢复执行。
 
@@ -523,7 +561,7 @@ ISA 选 **RISC-V RV32I**，核心原因是规范开放、指令格式规整（�
 
 ---
 
-**【P6 · 四大亮点，约 50 秒】**
+**【P7 · 四大亮点，约 50 秒】**
 
 第一，**DiffTest 差分测试**。myCPU 与 QEMU 同步执行，逐指令对比 32 个通用寄存器、PC 和关键 CSR，一旦出现差异立即报告不一致的寄存器位置。等价于拥有权威参考实现作为 Oracle。
 
@@ -535,7 +573,7 @@ ISA 选 **RISC-V RV32I**，核心原因是规范开放、指令格式规整（�
 
 ---
 
-**【P7-P8 · 成果与进度，约 55 秒合计】**
+**【P8-P9 · 成果与进度，约 55 秒合计】**
 
 项目按课设要求的第 4–8 周推进。**386 个测试全部通过**，实现了 40+ 条 RV32I 指令（加 M 扩展乘除法）、完整特权级与中断系统、Sv32 MMU 虚拟内存、GDB 调试服务器、DiffTest 框架，以及 HPM 性能监控。
 
@@ -543,13 +581,13 @@ ISA 选 **RISC-V RV32I**，核心原因是规范开放、指令格式规整（�
 
 ---
 
-**【P9 · 扩展，约 20 秒】**
+**【P10 · 扩展，约 20 秒】**
 
 超出课设要求的部分：**xv6** 可以交互运行（echo/ls/cat/wc 全通过）；**精简 Linux** 启动链路（OpenSBI + FDT + Buildroot）已打通；模拟加速器矩阵——NPU/LPU/GPU/TPU——均已落地，GPU 支持 15 种内核（Conv2d/Pool2d/矩阵乘/激活函数），TPU 支持 INT8 量化矩阵乘；前端可视化面板实时展示分支预测准确率对比、协处理器任务时间线、Framebuffer 渲染等。
 
 ---
 
-**【P10 · 总结，约 15 秒】**
+**【P11 · 总结，约 15 秒】**
 
 总结一下，myCPU 做到了三点：**架构可解释**——每层职责清晰，Trait 抽象边界明确；**实现可验证**——QEMU DiffTest 作为 Oracle，386 个测试覆盖全路径；**结果可复现**——一键编排脚本串联 xv6 到 Linux 到 NPU 全链路演示。谢谢大家。
 
@@ -563,11 +601,11 @@ ISA 选 **RISC-V RV32I**，核心原因是规范开放、指令格式规整（�
 | 0:20 – 1:00 | P2 技术选型      | 40 s |
 | 1:00 – 1:40 | P3 系统架构      | 40 s |
 | 1:40 – 2:30 | P4 流水线设计    | 50 s |
-| 2:30 – 3:10 | P5 特权级与中断  | 40 s |
-| 3:10 – 4:00 | P6 四大技术亮点  | 50 s |
-| 4:00 – 4:30 | P7+P8 成果与进度 | 30 s |
-| 4:30 – 4:50 | P9 扩展亮点      | 20 s |
-| 4:50 – 5:00 | P10 总结         | 10 s |
+| 2:30 – 3:05 | P5 TLB/Cache     | 35 s |
+| 3:05 – 3:45 | P6 特权级与中断  | 40 s |
+| 3:45 – 4:35 | P7 四大技术亮点  | 50 s |
+| 4:35 – 4:55 | P8+P9 成果与进度 | 20 s |
+| 4:55 – 5:00 | P11 总结         | 5 s  |
 
 ---
 
@@ -575,6 +613,7 @@ ISA 选 **RISC-V RV32I**，核心原因是规范开放、指令格式规整（�
 
 ```
 架构类：    Memory-Mapped I/O · pre-IF/IF/ID/EX/MEM/WB · Sv32 MMU · TLB
+缓存类：    Set-Associative · Write-Back · Write-Allocate · Round-Robin
 冒险类：    Forwarding · Load-Use Stall · Predict Not Taken · 1周期惩罚
 特权类：    M/S/U · CSR · ecall/mret/sret · CLINT · PLIC · mideleg
 调试类：    DiffTest · QEMU Oracle · GDB RSP · TCP:1234

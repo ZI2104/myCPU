@@ -101,6 +101,10 @@ export interface PerfSnapshot {
   memory_writes: number;
   cache_hits?: number;
   cache_misses?: number;
+  cache_writebacks?: number;
+  tlb_lookups?: number;
+  tlb_active?: boolean;
+  tlb_bypass_reason?: string | null;
   tlb_hits?: number;
   tlb_misses?: number;
 }

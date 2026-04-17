@@ -901,6 +901,20 @@ body {
   padding: 2px 0;
 }
 
+.mh-summary-tlb {
+  margin-top: 10px;
+}
+
+.mh-status-active {
+  color: #2e7d32;
+  font-weight: 700;
+}
+
+.mh-status-inactive {
+  color: #8e24aa;
+  font-weight: 700;
+}
+
 .mh-cards {
   display: grid;
   grid-template-columns: 1fr;
@@ -962,6 +976,47 @@ body {
   margin-top: 6px;
   font-size: 11px;
   color: var(--text-light);
+}
+
+.mh-compare {
+  margin-top: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: #fdfefe;
+}
+
+.mh-compare-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.mh-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.mh-compare-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.mh-compare-card.current {
+  border-left: 4px solid #1e88e5;
+}
+
+.mh-compare-card.baseline {
+  border-left: 4px solid #8e24aa;
+}
+
+.mh-compare-name {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
 }
 
 /* Messages */
