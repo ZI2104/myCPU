@@ -168,6 +168,9 @@ enum Commands {
         /// Guest memory address to place Linux payload image in SBI boot chain
         #[arg(long, default_value = "0x80200000")]
         linux_payload_addr: String,
+        /// Treat ECALL with a7==93 as program exit
+        #[arg(long, default_value_t = false)]
+        ecall_exit: bool,
     },
 
     /// Start GDB debug server
@@ -270,6 +273,7 @@ struct RunProgramOptions {
     input_inject_at: u64,
     input_inject_every: u64,
     linux: LinuxBootOptions,
+    ecall_exit: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -303,6 +307,7 @@ fn main() -> anyhow::Result<()> {
             linux_sbi,
             linux_sbi_addr,
             linux_payload_addr,
+            ecall_exit,
         } => run_program(RunProgramOptions {
             memory_mb: memory,
             pc,
@@ -332,6 +337,7 @@ fn main() -> anyhow::Result<()> {
                 sbi_addr: linux_sbi_addr,
                 payload_addr: linux_payload_addr,
             },
+            ecall_exit,
         }),
         Commands::Debug {
             port,
@@ -395,6 +401,11 @@ fn run_program(opts: RunProgramOptions) -> anyhow::Result<()> {
     bus.print_memory_map();
 
     let mut cpu = Cpu::with_pc(bus, start_pc);
+
+    // honor CLI flag to treat ECALL(a7==93) as program exit when requested
+    if opts.ecall_exit {
+        cpu.set_accept_ecall_exit(true);
+    }
 
     apply_linux_boot_context(&mut cpu, &opts.linux, opts.memory_mb)?;
 

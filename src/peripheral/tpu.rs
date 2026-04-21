@@ -78,8 +78,6 @@ mod control_bits {
     pub const START: u32 = 1 << 0;
     pub const RESET: u32 = 1 << 1;
     pub const IRQ_EN: u32 = 1 << 2;
-    pub const BATCH_MODE: u32 = 1 << 3;
-    pub const CMD_QUEUE_MODE: u32 = 1 << 4;
 }
 
 // Status register bits
@@ -119,6 +117,7 @@ pub struct TpuSnapshot {
 
 /// Internal work item for async matrix multiplication.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TpuWork {
     matrix_a_addr: u64,
     matrix_b_addr: u64,
@@ -424,9 +423,6 @@ impl Tpu {
 
     // ── DMA helpers (delegated to shared module) ─────────────────────────
 
-    fn read_guest_u8(ram: &mut dma::RamRegions, addr: u64) -> Result<u8> {
-        dma::read_u8(ram, addr)
-    }
     fn write_guest_u8(ram: &mut dma::RamRegions, addr: u64, value: u8) -> Result<()> {
         dma::write_u8(ram, addr, value)
     }
@@ -670,22 +666,6 @@ impl Tpu {
 
         self.cycles = self.cycles.wrapping_add(count as u64);
         Ok(count as u64)
-    }
-
-    fn execute_once(&mut self) {
-        // No-op without ram_regions; actual compute happens via bus write_byte → process_pending
-        let m = self.matrix_a_rows as u64;
-        let n = self.matrix_b_cols as u64;
-        let k = self.matrix_a_cols as u64;
-        let ops = m * n * k * 2;
-        self.ops_count = self.ops_count.wrapping_add(ops);
-        self.cycles = self.cycles.wrapping_add((ops / 4).max(1));
-        self.matrices_computed = self.matrices_computed.wrapping_add(1);
-        self.tasks_done = self.tasks_done.wrapping_add(1);
-        self.status |= status_bits::DONE;
-        if (self.control & control_bits::IRQ_EN) != 0 {
-            self.status |= status_bits::IRQ_PENDING;
-        }
     }
 
     /// Process pending descriptor notification.

@@ -4,7 +4,7 @@
 //! A Pattern History Table (PHT) of 2-bit counters is indexed by the BHR pattern.
 //! This captures per-branch behavior patterns (e.g., a branch taken every 3rd time).
 
-use super::{hash_index, BranchPredictor, Prediction, PredictorStats, PredictorType, PREDICTOR_TABLE_SIZE};
+use super::{hash_index, BranchPredictor, Prediction, PredictorStats, PredictorType};
 use crate::types::Addr;
 
 /// Local predictor: per-branch BHR + shared PHT of 2-bit counters.

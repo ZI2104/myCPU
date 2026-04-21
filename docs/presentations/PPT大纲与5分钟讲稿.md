@@ -26,6 +26,37 @@
 
 ---
 
+## 一点五、5 分钟答辩精简版（推荐）
+
+> 建议答辩现场优先使用这一版：**8 页 + 2 分钟 live**，覆盖课程要求且风险更低。
+
+| 页码 | 标题                 | 目标                      | 证据类型                           |
+| ---- | -------------------- | ------------------------- | ---------------------------------- |
+| S1   | 课设要求对齐         | 明确“基础/扩展/亮点”口径  | `ROADMAP` 阶段表                   |
+| S2   | 基础能力闭环         | RV32I + 流水线 + 特权中断 | 代码结构 + 测试                    |
+| S3   | 流水线可视化（主秀） | 冒险/前递/冲刷可解释      | 前端 `Pipeline`                    |
+| S4   | 特权级与 Trap 机制   | 异常/中断不是“黑盒”       | 前端 `CSR/Trap` 面板               |
+| S5   | 性能与内存层次       | IPC + Cache/TLB 数据化    | `Performance` + `Memory Hierarchy` |
+| S6   | 扩展能力与创新       | OS + 协处理器矩阵         | `Framebuffer` + `Coprocessor`      |
+| S7   | 2 分钟 live 演示脚本 | 从“能讲”到“能看见”        | 界面录屏/实机                      |
+| S8   | 总结与追问准备       | 可解释、可验证、可复现    | 回归命令与指标                     |
+
+### S7 Live 脚本（120 秒）
+
+1. `Pipeline`：展示顶部 hazard 徽标（Load-Use / Branch Data / Flush / Control Hazard）+ 时间轴。
+2. `Pipeline` 下方：展示 `Branch Predictor` 与 `Memory Hierarchy`（命中率/写回对比）。
+3. `CSR/Trap`：展示 `mstatus/mtvec/mepc/mcause/satp/mie/mip` 与 trap 摘要（cause/epc/tval）。
+4. `Framebuffer` + `Input`：演示交互输入与 Overlay 指标。
+5. `Coprocessor`：快速切到 NPU/LPU/GPU/TPU 状态面板。
+
+### 评委高频追问的应答锚点（建议放讲稿备注）
+
+- **“你怎么证明不是只会跑 demo？”** → DiffTest + `cargo test` 全量回归 + 前端实时状态一致性。
+- **“特权级是怎么体现的？”** → `CSR/Trap` 面板中 `mcause/mepc/handler_mode` 的实时证据。
+- **“流水线难点在哪里？”** → hazard 徽标 + timeline 中 stall/flush/control hazard 的对应周期。
+
+---
+
 ## P1 · 课题定位与目标（约 20 秒）
 
 ### 标题

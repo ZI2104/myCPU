@@ -67,6 +67,30 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.
 6. 如需直接读取 Linux 预设地址，点击 `Linux Preset` + `Refresh`
 7. （图案模式）选择 `pong/checker/gradient` 后点击 `Demo Frame`
 
+### 5 分钟答辩推荐演示顺序（live + 录屏兜底）
+
+1. `Pipeline` 标签页：
+   - 顶部 **hazard 徽标**（`STALL / FLUSH / CONTROL HAZARD`）作为“当前周期状态总览”；
+   - 时间轴观察 `Load-Use` 与 `Branch Data` 的 stall 标识；
+   - 底部联动看 `Branch Predictor` 与 `Memory Hierarchy`。
+2. `Pipeline` 底部 `CSR / Trap` 面板：
+   - 展示 `mstatus/mtvec/mepc/mcause/satp/mie/mip`；
+   - 讲解 `Latest Trap Summary`（`cause_label/cause_code/handler_mode/epc/tval`）。
+3. 切换 `Framebuffer`：
+   - 触发 `Init` + `Run`；
+   - 用 `Input Panel` 操作并观察 Overlay（`FPS/IPC/Stalls/Tick/Score/InputBits`）。
+4. 切换 `Coprocessor`：
+   - 快速展示 NPU/LPU/GPU/TPU 状态与任务统计。
+
+### 录屏兜底建议
+
+- 若 live 网络/终端异常，按顺序切换预录片段：
+  1) Pipeline hazard + timeline；
+  2) CSR/Trap 面板；
+  3) Framebuffer 输入交互；
+  4) Coprocessor 状态页。
+- 每段录屏时长建议 15-25 秒，切换时口播“该片段对应当前版本同一构建产物”。
+
 说明：后端 `visualize` 支持不传程序文件，且可通过 `--linux-fb-demo` 预置 RV32I 帧缓冲写入程序。
 
 ### 时间分配
@@ -151,15 +175,41 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_phase6_showcase_pipeline.
 
 ## 第三部分：功能演示 (4 分钟)
 
+### 演示资产准备（必做）
+
+在运行 Demo 1/2/3 之前，先构建演示程序：
+
+```bash
+# Windows（仓库根目录）
+powershell -ExecutionPolicy Bypass -File .\scripts\build_demo_programs.ps1
+
+# Unix / WSL
+bash tests/programs/build.sh
+```
+
+说明：
+
+- 会生成 `tests/programs/hello.bin`、`tests/programs/fib.elf`、`tests/programs/test.elf` 等演示产物。
+- `--ecall-exit` 是 `run` 子命令参数，必须写在 `run` 后面：
+    - 正确：`cargo run --release -- run --ecall-exit tests/programs/hello.bin`
+    - 错误：`cargo run --release --ecall-exit -- run tests/programs/hello.bin`
+- 若在 WSL 内执行 Rust 命令遇到 `lock file version '4'` 报错，说明 WSL 内 `cargo` 版本过旧；先升级后再测：
+
+```bash
+wsl bash -lc 'rustup update stable'
+wsl bash -lc 'cargo --version && rustc --version'
+```
+
+网络受限无法升级时，推荐“WSL 构建 demo 资产 + Windows 侧运行 cargo 测试/演示”的组合流程。
+
 ### Demo 1: 运行 Hello World (1 分钟)
 
 ```bash
 # 终端演示
-cargo run --release -- run tests/programs/hello.elf
+cargo run --release -- run --ecall-exit tests/programs/hello.bin
 
 # 预期输出
-Hello, RISC-V!
-Program exited with code 0
+Hello
 ```
 
 **讲解**: "这是一个简单的 Hello World 程序，通过 UART 输出字符串。可以看到程序正确执行并输出。"
@@ -172,7 +222,8 @@ cargo run --release -- debug tests/programs/fib.elf
 GDB server listening on port 1234
 
 # 终端 2: 连接 GDB
-riscv32-unknown-elf-gdb tests/programs/fib.elf
+gdb-multiarch tests/programs/fib.elf
+(gdb) set architecture riscv:rv32
 (gdb) target remote :1234
 (gdb) break main
 (gdb) continue
@@ -181,23 +232,59 @@ riscv32-unknown-elf-gdb tests/programs/fib.elf
 (gdb) x/5i $pc
 ```
 
+自动化测试：`tests/demo_gdb.rs`（默认跳过；运行前设置环境变量 `RUN_DEMO_TESTS=1`）
+
 **讲解**: "我们支持标准的 GDB 调试协议。可以设置断点、单步执行、查看寄存器，和调试真实硬件一样。"
 
-### Demo 3: DiffTest 验证 (1.5 分钟)
+### Demo 3: DiffTest 能力验证 (1.5 分钟)
 
 ```bash
-# 运行 DiffTest
-cargo run --release --features difftest -- run tests/programs/test.elf
+# 运行 DiffTest 模块相关测试（当前仓库可直接执行）
+cargo test --lib difftest
 
 # 输出 (如果通过)
-[DiffTest] QEMU connected
-[DiffTest] Step 1: OK
-[DiffTest] Step 2: OK
-...
-[DiffTest] All 1000 steps passed!
+running 2 tests
+test difftest::tests::test_history_entry ... ok
+test difftest::tests::test_difftest_error_display ... ok
 ```
 
-**讲解**: "为了确保模拟器的正确性，我们实现了 DiffTest —— 与 QEMU 逐指令对比状态。这是工业界常用的验证方法。"
+**讲解**: "我们实现了 DiffTest 核心模块（连接、步进、状态比较与错误报告）。当前课堂演示采用模块级验证，工程化全链路由 `scripts/run_riscv_tests.sh` 承载。"
+
+#### 现场逐指令对比示例（可复现步骤）
+
+下面给出一个低风险、可在本地复现的演示路径（不修改 Cargo feature）：
+
+1. 在 WSL/Unix 环境准备演示二进制（在仓库根目录）：
+
+```bash
+# 在 Unix/WSL 中构建 demo 程序
+bash tests/programs/build.sh
+```
+
+2. 在 WSL 中后台启动 QEMU（开启 GDB stub :1234 并暂停）：
+
+```bash
+# 在 WSL 中（工作目录 /mnt/d/code/myCPU）
+qemu-system-riscv32 -M virt -nographic -bios none -kernel tests/programs/test.elf -S -s &
+```
+
+3. 在同一 WSL 环境中运行示例程序（例子已加入 `examples/difftest_demo.rs`）：
+
+```bash
+cargo run --example difftest_demo -- tests/programs/test.elf
+```
+
+示例行为：示例会把 ELF 加载到 myCPU 模拟器中，每步执行 myCPU，然后通过 GDB 协议驱动 QEMU 单步并比较状态；发现不一致时会打印详细差异并退出。
+
+注意与故障排查：
+- 如果在 WSL 中执行 `cargo run` 遇到 `lock file version '4'` 等错误，请在 WSL 中更新 Rust/Cargo（`rustup update stable`）并重试；某些内网/离线环境需要先配置代理或使用离线工具链。  
+- 如果 WSL 网络/包管理受限导致无法更新，请考虑在同一环境（Windows / WSL）内同时运行 QEMU 与示例，或者在另一台具备网络/工具链的机器上演示。  
+- 若 QEMU 启动成功但示例无法连接，请检查防火墙或 /proc/net/tcp 中 1234 监听状态：`ss -ltnp | grep 1234`。
+
+若你希望我在当前环境继续尝试，我已尝试在 WSL 中启动 QEMU 并运行示例，但遇到 WSL 中的 Cargo 版本与网络更新限制（无法完成 `rustup update`），导致无法本地运行示例。我可以继续帮助：
+
+- 在你允许的情况下尝试在你的机器上执行 `rustup update` 后重试运行示例；或
+- 在文档中再补充一份“仅演示/录屏”流程及输出样例以备现场使用（我可以生成示例输出）。
 
 ---
 
@@ -234,7 +321,7 @@ fn resolve_forward(&self, rs: RegIdx) -> u32 {
 fn has_load_use_hazard(&self) -> bool {
     let id_ex = &self.id_ex;
     let if_id = &self.if_id;
-    
+  
     // ID 阶段指令需要使用 EX 阶段 Load 的目标寄存器
     id_ex.mem_read && 
     (id_ex.rd == if_id.rs1 || id_ex.rd == if_id.rs2)
@@ -253,17 +340,17 @@ fn handle_ecall(&mut self) -> Result<()> {
     // 1. 保存当前状态
     let pc = self.pc;
     let mode = self.privilege;
-    
+  
     // 2. 切换到更高特权级
     self.privilege = PrivilegeMode::Machine;
-    
+  
     // 3. 跳转到异常处理程序
     self.pc = self.csr.read(mtvec)?;
-    
+  
     // 4. 保存上下文
     self.csr.write(mepc, pc)?;
     self.csr.write(mcause, CAUSE_ECALL)?;
-    
+  
     Ok(())
 }
 ```
@@ -283,7 +370,7 @@ fn handle_ecall(&mut self) -> Result<()> {
 **演示**: 运行程序，输出性能报告
 
 ```bash
-cargo run --release -- run --perf-report tests/programs/fib.elf
+cargo run --release -- run --ecall-exit --perf-report tests/programs/fib.elf
 
 ╔══════════════════════════════════════════════════════════════╗
 ║                    Performance Report                         ║
@@ -365,9 +452,10 @@ test result: ok. 8 passed
 
 ### 程序准备
 
-- [ ] Hello World 程序已编译 (`tests/programs/hello.elf`)
+- [ ] 已执行演示程序构建脚本（Windows: `scripts/build_demo_programs.ps1` / Unix: `tests/programs/build.sh`）
+- [ ] Hello World 程序已编译 (`tests/programs/hello.bin`)
 - [ ] 斐波那契程序已编译 (`tests/programs/fib.elf`)
-- [ ] 测试程序已编译 (`tests/programs/test.elf`)
+- [ ] DiffTest 样例程序已编译 (`tests/programs/test.elf`)
 - [ ] (如果有) CoreMark 已编译
 
 ### 演示材料

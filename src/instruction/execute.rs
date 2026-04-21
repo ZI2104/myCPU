@@ -14,6 +14,9 @@ use crate::peripheral::{
 };
 use crate::types::{Addr, Byte, Half, PrivilegeLevel, RegIdx, Word};
 
+/// RISC-V Linux ABI: a7 == 93 means `exit` syscall.
+const LINUX_EXIT_SYSCALL: u32 = 93;
+
 impl Cpu {
     /// Execute CUSTOM-0 instructions for coprocessor fast-path.
     ///
@@ -701,6 +704,14 @@ impl Cpu {
                 match imm & 0xFFF {
                     0 => {
                         // ECALL - Environment call
+                        // Shortcut: treat Linux exit syscall (a7 == 93) as simulator exit
+                        // so small bare-metal programs that use the Linux exit convention will terminate.
+                        let a7 = self.registers().read(RegIdx::new(17)).raw();
+                        if self.accept_ecall_exit() && a7 == LINUX_EXIT_SYSCALL {
+                            // treat as program exit when enabled
+                            self.halt();
+                            return Ok(());
+                        }
                         let cause = ExceptionCause::ecall_from(self.privilege());
                         self.raise_exception(cause, 0);
                     }

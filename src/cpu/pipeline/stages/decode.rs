@@ -464,14 +464,6 @@ mod tests {
         };
         let mem_wb = MemWbRegister::default();
 
-        // BEQ x1, x2, +0 → with forwarding x2=100, x1=100 → equal → taken
-        let if_id = IfIdRegister {
-            pc: Addr::new(0x100),
-            instruction: 0x00008463, // BEQ x1, x1, +0 → but we want BEQ x1, x2
-            valid: true,
-            ..Default::default()
-        };
-
         // Use BEQ x1, x2 encoding: 0000000_00010_00001_000_00000_1100011
         let if_id = IfIdRegister {
             pc: Addr::new(0x100),

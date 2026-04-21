@@ -33,8 +33,10 @@ pub struct TlbResult {
     /// Cached PTE permission bits: bit0=R, bit1=W, bit2=X, bit3=U.
     pub rwxu: u8,
     /// Whether the A bit was set by hardware.
+    #[allow(dead_code)]
     pub accessed: bool,
     /// Whether the D bit was set by hardware.
+    #[allow(dead_code)]
     pub dirty: bool,
 }
 

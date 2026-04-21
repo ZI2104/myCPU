@@ -74,7 +74,6 @@ mod control_bits {
     pub const START: u32 = 1 << 0;
     pub const RESET: u32 = 1 << 1;
     pub const IRQ_EN: u32 = 1 << 2;
-    pub const CMD_QUEUE_MODE: u32 = 1 << 3;
 }
 
 // Status register bits
@@ -117,6 +116,7 @@ pub struct GpuSnapshot {
 
 /// Internal work item for async execution.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct GpuWork {
     kernel_type: KernelType,
     precision: Precision,
@@ -415,12 +415,6 @@ impl Gpu {
     // ── DMA helpers (delegated to shared module) ─────────────────────────
 
     /// Delegate to shared DMA module.
-    fn read_guest_u8(ram: &mut dma::RamRegions, addr: u64) -> Result<u8> {
-        dma::read_u8(ram, addr)
-    }
-    fn write_guest_u8(ram: &mut dma::RamRegions, addr: u64, value: u8) -> Result<()> {
-        dma::write_u8(ram, addr, value)
-    }
     fn read_guest_u32(ram: &mut dma::RamRegions, addr: u64) -> Result<u32> {
         dma::read_u32(ram, addr)
     }
@@ -1048,17 +1042,6 @@ impl Gpu {
         self.bytes_transferred = self.bytes_transferred.wrapping_add(bytes);
         self.cycles = self.cycles.wrapping_add(ops);
         Ok(ops)
-    }
-
-    fn execute_once(&mut self) {
-        // No-op without ram_regions; actual compute happens in execute_once_with_memory
-        self.cycles = self.cycles.wrapping_add(1);
-        self.kernels_executed = self.kernels_executed.wrapping_add(1);
-        self.tasks_done = self.tasks_done.wrapping_add(1);
-        self.status |= status_bits::DONE;
-        if (self.control & control_bits::IRQ_EN) != 0 {
-            self.status |= status_bits::IRQ_PENDING;
-        }
     }
 
     /// Process pending descriptor notification.
@@ -1693,7 +1676,7 @@ mod tests {
         write_u32(&mut gpu, regs::CONV_STRIDE, (2 << 16) | 2);
         write_u32(&mut gpu, regs::CONV_PADDING, 0);
         write_u32(&mut gpu, regs::CONV_INPUT_DIMS, (2 << 16) | 2);
-        write_u32(&mut gpu, regs::CONV_CHANNELS, (1 << 16));
+        write_u32(&mut gpu, regs::CONV_CHANNELS, 1 << 16);
 
         gpu.execute_with_memory(&mut ram);
 

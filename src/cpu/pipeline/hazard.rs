@@ -113,7 +113,6 @@ impl HazardUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::pipeline::control::MemControlSignals;
 
     #[test]
     fn test_hazard_unit_default() {

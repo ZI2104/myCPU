@@ -5,7 +5,6 @@
 
 use crate::error::{Result, SimError};
 use crate::peripheral::dma;
-use crate::traits::Memory;
 use crate::traits::Peripheral;
 use crate::types::Addr;
 use std::collections::VecDeque;
@@ -109,7 +108,6 @@ pub struct Npu {
 /// Internal representation of an enqueued vector work item.
 #[derive(Debug, Clone)]
 struct NpuWork {
-    desc_addr: u64,
     base_opcode: u32,
     op_a_addr: u64,
     op_b_addr: u64,
@@ -263,14 +261,6 @@ impl Npu {
                 }
             }
         }
-    }
-
-    fn read_guest_u8(ram: &mut dma::RamRegions, addr: u64) -> Result<u8> {
-        dma::read_u8(ram, addr)
-    }
-
-    fn write_guest_u8(ram: &mut dma::RamRegions, addr: u64, value: u8) -> Result<()> {
-        dma::write_u8(ram, addr, value)
     }
 
     fn read_guest_u32(ram: &mut dma::RamRegions, addr: u64) -> Result<u32> {
@@ -507,7 +497,7 @@ impl Npu {
                 Ok(first_opcode) => {
                     if (first_opcode & VECTOR_FLAG) != 0 {
                         // vector-mode: either enqueue work or process synchronously
-                        if let Some(budget) = self.soft_async_budget {
+                        if let Some(_budget) = self.soft_async_budget {
                             // enqueue work using descriptor fields
                             let base_opcode = first_opcode & !VECTOR_FLAG;
                             let op_a_addr =
@@ -519,7 +509,6 @@ impl Npu {
                             let elems = self.desc_len as usize;
 
                             let work = NpuWork {
-                                desc_addr: self.desc_addr,
                                 base_opcode,
                                 op_a_addr,
                                 op_b_addr,

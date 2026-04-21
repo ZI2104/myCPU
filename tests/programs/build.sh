@@ -1,43 +1,62 @@
 #!/bin/bash
 # Build script for RISC-V test programs
-# Requires: riscv32-unknown-elf-as, riscv32-unknown-elf-ld, riscv32-unknown-elf-objcopy
+# Supports either:
+#   - riscv32-unknown-elf-gcc + riscv32-unknown-elf-objcopy
+#   - riscv64-unknown-elf-gcc + riscv64-unknown-elf-objcopy (with RV32 flags)
 
 set -e
 
 PROGRAMS_DIR="$(dirname "$0")"
 
-# Check for RISC-V toolchain
-if ! command -v riscv32-unknown-elf-as &> /dev/null; then
-    echo "Error: riscv32-unknown-elf-as not found"
-    echo "Please install the RISC-V toolchain"
+# Resolve toolchain prefix
+if command -v riscv32-unknown-elf-gcc >/dev/null 2>&1 && command -v riscv32-unknown-elf-objcopy >/dev/null 2>&1; then
+    TOOL_PREFIX="riscv32-unknown-elf"
+elif command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 && command -v riscv64-unknown-elf-objcopy >/dev/null 2>&1; then
+    TOOL_PREFIX="riscv64-unknown-elf"
+else
+    echo "Error: no supported RISC-V cross toolchain found."
+    echo "Need one of:"
+    echo "  - riscv32-unknown-elf-gcc + riscv32-unknown-elf-objcopy"
+    echo "  - riscv64-unknown-elf-gcc + riscv64-unknown-elf-objcopy"
     exit 1
 fi
 
-# Build hello program
-echo "Building hello.elf..."
-riscv32-unknown-elf-as -march=rv32i -mabi=ilp32 \
-    "$PROGRAMS_DIR/hello.s" -o "$PROGRAMS_DIR/hello.o"
+CC="${TOOL_PREFIX}-gcc"
+OBJCOPY="${TOOL_PREFIX}-objcopy"
 
-riscv32-unknown-elf-ld -T "$PROGRAMS_DIR/link.ld" \
-    "$PROGRAMS_DIR/hello.o" -o "$PROGRAMS_DIR/hello.elf"
+echo "Using toolchain: ${TOOL_PREFIX}"
 
-riscv32-unknown-elf-objcopy -O binary \
-    "$PROGRAMS_DIR/hello.elf" "$PROGRAMS_DIR/hello.bin"
+build_asm_program() {
+    local name="$1"
 
-echo "Built: hello.elf, hello.bin"
-echo "Done!"
+    echo "Building ${name}.elf..."
+    "$CC" -march=rv32i -mabi=ilp32 -nostdlib -T "$PROGRAMS_DIR/link.ld" \
+        "$PROGRAMS_DIR/${name}.s" -o "$PROGRAMS_DIR/${name}.elf"
+
+    "$OBJCOPY" -O binary \
+        "$PROGRAMS_DIR/${name}.elf" "$PROGRAMS_DIR/${name}.bin"
+
+    echo "Built: ${name}.elf, ${name}.bin"
+}
+
+for demo in hello fib test; do
+    build_asm_program "$demo"
+done
+
+echo "Built RV32I demo binaries: hello/fib/test"
 
 # Build NPU vector example (prefer assembly if present)
 echo "Building npu_vector_example.elf..."
 if [ -f "$PROGRAMS_DIR/npu_vector_example.s" ]; then
-    riscv32-unknown-elf-as -march=rv32i -mabi=ilp32 "$PROGRAMS_DIR/npu_vector_example.s" -o "$PROGRAMS_DIR/npu_vector_example.o"
-    riscv32-unknown-elf-ld -T "$PROGRAMS_DIR/link.ld" "$PROGRAMS_DIR/npu_vector_example.o" -o "$PROGRAMS_DIR/npu_vector_example.elf"
+    "$CC" -march=rv32i -mabi=ilp32 -nostdlib -T "$PROGRAMS_DIR/link.ld" \
+        "$PROGRAMS_DIR/npu_vector_example.s" -o "$PROGRAMS_DIR/npu_vector_example.elf"
 else
-    riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -T "$PROGRAMS_DIR/link.ld" \
+    "$CC" -march=rv32i -mabi=ilp32 -nostdlib -T "$PROGRAMS_DIR/link.ld" \
         "$PROGRAMS_DIR/npu_vector_example.c" -o "$PROGRAMS_DIR/npu_vector_example.elf"
 fi
 
-riscv32-unknown-elf-objcopy -O binary \
+"$OBJCOPY" -O binary \
     "$PROGRAMS_DIR/npu_vector_example.elf" "$PROGRAMS_DIR/npu_vector_example.bin"
 
 echo "Built: npu_vector_example.elf, npu_vector_example.bin"
+echo "Done!"

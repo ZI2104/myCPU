@@ -16,10 +16,34 @@ export interface CpuSnapshot {
   pipeline: PipelineSnapshot;
   perf: PerfSnapshot;
   predictor?: PredictorSnapshot | null;
+  csr: CsrSnapshot;
+  trap: TrapSnapshot;
   halted: boolean;
   // Incremented by server on Reset so frontend can detect and prioritize
   // reset-aligned snapshots. Optional for backward compatibility.
   reset_sequence?: number;
+}
+
+export interface CsrSnapshot {
+  mstatus: number;
+  mtvec: number;
+  mepc: number;
+  mcause: number;
+  mtval: number;
+  satp: number;
+  mie: number;
+  mip: number;
+  mideleg: number;
+  medeleg: number;
+}
+
+export interface TrapSnapshot {
+  is_interrupt: boolean;
+  cause_code: number;
+  cause_label: string;
+  handler_mode: string;
+  epc: number;
+  tval: number;
 }
 
 export interface PipelineSnapshot {

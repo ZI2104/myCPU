@@ -2,7 +2,7 @@
 //!
 //! This module implements the EX stage of the pipeline.
 
-use crate::cpu::pipeline::control::{AluOp, BranchType, MemControlSignals};
+use crate::cpu::pipeline::control::{AluOp, MemControlSignals};
 use crate::cpu::pipeline::forward::ForwardUnit;
 use crate::cpu::pipeline::registers::{ExMemRegister, IdExRegister, MemWbRegister};
 use crate::error::Result;
@@ -163,7 +163,7 @@ impl ExecuteStage {
 mod tests {
     use super::*;
     use crate::cpu::csr::CsrOp;
-    use crate::cpu::pipeline::control::{AluSrc, ExControlSignals};
+    use crate::cpu::pipeline::control::{AluSrc, BranchType, ExControlSignals};
 
     fn create_id_ex_for_alu(
         alu_op: AluOp,

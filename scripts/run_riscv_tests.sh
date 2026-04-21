@@ -16,6 +16,14 @@ if ! [[ "$NUM_LIMIT" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+# Preflight: this script relies on a feature-gated DiffTest runtime path.
+if ! grep -Eq '^\s*difftest\s*=' "$ROOT/Cargo.toml"; then
+  echo "Error: Cargo feature 'difftest' is not defined in Cargo.toml." >&2
+  echo "This script expects a feature-gated DiffTest runtime path and cannot run safely now." >&2
+  echo "For classroom/demo validation, use: cargo test --lib difftest" >&2
+  exit 1
+fi
+
 # Choose CROSS prefix
 if command -v riscv32-unknown-elf-gcc >/dev/null 2>&1; then
   CROSS=riscv32-unknown-elf-
@@ -101,7 +109,7 @@ for rel in "${ELFS[@]}"; do
   # Set env so mycpu writes JSON perf report for CI
   export MYCPU_PERF_JSON="$JSON_OUT"
   set -x
-  cargo run --release --features difftest -- run "$elf_path" --perf_report
+  cargo run --release --features difftest -- run "$elf_path" --perf-report
   rc=$?
   set +x
   popd >/dev/null

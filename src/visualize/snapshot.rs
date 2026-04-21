@@ -62,11 +62,57 @@ pub struct CpuSnapshot {
     pub perf: PerfSnapshot,
     /// Branch predictor state
     pub predictor: Option<PredictorSnapshot>,
+    /// Key CSR snapshot for privilege/exception demonstration.
+    pub csr: CsrSnapshot,
+    /// Latest trap summary derived from CSR state.
+    pub trap: TrapSnapshot,
     /// Whether the CPU is halted
     pub halted: bool,
     /// Reset sequence counter - increments on each Reset to help frontend
     /// detect and prioritize reset-aligned snapshots.
     pub reset_sequence: u64,
+}
+
+/// Key CSR values for teaching-oriented frontend visualization.
+#[derive(Debug, Clone, Serialize)]
+pub struct CsrSnapshot {
+    /// Machine status register.
+    pub mstatus: u32,
+    /// Machine trap-vector register.
+    pub mtvec: u32,
+    /// Machine exception PC.
+    pub mepc: u32,
+    /// Machine cause register.
+    pub mcause: u32,
+    /// Machine trap value register.
+    pub mtval: u32,
+    /// Supervisor address translation and protection register.
+    pub satp: u32,
+    /// Machine interrupt-enable register.
+    pub mie: u32,
+    /// Machine interrupt-pending register.
+    pub mip: u32,
+    /// Interrupt delegation register.
+    pub mideleg: u32,
+    /// Exception delegation register.
+    pub medeleg: u32,
+}
+
+/// Trap summary for quick frontend explanation.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrapSnapshot {
+    /// Whether latest cause is an interrupt.
+    pub is_interrupt: bool,
+    /// Interrupt/exception cause code.
+    pub cause_code: u32,
+    /// Human-readable cause label.
+    pub cause_label: String,
+    /// Trap handler privilege mode that owns current summary.
+    pub handler_mode: String,
+    /// EPC in the selected handler mode.
+    pub epc: u32,
+    /// TVAL in the selected handler mode.
+    pub tval: u32,
 }
 
 /// Pipeline state snapshot.
@@ -401,8 +447,40 @@ impl CpuSnapshot {
             pipeline: PipelineSnapshot::default(),
             perf: PerfSnapshot::default(),
             predictor: None,
+            csr: CsrSnapshot::default(),
+            trap: TrapSnapshot::default(),
             halted: false,
             reset_sequence: 0,
+        }
+    }
+}
+
+impl Default for CsrSnapshot {
+    fn default() -> Self {
+        Self {
+            mstatus: 0,
+            mtvec: 0,
+            mepc: 0,
+            mcause: 0,
+            mtval: 0,
+            satp: 0,
+            mie: 0,
+            mip: 0,
+            mideleg: 0,
+            medeleg: 0,
+        }
+    }
+}
+
+impl Default for TrapSnapshot {
+    fn default() -> Self {
+        Self {
+            is_interrupt: false,
+            cause_code: 0,
+            cause_label: "none".to_string(),
+            handler_mode: "Machine".to_string(),
+            epc: 0,
+            tval: 0,
         }
     }
 }

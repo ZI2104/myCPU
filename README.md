@@ -52,6 +52,15 @@ cargo run --release -- run --verbose program.elf
 # 生成性能报告
 cargo run --release -- run --perf-report program.elf
 
+# 将 ECALL(a7==93) 映射为程序退出（用于使用 Linux exit 约定的裸机程序）
+如果你的程序用到了 Linux 风格的 exit (ecall with a7=93) 并希望模拟器将其视为程序结束，可以启用命令行选项：
+
+```bash
+cargo run --release -- run --ecall-exit program.elf
+```
+
+默认该选项为关闭，启用后仅影响 ECALL 的退出语义，不会影响其他异常/中断处理逻辑。
+
 # 启动 GDB 调试服务器
 cargo run --release -- debug program.elf
 

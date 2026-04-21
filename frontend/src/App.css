@@ -246,7 +246,7 @@ body {
 
 .pipeline-bottom-panel {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 12px;
 }
@@ -295,6 +295,54 @@ body {
 /* Pipeline Visualizer - 纵向时序图布局 */
 .pipeline-visualizer {
   width: 100%;
+}
+
+.pipeline-hazard-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hazard-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid transparent;
+}
+
+.hazard-badge.normal {
+  color: #4b5563;
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.hazard-badge.load-use {
+  color: #e65100;
+  background: #fff3e0;
+  border-color: #ffcc80;
+}
+
+.hazard-badge.branch-data {
+  color: #be185d;
+  background: #fce7f3;
+  border-color: #f9a8d4;
+}
+
+.hazard-badge.flush {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.hazard-badge.control-hazard {
+  color: #92400e;
+  background: #ffedd5;
+  border-color: #fdba74;
 }
 
 .pipeline-timeline-container {
@@ -408,6 +456,26 @@ body {
 .timeline-cell.has-data {
   background: #ffffff;
   color: #111827;
+}
+
+.timeline-cell.has-data.instr-color-0 {
+  border: 2px solid #ef4444;
+}
+
+.timeline-cell.has-data.instr-color-1 {
+  border: 2px solid #3b82f6;
+}
+
+.timeline-cell.has-data.instr-color-2 {
+  border: 2px solid #22c55e;
+}
+
+.timeline-cell.has-data.instr-color-3 {
+  border: 2px solid #a855f7;
+}
+
+.timeline-cell.has-data.instr-color-4 {
+  border: 2px solid #f59e0b;
 }
 
 /* highlight class removed — branch-taken info is now shown via detail text
@@ -1301,9 +1369,8 @@ body {
 }
 
 .framebuffer-canvas {
-  image-rendering: pixelated;
   image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
+  image-rendering: pixelated;
   background: #000;
   border: 1px solid #222;
   max-width: 100%;
@@ -1765,6 +1832,118 @@ body {
   border-radius: 8px;
   padding: 16px;
   margin-top: 16px;
+}
+
+/* CSR / Trap panel */
+.csr-trap-panel {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.csr-trap-panel h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.csr-trap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.csr-trap-grid > div,
+.trap-summary-grid > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.csr-trap-grid span,
+.trap-summary-grid span {
+  color: #6b7280;
+}
+
+.csr-keyfields {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.csr-keyfield {
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  padding: 6px 8px;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.csr-keyfield > span:first-child {
+  color: #6b7280;
+  font-weight: 700;
+}
+
+.trap-summary {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 8px;
+}
+
+.trap-summary-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.trap-summary-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.trap-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.trap-badge.interrupt {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.trap-badge.exception {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.trap-badge.mode {
+  color: #065f46;
+  background: #d1fae5;
+  border-color: #6ee7b7;
+}
+
+.trap-badge.cause {
+  color: #7c2d12;
+  background: #ffedd5;
+  border-color: #fdba74;
+}
+
+.trap-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
 }
 
 @media (max-width: 1600px) {

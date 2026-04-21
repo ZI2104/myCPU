@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import { ControlPanel } from './components/ControlPanel';
 import { CoprocessorPanel } from './components/CoprocessorPanel';
+import { CsrTrapPanel } from './components/CsrTrapPanel';
 import { DebugInspector } from './components/DebugInspector';
 import { FramebufferView } from './components/FramebufferView';
 import { GameFlowPanel } from './components/GameFlowPanel';
@@ -335,6 +336,11 @@ function App() {
                   predictor={snapshot.predictor}
                   onSwitchPredictor={(type: string) => send(`predictor_switch ${type}`)}
                 />
+              </section>
+
+              <section className="pipeline-bottom-section">
+                <h3 className="pipeline-bottom-title">CSR / Trap</h3>
+                <CsrTrapPanel csr={snapshot.csr} trap={snapshot.trap} />
               </section>
             </div>
           )}

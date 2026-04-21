@@ -28,12 +28,20 @@ interface CellContent {
 // Reduced high-contrast palette for instruction tracing.
 // Keep color kinds small and clearly separated.
 const INSTRUCTION_COLORS = [
-  '#ef4444', // red
-  '#3b82f6', // blue
-  '#22c55e', // green
-  '#a855f7', // purple
-  '#f59e0b', // amber
+  'instr-color-0',
+  'instr-color-1',
+  'instr-color-2',
+  'instr-color-3',
+  'instr-color-4',
 ] as const;
+
+const STALL_LABELS: Record<string, { short: string; cssKind: string }> = {
+  load_use: { short: 'Load-Use', cssKind: 'load-use' },
+  branch_data: { short: 'Branch Data', cssKind: 'branch-data' },
+};
+
+const stallInfo = (type: string | null): { short: string; cssKind: string } =>
+  STALL_LABELS[type ?? ''] ?? { short: type ?? '', cssKind: type ?? '' };
 
 // Stride over the palette so consecutive PCs don't look like adjacent hues.
 const COLOR_STRIDE = 3;
@@ -331,8 +339,35 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
   const reversedHistory = [...history].reverse();
   const visibleHistory = reversedHistory;
 
+  const hazardBadges: Array<{ key: string; label: string; kind: string }> = [];
+  if (pipeline.stall) {
+    hazardBadges.push({
+      key: 'stall',
+      label: `STALL · ${stallInfo(pipeline.stall_type).short}`,
+      kind: stallInfo(pipeline.stall_type).cssKind,
+    });
+  }
+  if (pipeline.flush) {
+    hazardBadges.push({ key: 'flush', label: 'FLUSH', kind: 'flush' });
+  }
+  if (pipeline.control_hazard) {
+    hazardBadges.push({ key: 'control_hazard', label: 'CONTROL HAZARD', kind: 'control-hazard' });
+  }
+
   return (
     <div className="pipeline-visualizer">
+      <div className="pipeline-hazard-strip">
+        {hazardBadges.length > 0 ? (
+          hazardBadges.map((badge) => (
+            <span key={badge.key} className={`hazard-badge ${badge.kind}`}>
+              {badge.label}
+            </span>
+          ))
+        ) : (
+          <span className="hazard-badge normal">No active hazard</span>
+        )}
+      </div>
+
       <div className="pipeline-timeline-container">
         {/* 左侧阶段标签列 */}
         <div className="timeline-stage-labels">
@@ -372,9 +407,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
                 // Stall cell styling: IF and ID are frozen during stalls
                 const isFrozenStage = entry.pipeline.stall && (stage.key === 'IF' || stage.key === 'ID');
                 const stallClass = isFrozenStage
-                  ? entry.pipeline.stall_type === 'load_use'
-                    ? 'stall-load-use'
-                    : 'stall-branch-data'
+                  ? `stall-${stallInfo(entry.pipeline.stall_type).cssKind}`
                   : '';
 
                 // Control hazard styling: IF cell flushed by misprediction
@@ -384,12 +417,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
                 return (
                   <div
                     key={stage.key}
-                    className={`timeline-cell ${hasData ? 'has-data' : 'empty'} ${stallClass} ${hazardClass}`}
-                    style={
-                      hasData
-                        ? ({ border: `2px solid ${instructionColor}` } as React.CSSProperties)
-                        : undefined
-                    }
+                    className={`timeline-cell ${hasData ? 'has-data' : 'empty'} ${stallClass} ${hazardClass} ${instructionColor ?? ''}`}
                   >
                     {hasData ? (
                       <>
@@ -414,7 +442,7 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
               <div className="timeline-stall-legend">
                 {entry.pipeline.stall_type ? (
                   <span className={`stall-label ${entry.pipeline.stall_type}`}>
-                    {entry.pipeline.stall_type === 'load_use' ? 'Load-Use' : 'Branch Data'}
+                    {stallInfo(entry.pipeline.stall_type).short}
                   </span>
                 ) : entry.pipeline.control_hazard ? (
                   <span className="stall-label control-hazard">
@@ -432,8 +460,8 @@ export const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({
       {/* 状态标签 */}
       <div className="pipeline-status">
         {pipeline.stall && (
-          <span className={`status stall ${pipeline.stall_type === 'branch_data' ? 'branch-data' : ''}`}>
-            STALL ({pipeline.stall_type === 'load_use' ? 'Load-Use' : 'Branch Data'})
+          <span className={`status stall ${stallInfo(pipeline.stall_type).cssKind}`}>
+            STALL ({stallInfo(pipeline.stall_type).short})
           </span>
         )}
         {pipeline.flush && <span className="status flush">FLUSH</span>}

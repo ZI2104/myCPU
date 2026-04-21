@@ -41,12 +41,6 @@ fn hash_index(pc: Addr) -> usize {
     ((pc.raw() >> 2) as usize) & (PREDICTOR_TABLE_SIZE - 1)
 }
 
-/// Extract BTB index from PC.
-#[inline]
-fn btb_index(pc: Addr) -> usize {
-    ((pc.raw() >> 2) as usize) & (BTB_SIZE - 1)
-}
-
 /// Prediction result from a branch predictor (direction only).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Prediction {

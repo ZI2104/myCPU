@@ -30,12 +30,12 @@ pub use registers::{
 
 // Re-export for visualization
 use crate::visualize::snapshot::{
-    disassemble, BtbEntrySnapshot, CpuSnapshot, ExStageInfo, ForwardSourceSnapshot, ForwardingInfo,
-    IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot, PreIfStageInfo,
-    PredictorSnapshot, StallType, WbStageInfo,
+    disassemble, BtbEntrySnapshot, CsrSnapshot, CpuSnapshot, ExStageInfo, ForwardSourceSnapshot,
+    ForwardingInfo, IdStageInfo, IfStageInfo, MemStageInfo, PerfSnapshot, PipelineSnapshot,
+    PreIfStageInfo, PredictorSnapshot, StallType, TrapSnapshot, WbStageInfo,
 };
 
-use crate::cpu::csr::{CsrFile, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
+use crate::cpu::csr::{CsrFile, CsrRegister, PerfEvent, HPM_COUNTER_BASE, HPM_COUNTER_COUNT};
 use crate::cpu::csr::{ExceptionCause, InterruptCause, Trap};
 use crate::cpu::execution_model::ExecutionModel;
 use crate::cpu::mmu;
@@ -606,6 +606,54 @@ impl PipelineCpu {
                         .collect(),
                 })
             },
+            csr: CsrSnapshot {
+                mstatus: self.csr.mstatus.read(),
+                mtvec: self.csr.mtvec.read(),
+                mepc: self.csr.mepc.read(),
+                mcause: self.csr.mcause.read(),
+                mtval: self.csr.mtval.read(),
+                satp: self.csr.satp.read(),
+                mie: self.csr.mie.read(),
+                mip: self.csr.mip.read(),
+                mideleg: self.csr.mideleg.read(),
+                medeleg: self.csr.medeleg.read(),
+            },
+            trap: {
+                let is_interrupt = self.csr.mcause.is_interrupt();
+                let cause_code = self.csr.mcause.code();
+                let cause_label = Self::trap_cause_label(is_interrupt, cause_code);
+
+                let delegated_to_supervisor = if is_interrupt {
+                    self.csr.mideleg.is_delegated(cause_code)
+                } else {
+                    self.csr.medeleg.is_delegated(cause_code)
+                };
+
+                let handler_mode = if delegated_to_supervisor {
+                    PrivilegeLevel::Supervisor
+                } else {
+                    PrivilegeLevel::Machine
+                };
+
+                let (epc, tval) = if handler_mode == PrivilegeLevel::Supervisor {
+                    (self.csr.sepc.read(), self.csr.stval.read())
+                } else {
+                    (self.csr.mepc.read(), self.csr.mtval.read())
+                };
+
+                TrapSnapshot {
+                    is_interrupt,
+                    cause_code,
+                    cause_label,
+                    handler_mode: match handler_mode {
+                        PrivilegeLevel::Supervisor => "Supervisor".to_string(),
+                        PrivilegeLevel::Machine => "Machine".to_string(),
+                        _ => "Unknown".to_string(),
+                    },
+                    epc,
+                    tval,
+                }
+            },
             halted: self.halted,
             reset_sequence: 0, // Reset sequence tracking is done in visualize/server.rs
         }
@@ -1080,6 +1128,15 @@ impl PipelineCpu {
             MemoryAccessType::Instruction => ExceptionCause::InstructionPageFault,
             MemoryAccessType::Load => ExceptionCause::LoadPageFault,
             MemoryAccessType::Store => ExceptionCause::StorePageFault,
+        }
+    }
+
+    fn trap_cause_label(is_interrupt: bool, cause_code: u32) -> String {
+        use crate::cpu::csr::{ExceptionCause, InterruptCause};
+        if is_interrupt {
+            InterruptCause::from_code(cause_code).to_string()
+        } else {
+            ExceptionCause::from_code(cause_code).to_string()
         }
     }
 }
